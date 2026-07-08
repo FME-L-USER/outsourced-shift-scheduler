@@ -630,8 +630,7 @@ const NAV_ITEMS = [
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'shiftcodes',   label: '班別代號表',   icon: '📖', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'settings',     label: '系統設定',     icon: '⚙️', roles: [ROLES.ADMIN] },
-  { key: 'accounts',     label: '帳號管理',     icon: '🔑', roles: [ROLES.ADMIN] },
-  { key: 'permissions',  label: '權限管理',     icon: '🛡️', roles: [ROLES.ADMIN] },
+  { key: 'accounts',     label: '帳號與權限',   icon: '🔑', roles: [ROLES.ADMIN] },
 ];
 
 function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, onToggle }) {
@@ -870,7 +869,18 @@ function Dashboard() {
     employees, schedule, currentUser, selectedYear, selectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
   } = useApp();
+
+  const today = new Date();
+  const [dashYear,  setDashYear]  = useState(today.getFullYear());
+  const [dashMonth, setDashMonth] = useState(today.getMonth() + 1);
+  const [dashDay,   setDashDay]   = useState(today.getDate());
+
+  const daysInDashMonth = getDaysInMonth(dashYear, dashMonth);
+  // 若當月天數變少導致 day 超出範圍，自動修正
+  const safeDay = Math.min(dashDay, daysInDashMonth);
+
   const days = getDaysInMonth(selectedYear, selectedMonth);
+  const isToday = dashYear === today.getFullYear() && dashMonth === today.getMonth() + 1 && safeDay === today.getDate();
 
   const visibleEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
@@ -879,49 +889,57 @@ function Dashboard() {
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
-  // 每日出勤統計
-  const dailyStats = useMemo(() => {
-    return Array.from({ length: days }, (_, i) => {
-      const day = i + 1;
-      const dk = dateKey(selectedYear, selectedMonth, day);
-      let working = 0;
-      visibleEmployees.forEach(emp => {
-        const code = schedule[emp.id]?.[dk] ?? 'V';
-        if (code === 'V') working++;
-      });
-      return { day, working, total: visibleEmployees.length };
-    });
-  }, [visibleEmployees, schedule, days, selectedYear, selectedMonth]);
-
-  // 各廠商出勤率
+  // 所選日期出勤統計（各廠商）
   const vendorStats = useMemo(() => {
+    const dk = dateKey(dashYear, dashMonth, safeDay);
     const map = {};
     visibleEmployees.forEach(emp => {
       if (!map[emp.vendor]) map[emp.vendor] = { working: 0, total: 0 };
       map[emp.vendor].total++;
-      const todayDate = new Date();
-      if (todayDate.getFullYear() === selectedYear && todayDate.getMonth() + 1 === selectedMonth) {
-        const dk = dateKey(selectedYear, selectedMonth, todayDate.getDate());
-        const code = schedule[emp.id]?.[dk] ?? 'V';
-        if (code === 'V') map[emp.vendor].working++;
-      } else {
-        map[emp.vendor].working += Math.round(map[emp.vendor].total * 0.85);
-      }
+      const code = schedule[emp.id]?.[dk] ?? 'V';
+      if (code === 'V') map[emp.vendor].working++;
     });
     return Object.entries(map).map(([vendor, s]) => ({ vendor, ...s }));
-  }, [visibleEmployees, schedule, selectedYear, selectedMonth]);
+  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay]);
+
+  const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-xl font-bold text-slate-800">儀表板</h2>
+      {/* Header + 日期選擇器 */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h2 className="text-xl font-bold text-slate-800">儀表板</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-slate-500">查詢日期：</span>
+          <select value={dashYear} onChange={e => setDashYear(+e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}年</option>)}
+          </select>
+          <select value={dashMonth} onChange={e => setDashMonth(+e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            {Array.from({length:12},(_,i)=>i+1).map(m => <option key={m} value={m}>{m}月</option>)}
+          </select>
+          <select value={safeDay} onChange={e => setDashDay(+e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            {Array.from({length:daysInDashMonth},(_,i)=>i+1).map(d => <option key={d} value={d}>{d}日</option>)}
+          </select>
+          {!isToday && (
+            <button onClick={() => { setDashYear(today.getFullYear()); setDashMonth(today.getMonth()+1); setDashDay(today.getDate()); }}
+              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs hover:bg-blue-200">
+              回今日
+            </button>
+          )}
+          {isToday && <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">今日</span>}
+        </div>
+      </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: '本月人員總數', value: visibleEmployees.length, icon: '👥', color: 'bg-blue-50 border-blue-200' },
-          { label: '廠商數量',     value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
-          { label: '今日出勤',     value: dailyStats.find(d => d.day === new Date().getDate())?.working ?? '-', icon: '✅', color: 'bg-green-50 border-green-200' },
-          { label: '本月天數',     value: days, icon: '📆', color: 'bg-orange-50 border-orange-200' },
+          { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-blue-50 border-blue-200' },
+          { label: '廠商數量',   value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
+          { label: `${dashMonth}/${safeDay} 出勤`, value: selectedDayWorking, icon: '✅', color: 'bg-green-50 border-green-200' },
+          { label: `${dashMonth}/${safeDay} 休假`, value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
             <div className="text-2xl mb-1">{c.icon}</div>
@@ -933,19 +951,26 @@ function Dashboard() {
 
       {/* Vendor Stats */}
       <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <h3 className="font-semibold text-slate-700 mb-4">各廠商今日人力</h3>
+        <h3 className="font-semibold text-slate-700 mb-4">
+          各廠商人力
+          <span className="ml-2 text-sm font-normal text-slate-400">
+            {dashYear}/{dashMonth}/{safeDay}{isToday ? '（今日）' : ''}
+          </span>
+        </h3>
         <div className="space-y-3">
           {vendorStats.map(s => (
             <div key={s.vendor}>
               <div className="flex justify-between text-sm text-slate-600 mb-1">
                 <span>{s.vendor}</span>
-                <span>{s.working} / {s.total} 人</span>
+                <span className="font-medium">
+                  出勤 {s.working} 人
+                  {s.total - s.working > 0 && <span className="text-amber-500 ml-2">休 {s.total - s.working} 人</span>}
+                  <span className="text-slate-400 ml-2">/ {s.total} 人</span>
+                </span>
               </div>
               <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 rounded-full transition-all"
-                  style={{ width: `${s.total ? (s.working / s.total * 100) : 0}%` }}
-                />
+                <div className="h-full bg-blue-500 rounded-full transition-all"
+                  style={{ width: `${s.total ? (s.working / s.total * 100) : 0}%` }} />
               </div>
             </div>
           ))}
@@ -1268,12 +1293,17 @@ function ScheduleTable() {
 
         if (isFormatC) {
           // 格式C：月份在row0 col3+，日期在row1 col3+
+          // 修正 Excel 跨欄標題問題：月份提早一格，導致讀到如 8/31（應為 7/31）
+          // 規則：月份遞增但日期未重置回 1~7，視為仍是上個月
           const row1 = aoa[1] || [];
+          let prevMo = null;
           for (let c = 3; c < headerRow.length; c++) {
             const mo = parseInt(String(headerRow[c]).trim());
             const dy = parseInt(String(row1[c] ?? '').trim());
             if (!isNaN(mo) && !isNaN(dy) && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
-              dateCols.push({ col: c, month: mo, day: dy });
+              const effectiveMo = (prevMo !== null && mo === prevMo + 1 && dy > 7) ? prevMo : mo;
+              dateCols.push({ col: c, month: effectiveMo, day: dy });
+              prevMo = effectiveMo;
             }
           }
           // 資料從第一個姓名非空的列起（跳過空白列）
@@ -1332,6 +1362,48 @@ function ScheduleTable() {
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
+  const handleDownloadTemplate = () => {
+    try {
+      const WD = ['日','一','二','三','四','五','六'];
+      // 取得目前視圖的日期區間
+      let dates = [];
+      if (rangeMode && viewRange) {
+        const cur = parseLocal(viewRange.start);
+        const end = parseLocal(viewRange.end);
+        while (cur <= end) {
+          dates.push({ y: cur.getFullYear(), m: cur.getMonth()+1, d: cur.getDate(), wd: WD[cur.getDay()] });
+          cur.setDate(cur.getDate()+1);
+        }
+      } else {
+        const daysCount = getDaysInMonth(selectedYear, selectedMonth);
+        for (let i = 1; i <= daysCount; i++) {
+          const dt = new Date(selectedYear, selectedMonth-1, i);
+          dates.push({ y: selectedYear, m: selectedMonth, d: i, wd: WD[dt.getDay()] });
+        }
+      }
+      const row1 = ['作業區(非必填)', '*姓名', '*廠商', ...dates.map(dt => dt.m)];
+      const row2 = ['', '', '', ...dates.map(dt => dt.d)];
+      const row3 = ['', '', '', ...dates.map(dt => dt.wd)];
+      const aoa  = [row1, row2, row3];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      // 欄寬
+      ws['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, ...dates.map(() => ({ wch: 4 }))];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '總表');
+
+      const label = rangeMode && viewRange
+        ? `${viewRange.start.replace(/-/g,'')}-${viewRange.end.replace(/-/g,'')}`
+        : `${selectedYear}${String(selectedMonth).padStart(2,'0')}`;
+      XLSX.writeFile(wb, `匯入班表範本_${label}.xlsx`);
+      toast('範本已下載', 'success');
+    } catch (err) {
+      toast('下載範本失敗：' + err.message, 'error');
+    }
   };
 
   // Weekday headers — range mode spans across months, uses viewRange for navigation
@@ -1421,6 +1493,10 @@ function ScheduleTable() {
               🔄 重排已選（{checkedEmpIds.size}人）
             </button>
           )}
+          <button onClick={handleDownloadTemplate}
+            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
+            📋 下載匯入範本
+          </button>
           <button onClick={() => importFileRef.current.click()}
             className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 flex items-center gap-1">
             📥 匯入班表
@@ -3370,15 +3446,47 @@ function ShiftCodeTable() {
   useEffect(() => { LS.set('sms_shiftcode_rows',        rows);       }, [rows]);
   useEffect(() => { LS.set('sms_shiftcode_imported_at', importedAt); }, [importedAt]);
 
+  // ── 密碼鎖 ──
+  const [unlocked,      setUnlocked]      = useState(false);
+  const [showPwdModal,  setShowPwdModal]  = useState(false);
+  const [pwdInput,      setPwdInput]      = useState('');
+  const [pwdError,      setPwdError]      = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+  const pwdRef = useRef();
+
+  const requireUnlock = (action) => {
+    if (unlocked) { action(); return; }
+    setPendingAction(() => action);
+    setPwdInput('');
+    setPwdError(false);
+    setShowPwdModal(true);
+    setTimeout(() => pwdRef.current?.focus(), 50);
+  };
+
+  const submitPwd = () => {
+    if (pwdInput === '0000') {
+      setUnlocked(true);
+      setShowPwdModal(false);
+      pendingAction?.();
+      setPendingAction(null);
+    } else {
+      setPwdError(true);
+      setPwdInput('');
+      setTimeout(() => pwdRef.current?.focus(), 50);
+    }
+  };
+
   const [search, setSearch] = useState('');
   const [editingCell, setEditingCell] = useState(null); // { ri, ci }
   const [editValue,   setEditValue]   = useState('');
   const editRef = useRef();
 
   const startEdit = (ri, ci, val) => {
-    setEditingCell({ ri, ci });
-    setEditValue(val);
-    setTimeout(() => editRef.current?.select(), 0);
+    requireUnlock(() => {
+      setEditingCell({ ri, ci });
+      setEditValue(val);
+      setTimeout(() => editRef.current?.select(), 0);
+    });
   };
 
   const commitEdit = () => {
@@ -3398,8 +3506,10 @@ function ShiftCodeTable() {
   // ── Excel 匯入解析 ──
   const handleImport = (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast('檔案過大，上限 10 MB', 'error'); e.target.value = ''; return; }
+    if (!file) { return; }
+    e.target.value = '';
+    requireUnlock(() => {
+    if (file.size > 10 * 1024 * 1024) { toast('檔案過大，上限 10 MB', 'error'); return; }
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -3409,16 +3519,13 @@ function ShiftCodeTable() {
 
         if (rawRows.length < 2) { toast('檔案無有效資料', 'error'); return; }
 
-        // 第一列為表頭（上班時間, 上班代號, 休假代號, ...假日名稱）
         const rawHeaders = rawRows[0];
-        // 取第2欄以後為欄標題（跳過「上班時間」）
         const newHeaders = rawHeaders.slice(1).map(h => (h ?? '').toString().trim()).filter(Boolean);
 
         if (!newHeaders.length) { toast('無法識別表頭欄位', 'error'); return; }
 
-        // 時間欄：Excel 儲存為小數分數，轉為 HH:MM
         const fracToTime = (frac) => {
-          if (typeof frac === 'string' && frac.includes(':')) return frac.trim(); // 已是字串時間
+          if (typeof frac === 'string' && frac.includes(':')) return frac.trim();
           const totalMin = Math.round(Number(frac) * 24 * 60);
           return String(Math.floor(totalMin / 60)).padStart(2, '0') + ':' + String(totalMin % 60).padStart(2, '0');
         };
@@ -3446,14 +3553,16 @@ function ShiftCodeTable() {
       }
     };
     reader.readAsBinaryString(file);
-    e.target.value = '';
+    }); // requireUnlock end
   };
 
   const handleReset = () => {
-    setHeaders(SHIFT_CODE_HEADERS);
-    setRows(SHIFT_CODE_ROWS);
-    setImportedAt(null);
-    toast('已還原為內建預設資料', 'info');
+    requireUnlock(() => {
+      setHeaders(SHIFT_CODE_HEADERS);
+      setRows(SHIFT_CODE_ROWS);
+      setImportedAt(null);
+      toast('已還原為內建預設資料', 'info');
+    });
   };
 
   // ── 搜尋 ──
@@ -3486,10 +3595,55 @@ function ShiftCodeTable() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* 密碼驗證 Modal */}
+      {showPwdModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl p-7 w-80">
+            <div className="text-center mb-4">
+              <div className="text-3xl mb-2">🔒</div>
+              <h3 className="font-bold text-slate-800 text-lg">需要驗證密碼</h3>
+              <p className="text-sm text-slate-500 mt-1">請輸入班別代號表修改密碼</p>
+            </div>
+            <input
+              ref={pwdRef}
+              type="password"
+              value={pwdInput}
+              onChange={e => { setPwdInput(e.target.value); setPwdError(false); }}
+              onKeyDown={e => e.key === 'Enter' && submitPwd()}
+              placeholder="請輸入密碼"
+              className={`w-full border rounded-lg px-3 py-2 text-center text-xl tracking-widest
+                focus:outline-none focus:ring-2
+                ${pwdError
+                  ? 'border-red-400 focus:ring-red-300 bg-red-50'
+                  : 'border-slate-300 focus:ring-blue-400'}`}
+            />
+            {pwdError && (
+              <p className="text-red-500 text-sm text-center mt-2">密碼錯誤，請重新輸入</p>
+            )}
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setShowPwdModal(false)}
+                className="flex-1 py-2 border border-slate-300 rounded-lg text-slate-600 text-sm hover:bg-slate-50">
+                取消
+              </button>
+              <button onClick={submitPwd}
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+                確認
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 標題列 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-slate-800">班別代號對照表</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-800">班別代號對照表</h2>
+            {unlocked
+              ? <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full border border-green-200">🔓 已解鎖</span>
+              : <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs rounded-full border border-slate-200">🔒 唯讀</span>
+            }
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
             {rows.length} 筆時間 × {headers.length} 欄代號
             {importedAt && <span className="ml-2 text-blue-500">（最後更新：{importedAt}）</span>}
@@ -3555,7 +3709,7 @@ function ShiftCodeTable() {
         <span className={`px-2 py-0.5 rounded ${CODE_COL_LEAVE_COLOR}`}>休假代號（欄2）</span>
         <span className={`px-2 py-0.5 rounded ${HOLIDAY_COL_COLOR}`}>國定假日代號（欄3以後）</span>
         <span className="px-2 py-0.5 rounded bg-yellow-300 text-yellow-900 font-medium">搜尋符合</span>
-        <span className="text-slate-400 ml-2">✏️ 點擊儲存格可直接編輯代號</span>
+        <span className="text-slate-400 ml-2">✏️ 點擊儲存格可編輯（需密碼驗證）</span>
       </div>
 
       {/* 表格 */}
@@ -3650,205 +3804,23 @@ function ShiftCodeTable() {
 // PERMISSION MANAGEMENT
 // ─────────────────────────────────────────────
 
-function PermissionManagement() {
-  const { users, setUsers } = useApp();
-  const toast = useToast();
-
-  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部' };
-  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700' };
-
-  const toggleApproved = (u) => {
-    if (u.username === 'Grace' || u.username === 'reyi') {
-      toast('系統帳號不可停用', 'error'); return;
-    }
-    setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: !x.approved } : x));
-    toast((u.approved ? '已停用：' : '已啟用：') + u.username, u.approved ? 'warn' : 'success');
-  };
-
-  const togglePerm = (userId, pageKey, featKey, val) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id !== userId) return u;
-      const perms = { ...u.permissions };
-      const page  = { ...perms[pageKey] };
-      if (featKey === 'view') {
-        // 關閉 view 時連帶關閉所有子功能
-        page.view = val;
-        if (!val) {
-          PAGE_PERMISSIONS.find(p => p.key === pageKey)?.features.forEach(f => { page[f.key] = false; });
-        }
-      } else {
-        page[featKey] = val;
-        if (val) page.view = true; // 開啟子功能時確保 view 也開啟
-      }
-      perms[pageKey] = page;
-      return { ...u, permissions: perms };
-    }));
-  };
-
-  const [expandedId, setExpandedId] = useState(null);
-  const [activeTab,  setActiveTab]  = useState('staff'); // 'staff' | 'vendor'
-
-  const staffUsers  = users.filter(u => u.role !== ROLES.VENDOR);
-  const vendorUsers = users.filter(u => u.role === ROLES.VENDOR);
-  const tabUsers    = activeTab === 'staff' ? staffUsers : vendorUsers;
-
-  const TAB_CFG = [
-    { key: 'staff',  label: '員工',  icon: '🏢', count: staffUsers.length },
-    { key: 'vendor', label: '廠商',  icon: '🤝', count: vendorUsers.length },
-  ];
-
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-2xl">👤</span>
-        <h2 className="text-xl font-bold text-slate-800">系統權限與成員管理</h2>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200">
-        {TAB_CFG.map(t => (
-          <button key={t.key}
-            onClick={() => { setActiveTab(t.key); setExpandedId(null); }}
-            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-t-lg
-                        border border-b-0 transition-colors
-                        ${activeTab === t.key
-                          ? 'bg-white border-slate-200 text-blue-600 -mb-px z-10'
-                          : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}`}>
-            <span>{t.icon}</span>
-            <span>{t.label}</span>
-            <span className={`px-1.5 py-0.5 rounded-full text-xs
-                              ${activeTab === t.key ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
-              {t.count}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Header */}
-      <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
-                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-slate-200"
-           style={{ gridTemplateColumns: '1fr 1fr 100px 70px 160px 120px' }}>
-        <span>帳號</span>
-        <span>名稱</span>
-        <span>角色</span>
-        <span>登入次數</span>
-        <span>審核狀態</span>
-        <span>分頁權限</span>
-      </div>
-
-      <div className="border border-slate-200 rounded-b-xl divide-y divide-slate-100 overflow-hidden">
-        {tabUsers.map(u => {
-          const perms = u.permissions ?? getDefaultPermissions(u.role);
-          const isOpen = expandedId === u.id;
-          const visibleCount = PAGE_PERMISSIONS.filter(p => perms[p.key]?.view).length;
-
-          return (
-            <div key={u.id}>
-              {/* ── 摘要列 ── */}
-              <div className="grid items-center gap-3 px-4 py-3 hover:bg-slate-50 cursor-default"
-                   style={{ gridTemplateColumns: '1fr 1fr 100px 70px 160px 120px' }}>
-
-                <span className="font-bold text-slate-800 text-sm">{u.username}</span>
-                <span className="text-slate-600 text-sm">{u.name}</span>
-
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>
-                  {roleLabel[u.role]}
-                </span>
-
-                <span className="text-blue-600 font-bold text-center">{u.loginCount ?? 0}</span>
-
-                <button
-                  onClick={() => toggleApproved(u)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors w-fit
-                    ${u.approved !== false
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>
-                  {u.approved !== false ? '已核准（點擊停用）' : '已停用（點擊啟用）'}
-                </button>
-
-                {/* 展開按鈕 + 摘要 */}
-                <button
-                  onClick={() => setExpandedId(isOpen ? null : u.id)}
-                  className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800
-                             bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors w-fit">
-                  <span>{isOpen ? '▲ 收合' : '▼ 設定權限'}</span>
-                  <span className="text-indigo-400">({visibleCount}/{PAGE_PERMISSIONS.length})</span>
-                </button>
-              </div>
-
-              {/* ── 展開：細部權限 ── */}
-              {isOpen && (
-                <div className="bg-slate-50 border-t border-slate-200 px-6 py-4">
-                  {u.role === ROLES.ADMIN && (
-                    <p className="text-xs text-slate-400 italic mb-3">超級管理員擁有全部權限，無法調整。</p>
-                  )}
-                  <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-                    {PAGE_PERMISSIONS.map(page => {
-                      const pagePerm = perms[page.key] ?? { view: false };
-                      return (
-                        <div key={page.key}
-                             className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
-                          {/* 頁面可視 */}
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!pagePerm.view}
-                              onChange={e => togglePerm(u.id, page.key, 'view', e.target.checked)}
-                              className="rounded accent-blue-600"
-                              disabled={u.role === ROLES.ADMIN}
-                            />
-                            <span className="text-sm font-semibold text-slate-700">{page.label}</span>
-                            <span className="text-xs text-slate-400 ml-auto">可視</span>
-                          </label>
-
-                          {/* 子功能 */}
-                          {page.features.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 pl-5">
-                              {page.features.map(f => (
-                                <label key={f.key} className="flex items-center gap-1 cursor-pointer select-none">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!pagePerm[f.key]}
-                                    onChange={e => togglePerm(u.id, page.key, f.key, e.target.checked)}
-                                    className="rounded accent-indigo-500"
-                                    disabled={u.role === ROLES.ADMIN}
-                                  />
-                                  <span className={`text-xs px-1.5 py-0.5 rounded-full border
-                                    ${pagePerm[f.key]
-                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                      : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                                    {f.label}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function AccountManagement() {
   const { users, setUsers, vendors, warehouses } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
-  const [showModal, setShowModal] = useState(false);
-  const [editUser, setEditUser] = useState(null);
 
+  // ── 分頁 Tab ──
+  const [activeTab,   setActiveTab]   = useState('staff');
+  const [expandedId,  setExpandedId]  = useState(null);
+
+  // ── 帳號新增 / 編輯 Modal ──
+  const [showModal, setShowModal] = useState(false);
+  const [editUser,  setEditUser]  = useState(null);
   const emptyForm = { id: '', username: '', password: '', name: '', role: ROLES.VENDOR, vendors: [], allowedWarehouses: [] };
   const [form, setForm] = useState(emptyForm);
 
-  const openAdd = () => { setForm(emptyForm); setEditUser(null); setShowModal(true); };
-  const openEdit = u => { setForm({ ...u }); setEditUser(u); setShowModal(true); };
+  const openAdd  = () => { setForm(emptyForm); setEditUser(null); setShowModal(true); };
+  const openEdit = u  => { setForm({ ...u });  setEditUser(u);   setShowModal(true); };
 
   const handleSave = () => {
     if (!form.username || !form.password || !form.name) {
@@ -3858,7 +3830,7 @@ function AccountManagement() {
       setUsers(prev => prev.map(u => u.id === form.id ? form : u));
       toast('帳號已更新：' + form.username, 'success');
     } else {
-      setUsers(prev => [...prev, { ...form, id: 'u' + Date.now() }]);
+      setUsers(prev => [...prev, { ...form, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(form.role) }]);
       toast('帳號已新增：' + form.username, 'success');
     }
     setShowModal(false);
@@ -3872,7 +3844,7 @@ function AccountManagement() {
 
   const handleApprove = id => {
     setUsers(prev => prev.map(u => u.id === id ? { ...u, approved: true } : u));
-    toast('帳號已核准，廠商可立即登入', 'success');
+    toast('帳號已核准', 'success');
   };
 
   const handleReject = id => {
@@ -3880,30 +3852,58 @@ function AccountManagement() {
     toast('申請已拒絕並刪除', 'info');
   };
 
-  const pendingUsers = users.filter(u => u.approved === false);
+  const toggleApproved = u => {
+    if (u.username === 'Grace' || u.username === 'reyi') { toast('系統帳號不可停用', 'error'); return; }
+    setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: !x.approved } : x));
+    toast((u.approved ? '已停用：' : '已啟用：') + u.username, u.approved ? 'warn' : 'success');
+  };
 
-  const toggleVendor = v => {
-    setForm(p => ({
-      ...p,
-      vendors: p.vendors.includes(v) ? p.vendors.filter(x => x !== v) : [...p.vendors, v],
+  const togglePerm = (userId, pageKey, featKey, val) => {
+    setUsers(prev => prev.map(u => {
+      if (u.id !== userId) return u;
+      const perms = { ...u.permissions };
+      const page  = { ...perms[pageKey] };
+      if (featKey === 'view') {
+        page.view = val;
+        if (!val) PAGE_PERMISSIONS.find(p => p.key === pageKey)?.features.forEach(f => { page[f.key] = false; });
+      } else {
+        page[featKey] = val;
+        if (val) page.view = true;
+      }
+      perms[pageKey] = page;
+      return { ...u, permissions: perms };
     }));
   };
 
-  const toggleWarehouse = whId => {
-    setForm(p => ({
-      ...p,
-      allowedWarehouses: (p.allowedWarehouses ?? []).includes(whId)
-        ? (p.allowedWarehouses ?? []).filter(x => x !== whId)
-        : [...(p.allowedWarehouses ?? []), whId],
-    }));
-  };
+  const toggleVendor = v => setForm(p => ({
+    ...p, vendors: p.vendors.includes(v) ? p.vendors.filter(x => x !== v) : [...p.vendors, v],
+  }));
+
+  const toggleWarehouse = whId => setForm(p => ({
+    ...p,
+    allowedWarehouses: (p.allowedWarehouses ?? []).includes(whId)
+      ? (p.allowedWarehouses ?? []).filter(x => x !== whId)
+      : [...(p.allowedWarehouses ?? []), whId],
+  }));
 
   const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部' };
+  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700' };
+
+  const pendingUsers = users.filter(u => u.approved === false);
+  const staffUsers   = users.filter(u => u.role !== ROLES.VENDOR && u.approved !== false);
+  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR  && u.approved !== false);
+  const tabUsers     = activeTab === 'staff' ? staffUsers : vendorUsers;
+
+  const TAB_CFG = [
+    { key: 'staff',  label: '員工帳號', icon: '🏢', count: staffUsers.length },
+    { key: 'vendor', label: '廠商帳號', icon: '🤝', count: vendorUsers.length },
+  ];
 
   return (
     <div className="p-6 space-y-4">
+      {/* 標題列 */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-800">帳號管理</h2>
+        <h2 className="text-xl font-bold text-slate-800">帳號與權限管理</h2>
         <button onClick={openAdd}
           className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
           ➕ 新增帳號
@@ -3936,60 +3936,136 @@ function AccountManagement() {
         </div>
       )}
 
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-100">
-            <tr>
-              {['帳號', '姓名', '角色', '授權廠商', '可使用倉別', '操作'].map(h => (
-                <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {users.map(u => (
-              <tr key={u.id} className="hover:bg-slate-50">
-                <td className="px-4 py-2.5 font-mono text-slate-700">{u.username}</td>
-                <td className="px-4 py-2.5">{u.name}</td>
-                <td className="px-4 py-2.5">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                    ${u.role === ROLES.ADMIN ? 'bg-red-100 text-red-700'
-                    : u.role === ROLES.AREA ? 'bg-purple-100 text-purple-700'
-                    : 'bg-blue-100 text-blue-700'}`}>
-                    {roleLabel[u.role]}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-slate-500 text-xs">
-                  {u.role === ROLES.ADMIN ? '全部廠商' : u.vendors.join('、') || '—'}
-                </td>
-                <td className="px-4 py-2.5 text-xs">
-                  {u.role === ROLES.ADMIN || !(u.allowedWarehouses?.length)
-                    ? <span className="text-slate-400">全部倉別</span>
-                    : <div className="flex flex-wrap gap-1">
-                        {u.allowedWarehouses.map(whId => {
-                          const wh = warehouses.find(w => w.id === whId);
-                          return wh ? (
-                            <span key={whId} className="px-1.5 py-0.5 bg-teal-50 text-teal-700
-                                                         border border-teal-200 rounded-full">
-                              {wh.name}
-                            </span>
-                          ) : null;
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {TAB_CFG.map(t => (
+          <button key={t.key}
+            onClick={() => { setActiveTab(t.key); setExpandedId(null); }}
+            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-t-lg border border-b-0 transition-colors
+                        ${activeTab === t.key
+                          ? 'bg-white border-slate-200 text-blue-600 -mb-px z-10'
+                          : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}`}>
+            <span>{t.icon}</span>
+            <span>{t.label}</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-xs
+                              ${activeTab === t.key ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* 清單表頭 */}
+      <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
+                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-slate-200"
+           style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
+        <span>帳號</span>
+        <span>姓名</span>
+        <span>角色</span>
+        <span>登入次數</span>
+        <span>授權廠商</span>
+        <span>審核狀態</span>
+        <span>操作 / 權限</span>
+      </div>
+
+      <div className="border border-slate-200 rounded-b-xl divide-y divide-slate-100 overflow-hidden">
+        {tabUsers.map(u => {
+          const perms = u.permissions ?? getDefaultPermissions(u.role);
+          const isOpen = expandedId === u.id;
+          const visibleCount = PAGE_PERMISSIONS.filter(p => perms[p.key]?.view).length;
+
+          return (
+            <div key={u.id}>
+              {/* ── 摘要列 ── */}
+              <div className="grid items-center gap-2 px-4 py-3 hover:bg-slate-50"
+                   style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
+
+                <span className="font-mono font-bold text-slate-800 text-sm truncate">{u.username}</span>
+                <span className="text-slate-600 text-sm truncate">{u.name}</span>
+
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>
+                  {roleLabel[u.role]}
+                </span>
+
+                <span className="text-blue-600 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
+
+                <span className="text-slate-500 text-xs truncate">
+                  {u.role === ROLES.ADMIN ? '全部廠商' : u.vendors?.join('、') || '—'}
+                </span>
+
+                <button onClick={() => toggleApproved(u)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors w-fit
+                    ${u.approved !== false
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                      : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>
+                  {u.approved !== false ? '✔ 已核准' : '✕ 已停用'}
+                </button>
+
+                {/* 操作按鈕 */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button onClick={() => openEdit(u)}
+                    className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded">
+                    編輯
+                  </button>
+                  <button onClick={() => handleDelete(u.id)}
+                    className="px-2 py-1 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded">
+                    刪除
+                  </button>
+                  <button onClick={() => setExpandedId(isOpen ? null : u.id)}
+                    className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded flex items-center gap-0.5">
+                    {isOpen ? '▲' : '▼'} 權限
+                    <span className="text-indigo-300 ml-0.5">({visibleCount}/{PAGE_PERMISSIONS.length})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* ── 展開：細部權限 ── */}
+              {isOpen && (
+                <div className="bg-slate-50 border-t border-slate-200 px-6 py-4">
+                  {u.role === ROLES.ADMIN
+                    ? <p className="text-xs text-slate-400 italic">超級管理員擁有全部權限，無法調整。</p>
+                    : <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+                        {PAGE_PERMISSIONS.map(page => {
+                          const pagePerm = perms[page.key] ?? { view: false };
+                          return (
+                            <div key={page.key} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                              <label className="flex items-center gap-2 cursor-pointer select-none">
+                                <input type="checkbox" checked={!!pagePerm.view}
+                                  onChange={e => togglePerm(u.id, page.key, 'view', e.target.checked)}
+                                  className="rounded accent-blue-600" />
+                                <span className="text-sm font-semibold text-slate-700">{page.label}</span>
+                                <span className="text-xs text-slate-400 ml-auto">可視</span>
+                              </label>
+                              {page.features.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 pl-5">
+                                  {page.features.map(f => (
+                                    <label key={f.key} className="flex items-center gap-1 cursor-pointer select-none">
+                                      <input type="checkbox" checked={!!pagePerm[f.key]}
+                                        onChange={e => togglePerm(u.id, page.key, f.key, e.target.checked)}
+                                        className="rounded accent-indigo-500" />
+                                      <span className={`text-xs px-1.5 py-0.5 rounded-full border
+                                        ${pagePerm[f.key]
+                                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                          : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                                        {f.label}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
                         })}
                       </div>
                   }
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex gap-2">
-                    <button onClick={() => openEdit(u)} className="text-blue-600 hover:text-blue-800 text-xs">編輯</button>
-                    <button onClick={() => handleDelete(u.id)} className="text-red-500 hover:text-red-700 text-xs">刪除</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Modal */}
+      {/* 帳號新增 / 編輯 Modal */}
       {showModal && (
         <Modal onClose={() => setShowModal(false)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
@@ -4023,8 +4099,7 @@ function AccountManagement() {
                 <div className="flex flex-wrap gap-2">
                   {vendorNames.map(v => (
                     <label key={v} className="flex items-center gap-1.5 cursor-pointer text-sm">
-                      <input type="checkbox" checked={form.vendors.includes(v)} onChange={() => toggleVendor(v)}
-                        className="rounded" />
+                      <input type="checkbox" checked={form.vendors.includes(v)} onChange={() => toggleVendor(v)} className="rounded" />
                       {v}
                     </label>
                   ))}
@@ -4039,13 +4114,11 @@ function AccountManagement() {
               <div className="flex flex-wrap gap-2">
                 {warehouses.map(w => (
                   <label key={w.id} className="flex items-center gap-1.5 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
+                    <input type="checkbox"
                       checked={(form.allowedWarehouses ?? []).includes(w.id)}
                       onChange={() => toggleWarehouse(w.id)}
                       disabled={form.role === ROLES.ADMIN}
-                      className="rounded accent-teal-600"
-                    />
+                      className="rounded accent-teal-600" />
                     <span className={form.role === ROLES.ADMIN ? 'text-slate-400' : ''}>{w.name}</span>
                   </label>
                 ))}
@@ -4204,7 +4277,6 @@ export default function App() {
     shiftcodes: <ShiftCodeTable />,
     settings:   <Settings />,
     accounts:   <AccountManagement />,
-    permissions: <PermissionManagement />,
   };
 
   if (!currentUser) {
