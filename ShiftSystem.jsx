@@ -1234,19 +1234,12 @@ function ScheduleTable() {
         const headerRow = aoa[0] || [];
 
         // 自動偵測格式：
-        // 格式A（系統匯出）: 員工編號/姓名/廠商/日期… → 員編在col0，日期格式 "7/13(一)"，資料從row1起
-        // 格式B（外部Excel）: 廠商/樓層/員編/姓名/日期… → 員編在col2，日期格式 "7/13"，資料從row2起
-        const isFormatA = String(headerRow[0]).trim() === '員工編號';
-        const empIdCol  = isFormatA ? 0 : 2;
-        const dataStart = isFormatA ? 1 : 2;
-        // 日期欄位：同時支援 "7/13" 和 "7/13(一)"
-        const dateCols = [];
-        for (let c = isFormatA ? 3 : 4; c < headerRow.length; c++) {
-          const h = String(headerRow[c]).trim();
-          const m = h.match(/^(\d{1,2})\/(\d{1,2})/); // prefix match covers both formats
-          if (m) dateCols.push({ col: c, month: parseInt(m[1]), day: parseInt(m[2]) });
-        }
-        if (dateCols.length === 0) { toast('找不到日期欄位（格式需為 M/D 或 M/D(星期)）', 'error'); return; }
+        // 格式A（系統匯出）: 員工編號/姓名/廠商/日期… → 員編col0，日期"7/13(一)"，資料row1起
+        // 格式B（外部Excel）: 廠商/樓層/員編/姓名/日期… → 員編col2，日期"7/13"，資料row2起
+        // 格式C（點名表）: 作業區/姓名/廠商/日期… → 用姓名+廠商對應，月在row0/日在row1，資料從第一個非空列起
+        const h0 = String(headerRow[0]).trim();
+        const isFormatA = h0 === '員工編號';
+        const isFormatC = h0.includes('作業區') || headerRow[1] === '姓名';
 
         const baseYear  = rangeMode ? parseInt(scheduleRange.start.split('-')[0]) : selectedYear;
         const baseMonth = rangeMode ? parseInt(scheduleRange.start.split('-')[1]) : selectedMonth;
@@ -1262,16 +1255,57 @@ function ScheduleTable() {
           return null;
         };
 
-        const empMap = {};
-        employees.forEach(emp => { if (emp.empId) empMap[emp.empId] = emp; });
+        // 建立查找表：empId → emp（格式A/B）；name+vendor → emp（格式C）
+        const empMap = {}, nameMap = {};
+        employees.forEach(emp => {
+          if (emp.empId) empMap[emp.empId] = emp;
+          const key = `${emp.name}|${emp.vendor ?? ''}`;
+          nameMap[key] = emp;
+          nameMap[emp.name] = emp; // 僅姓名也可匹配
+        });
+
+        let dateCols = [], empIdCol = 2, dataStart = 2;
+
+        if (isFormatC) {
+          // 格式C：月份在row0 col3+，日期在row1 col3+
+          const row1 = aoa[1] || [];
+          for (let c = 3; c < headerRow.length; c++) {
+            const mo = parseInt(String(headerRow[c]).trim());
+            const dy = parseInt(String(row1[c] ?? '').trim());
+            if (!isNaN(mo) && !isNaN(dy) && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+              dateCols.push({ col: c, month: mo, day: dy });
+            }
+          }
+          // 資料從第一個姓名非空的列起（跳過空白列）
+          dataStart = aoa.findIndex((row, i) => i >= 3 && String(row[1] ?? '').trim() !== '');
+          if (dataStart < 0) dataStart = 4;
+        } else {
+          empIdCol  = isFormatA ? 0 : 2;
+          dataStart = isFormatA ? 1 : 2;
+          for (let c = isFormatA ? 3 : 4; c < headerRow.length; c++) {
+            const h = String(headerRow[c]).trim();
+            const m = h.match(/^(\d{1,2})\/(\d{1,2})/);
+            if (m) dateCols.push({ col: c, month: parseInt(m[1]), day: parseInt(m[2]) });
+          }
+        }
+
+        if (dateCols.length === 0) { toast('找不到日期欄位', 'error'); return; }
 
         const updates = {};
         let updatedCells = 0, skippedEmps = 0;
         for (let r = dataStart; r < aoa.length; r++) {
           const row = aoa[r];
-          const empId = String(row[empIdCol] ?? '').trim();
-          if (!empId) continue;
-          const emp = empMap[empId];
+          let emp = null;
+          if (isFormatC) {
+            const name   = String(row[1] ?? '').trim();
+            const vendor = String(row[2] ?? '').trim();
+            if (!name) continue;
+            emp = nameMap[`${name}|${vendor}`] ?? nameMap[name] ?? null;
+          } else {
+            const empId = String(row[empIdCol] ?? '').trim();
+            if (!empId) continue;
+            emp = empMap[empId] ?? null;
+          }
           if (!emp) { skippedEmps++; continue; }
           if (!updates[emp.id]) updates[emp.id] = {};
           for (const { col, month, day } of dateCols) {
