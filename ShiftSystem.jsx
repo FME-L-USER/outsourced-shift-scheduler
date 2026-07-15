@@ -7,6 +7,78 @@
 import React, {
   useState, useEffect, useCallback, useRef, createContext, useContext, useMemo
 } from 'react';
+
+// ── 全域設計語系注入 ──────────────────────────────────────────
+(function injectDesignTokens() {
+  if (document.getElementById('sms-tokens')) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap';
+  document.head.appendChild(link);
+  const style = document.createElement('style');
+  style.id = 'sms-tokens';
+  style.textContent = `
+    :root {
+      --sms-bg:           #FAF7F2;
+      --sms-surface:      #FFFFFF;
+      --sms-surface-2:    #F5F2EC;
+      --sms-teal:         #0F766E;
+      --sms-teal-dark:    #0D6660;
+      --sms-teal-light:   #CCFBF1;
+      --sms-teal-50:      #F0FDFA;
+      --sms-coral:        #E05252;
+      --sms-coral-bg:     #FEF2F2;
+      --sms-coral-border: #FECACA;
+      --sms-amber:        #B45309;
+      --sms-amber-bg:     #FFFBEB;
+      --sms-amber-border: #FDE68A;
+      --sms-border:       #DDD9D0;
+      --sms-border-dark:  #C8C4BA;
+      --sms-sidebar:      #14302D;
+      --sms-sidebar-hover:#1C4A46;
+      --sms-sidebar-active:#0F766E;
+      --sms-text:         #1C2B3A;
+      --sms-text-muted:   #6B7280;
+      --sms-radius-sm:    6px;
+      --sms-radius:       10px;
+      --sms-radius-lg:    14px;
+    }
+    html, body, #root {
+      font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+      font-size: 14px;
+      background: var(--sms-bg);
+    }
+    .sms-input {
+      background: var(--sms-surface) !important;
+      border: 1px solid var(--sms-border) !important;
+      border-radius: var(--sms-radius-sm) !important;
+      font-family: inherit !important;
+      font-size: 14px !important;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .sms-input:focus {
+      outline: none;
+      border-color: var(--sms-teal) !important;
+      box-shadow: 0 0 0 3px rgba(15,118,110,.12) !important;
+    }
+    .sms-btn-primary {
+      background: var(--sms-teal) !important;
+      color: #fff !important;
+      border-radius: var(--sms-radius-sm) !important;
+      font-family: inherit !important;
+      font-size: 14px !important;
+      font-weight: 500 !important;
+      transition: background .15s;
+    }
+    .sms-btn-primary:hover { background: var(--sms-teal-dark) !important; }
+    .sms-card {
+      background: var(--sms-surface);
+      border: 1px solid var(--sms-border);
+      border-radius: var(--sms-radius-lg);
+    }
+  `;
+  document.head.appendChild(style);
+})();
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
@@ -417,11 +489,11 @@ function ForcePwdChange({ user, onDone }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-100 px-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-8 border border-[#DDD9D0]">
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-amber-100 rounded-2xl mb-3">
-            <svg className="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-teal-50 rounded-xl mb-3">
+            <svg className="w-7 h-7 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
             </svg>
           </div>
@@ -439,7 +511,7 @@ function ForcePwdChange({ user, onDone }) {
               <div className="relative">
                 <input type={show ? 'text' : 'password'} value={form[f.key]} placeholder={f.ph}
                   onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm pr-10
+                  className="w-full px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm pr-10
                              focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                 {f.key === 'pwd' && (
                   <button type="button" onClick={() => setShow(p => !p)}
@@ -455,11 +527,11 @@ function ForcePwdChange({ user, onDone }) {
               </div>
             </div>
           ))}
-          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3">
+          <div className="text-xs text-slate-400 bg-[#F5F2EC] rounded-lg p-3">
             密碼規則：至少 8 個字元，需包含英文字母與數字
           </div>
           <button type="submit" disabled={busy}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+            className="w-full py-3 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
             {busy ? '儲存中…' : '儲存新密碼並進入系統'}
           </button>
         </form>
@@ -544,8 +616,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   ];
 
   const IDENTITY_INFO = {
-    riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-blue-50 border-blue-100 text-blue-700' },
-    vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
+    riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-teal-50 border-blue-100 text-blue-700' },
+    vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-teal-50 border-teal-100 text-emerald-700' },
     worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
   };
 
@@ -687,21 +759,21 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   // ── 申請廠商帳號畫面 ──
   if (identity === 'register') {
     if (regDone) return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
+      <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2]">
+        <div className="bg-white rounded-xl shadow p-8 w-full max-w-sm text-center">
           <div className="text-5xl mb-4">✅</div>
           <h2 className="text-xl font-bold text-slate-800 mb-2">申請已送出</h2>
           <p className="text-sm text-slate-500 mb-6">請等候管理員審核後即可登入，謝謝。</p>
           <button onClick={() => { setIdentity(''); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
+            className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
             返回登入
           </button>
         </div>
       </div>
     );
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
-        <form onSubmit={handleRegister} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+      <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2]">
+        <form onSubmit={handleRegister} className="bg-white rounded-xl shadow p-8 w-full max-w-sm">
           <div className="flex items-center gap-3 mb-6">
             <button type="button" onClick={() => setIdentity('')} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
             <div>
@@ -720,18 +792,18 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
               <input type={f.type} value={regForm[f.key]} placeholder={f.placeholder}
                 onChange={e => setRegForm(p => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
             </div>
           ))}
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-700 mb-1">所屬廠商</label>
             <select value={regForm.vendor} onChange={e => setRegForm(p => ({ ...p, vendor: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
               <option value="">── 請選擇廠商 ──</option>
               {vendorNames.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
-          <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
+          <button type="submit" className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
             送出申請
           </button>
           <button type="button" onClick={() => setIdentity('')} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
@@ -746,11 +818,11 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   const info = identity ? IDENTITY_INFO[identity] : null;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-100 px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center px-4">
 
       {/* Logo + 標題 */}
       <div className="text-center mb-7">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-md mb-4">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-xl shadow-md mb-4">
           <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-9 h-9">
             <path d="M20 6L34 13.5V18L20 25.5L6 18V13.5L20 6Z" fill="#3B82F6" opacity="0.25"/>
             <path d="M20 12L34 19.5V24L20 31.5L6 24V19.5L20 12Z" fill="#3B82F6" opacity="0.5"/>
@@ -762,7 +834,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       </div>
 
       {/* 卡片 */}
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-6">
 
         <form onSubmit={handleSubmit}>
 
@@ -773,7 +845,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               <select
                 value={identity}
                 onChange={e => switchIdentity(e.target.value)}
-                className="w-full appearance-none px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                className="w-full appearance-none px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
                            focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition
                            text-slate-700 cursor-pointer">
                 <option value="">請選擇登入身份</option>
@@ -819,7 +891,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                   <input type="text" value={username} onChange={e => setUsername(e.target.value)}
                     required autoFocus
                     placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? '公司 AD 帳號' : '帳號'}
-                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                    className="w-full pl-9 pr-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
                                focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                 </div>
               </div>
@@ -835,7 +907,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                   <input type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
                     required
                     placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? 'AD 密碼' : '密碼'}
-                    className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                    className="w-full pl-9 pr-10 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
                                focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                   <button type="button" onClick={() => setShowPwd(p => !p)}
                     className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600">
@@ -852,7 +924,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
                 <div className="flex items-center gap-2">
                   <canvas ref={captchaRef} width={130} height={44}
-                    className="rounded-lg border border-slate-200 cursor-pointer select-none"
+                    className="rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
                     title="點擊刷新" onClick={refreshCaptcha} />
                   <button type="button" onClick={refreshCaptcha}
                     className="text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
@@ -863,13 +935,13 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                   <input type="text" value={captchaInput}
                     onChange={e => setCaptchaInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
                     maxLength={4} placeholder="請輸入驗證碼"
-                    className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-center tracking-widest
+                    className="flex-1 px-3 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm text-center tracking-widest
                                focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                 </div>
               </div>
 
               <button type="submit"
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+                className="w-full py-3 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
                 登入系統
               </button>
             </>
@@ -881,7 +953,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               <span className="text-sm text-slate-400">還沒有帳號？</span>
               <button type="button"
                 onClick={() => { setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); setIdentity('register'); }}
-                className="ml-1 text-sm text-blue-600 hover:text-blue-700 font-medium">
+                className="ml-1 text-sm text-teal-700 hover:text-blue-700 font-medium">
                 申請廠商幹部帳號
               </button>
             </div>
@@ -916,10 +988,11 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
   );
 
   return (
-    <aside className={`flex flex-col bg-slate-900 text-white transition-all duration-300
-                       ${collapsed ? 'w-14' : 'w-56'} shrink-0 h-screen sticky top-0`}>
+    <aside className={`flex flex-col text-white transition-all duration-300
+                       ${collapsed ? 'w-14' : 'w-56'} shrink-0 h-screen sticky top-0`}
+           style={{background:'var(--sms-sidebar)'}}>
       {/* Logo */}
-      <div className="flex items-center gap-2 px-3 py-4 border-b border-slate-700">
+      <div className="flex items-center gap-2 px-3 py-4 border-b border-[#1C4A46]">
         <span className="text-2xl">🗓️</span>
         {!collapsed && <span className="font-bold text-sm leading-tight">班表管理<br/>系統</span>}
       </div>
@@ -929,17 +1002,22 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
         {items.map(item => (
           <button key={item.key}
             onClick={() => onNavigate(item.key)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors rounded-[6px] mx-0.5
                         ${currentPage === item.key
-                          ? 'bg-blue-600 text-white'
-                          : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}>
+                          ? 'text-white font-medium'
+                          : 'text-slate-300 hover:text-white'}`}
+            style={currentPage === item.key
+              ? {background:'var(--sms-sidebar-active)'}
+              : undefined}
+            onMouseEnter={e => { if(currentPage !== item.key) e.currentTarget.style.background='var(--sms-sidebar-hover)'; }}
+            onMouseLeave={e => { if(currentPage !== item.key) e.currentTarget.style.background=''; }}>
             {!collapsed && <span className="truncate">{item.label}</span>}
           </button>
         ))}
       </nav>
 
       {/* User Info & Logout */}
-      <div className="border-t border-slate-700 p-3">
+      <div className="border-t border-[#1C4A46] p-3">
         {!collapsed && (
           <div className="mb-2 text-xs text-slate-400 truncate">
             <div className="font-medium text-slate-200">{currentUser.name}</div>
@@ -948,7 +1026,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
         )}
         <button onClick={onLogout}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-400
-                     hover:bg-slate-700 hover:text-red-400 transition-colors">
+                     hover:text-red-300 transition-colors">
           <span>🚪</span>
           {!collapsed && '登出'}
         </button>
@@ -956,7 +1034,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
 
       {/* Collapse toggle */}
       <button onClick={onToggle}
-        className="absolute -right-3 top-16 bg-slate-700 hover:bg-slate-600 text-white
+        className="absolute -right-3 top-16 bg-[#1C4A46] hover:bg-[#254E4A] text-white
                    rounded-full w-6 h-6 flex items-center justify-center text-xs shadow">
         {collapsed ? '›' : '‹'}
       </button>
@@ -1018,7 +1096,7 @@ function WarehouseDeptBar() {
     <div className="flex items-center gap-2 flex-wrap text-sm">
       <span className="text-slate-500 font-medium whitespace-nowrap">🏭 倉別：</span>
       <select value={selectedWarehouse ?? ''} onChange={e => handleWhChange(e.target.value)}
-        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
         <option value="">全部倉別</option>
         {visibleWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
@@ -1026,7 +1104,7 @@ function WarehouseDeptBar() {
       <span className="text-slate-500 font-medium whitespace-nowrap">課別：</span>
       <select value={selectedDept ?? ''} onChange={e => handleDeptChange(e.target.value)}
         disabled={!selectedWarehouse}
-        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
+        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
         <option value="">全部課別</option>
         {depts.map(d => <option key={d.id} value={d.id}>{d.code ? `${d.code} ${d.name}` : d.name}</option>)}
       </select>
@@ -1034,13 +1112,13 @@ function WarehouseDeptBar() {
       <span className="text-slate-500 font-medium whitespace-nowrap">組別：</span>
       <select value={selectedGroup ?? ''} onChange={e => handleGroupChange(e.target.value)}
         disabled={!selectedDept || groups.length === 0}
-        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
+        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
         <option value="">全部組別</option>
         {groups.map(g => <option key={g} value={g}>{g}</option>)}
       </select>
       {hasFilter && (
         <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
-          className="px-2 py-0.5 text-xs text-slate-500 border border-slate-300 rounded-full hover:bg-slate-100">
+          className="px-2 py-0.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
           清除篩選
         </button>
       )}
@@ -1048,7 +1126,7 @@ function WarehouseDeptBar() {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-slate-400 text-xs">廠商：</span>
           {deptObj.vendors.map(v => (
-            <span key={v} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs">{v}</span>
+            <span key={v} className="px-1.5 py-0.5 bg-teal-50 text-blue-700 border border-teal-200 rounded-full text-xs">{v}</span>
           ))}
         </div>
       )}
@@ -1056,7 +1134,7 @@ function WarehouseDeptBar() {
   );
 
   return (
-    <div className="bg-white border-b border-slate-200 shrink-0">
+    <div className="bg-white border-b border-[#DDD9D0] shrink-0">
       {/* Desktop */}
       <div className="hidden md:flex items-center gap-2 px-4 py-2 flex-wrap text-sm">
         {selects}
@@ -1066,7 +1144,7 @@ function WarehouseDeptBar() {
         <div className="flex items-center justify-between px-4 py-2">
           <span className="text-sm text-slate-600 truncate max-w-[200px]">🏭 {filterLabel}</span>
           <button onClick={() => setMobileFilterOpen(v => !v)}
-            className="text-xs px-2 py-1 border border-slate-300 rounded-lg text-slate-600 whitespace-nowrap">
+            className="text-xs px-2 py-1 border border-[#DDD9D0] rounded-lg text-slate-600 whitespace-nowrap">
             {mobileFilterOpen ? '收起 ▲' : '篩選 ▼'}
           </button>
         </div>
@@ -1075,7 +1153,7 @@ function WarehouseDeptBar() {
             <div className="flex items-center gap-2">
               <span className="text-slate-500 w-12 shrink-0">倉別</span>
               <select value={selectedWarehouse ?? ''} onChange={e => handleWhChange(e.target.value)}
-                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
                 <option value="">全部倉別</option>
                 {visibleWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
@@ -1084,7 +1162,7 @@ function WarehouseDeptBar() {
               <span className="text-slate-500 w-12 shrink-0">課別</span>
               <select value={selectedDept ?? ''} onChange={e => handleDeptChange(e.target.value)}
                 disabled={!selectedWarehouse}
-                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
+                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
                 <option value="">全部課別</option>
                 {depts.map(d => <option key={d.id} value={d.id}>{d.code ? `${d.code} ${d.name}` : d.name}</option>)}
               </select>
@@ -1093,14 +1171,14 @@ function WarehouseDeptBar() {
               <span className="text-slate-500 w-12 shrink-0">組別</span>
               <select value={selectedGroup ?? ''} onChange={e => handleGroupChange(e.target.value)}
                 disabled={!selectedDept || groups.length === 0}
-                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
+                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
                 <option value="">全部組別</option>
                 {groups.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             {hasFilter && (
               <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
-                className="self-start px-3 py-1 text-xs text-slate-500 border border-slate-300 rounded-full hover:bg-slate-100">
+                className="self-start px-3 py-1 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
                 清除篩選
               </button>
             )}
@@ -1122,7 +1200,7 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
       <aside className="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-50 flex flex-col">
-        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-4 py-4 border-b border-[#1C4A46]">
           <span className="font-bold">委外人力排班作業平台</span>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
@@ -1136,7 +1214,7 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-slate-700 text-sm text-slate-300">
+        <div className="p-4 border-t border-[#1C4A46] text-sm text-slate-300">
           <div>{currentUser.name}</div>
           <button onClick={onLogout} className="mt-2 text-red-400 hover:text-red-300">登出</button>
         </div>
@@ -1258,20 +1336,20 @@ function Dashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-slate-500">查詢日期：</span>
           <select value={dashYear} onChange={e => setDashYear(+e.target.value)}
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
             {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}年</option>)}
           </select>
           <select value={dashMonth} onChange={e => setDashMonth(+e.target.value)}
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
             {Array.from({length:12},(_,i)=>i+1).map(m => <option key={m} value={m}>{m}月</option>)}
           </select>
           <select value={safeDay} onChange={e => setDashDay(+e.target.value)}
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
             {Array.from({length:daysInDashMonth},(_,i)=>i+1).map(d => <option key={d} value={d}>{d}日</option>)}
           </select>
           {!isToday && (
             <button onClick={() => { setDashYear(today.getFullYear()); setDashMonth(today.getMonth()+1); setDashDay(today.getDate()); }}
-              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs hover:bg-blue-200">
+              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-teal-200 rounded-lg text-xs hover:bg-blue-200">
               回今日
             </button>
           )}
@@ -1282,7 +1360,7 @@ function Dashboard() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
-          { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-blue-50 border-blue-200' },
+          { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-teal-50 border-teal-200' },
           { label: '廠商數量',   value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
           { label: `${dashMonth}/${safeDay} 出勤`, value: selectedDayWorking, icon: '✅', color: 'bg-green-50 border-green-200' },
           { label: `${dashMonth}/${safeDay} 休假`, value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
@@ -1301,7 +1379,7 @@ function Dashboard() {
       {/* Vendor Stats + Donut Chart */}
       <div className="flex gap-4 items-start">
       {/* Vendor Stats Table */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 flex-1 min-w-0">
+      <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex-1 min-w-0">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-700">
             各廠商人力
@@ -1332,20 +1410,20 @@ function Dashboard() {
                   <th key={gc.label} className="text-right pb-2 text-xs font-semibold text-slate-400 pl-2">{gc.label}</th>
                 ))}
                 <th className="text-right pb-2 text-xs font-semibold text-teal-600 pl-2">到班(長)</th>
-                <th className="text-right pb-2 text-xs font-semibold text-amber-600 pl-2">到班(臨)</th>
+                <th className="text-right pb-2 text-xs font-semibold text-teal-700 pl-2">到班(臨)</th>
                 <th className="text-right pb-2 text-xs font-semibold text-slate-500">前周差</th>
               </tr>
             </thead>
             <tbody>
               {vendorStats.map((s, i) => {
-                const diffColor = s.diff > 0 ? 'text-emerald-600' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const diffColor = s.diff > 0 ? 'text-teal-700' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
                 const diffLabel = s.diff > 0 ? `+${s.diff}` : s.diff < 0 ? `${s.diff}` : '–';
                 return (
                   <tr key={s.vendor}
-                    className={`hover:bg-slate-50 transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                    className={`hover:bg-[#F5F2EC] transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
                     <td className="py-2.5 text-sm font-medium text-slate-700">{s.vendor}</td>
                     <td className="py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{s.working}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{s.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = s.groups[gc.label] ?? 0;
                       return (
@@ -1358,7 +1436,7 @@ function Dashboard() {
                       {s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">–</span>}
                     </td>
                     <td className="py-2.5 text-right text-sm pl-2">
-                      {s.tempPresent > 0 ? <span className="font-semibold text-amber-600">{s.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                      {s.tempPresent > 0 ? <span className="font-semibold text-teal-700">{s.tempPresent}</span> : <span className="text-slate-300">–</span>}
                     </td>
                     <td className={`py-2.5 text-right text-sm font-bold ${diffColor}`}>{diffLabel}</td>
                   </tr>
@@ -1373,13 +1451,13 @@ function Dashboard() {
                   longPresent: vendorStats.reduce((a, s) => a + s.longPresent, 0),
                   tempPresent: vendorStats.reduce((a, s) => a + s.tempPresent, 0),
                 };
-                const totalDiffColor = total.diff > 0 ? 'text-emerald-600' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const totalDiffColor = total.diff > 0 ? 'text-teal-700' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
                 const totalDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '–';
                 return (
-                  <tr className="border-t-2 border-slate-300 bg-slate-50">
+                  <tr className="border-t-2 border-[#DDD9D0] bg-[#F5F2EC]">
                     <td className="py-2.5 text-xs font-bold text-slate-500 tracking-wide">合計</td>
                     <td className="py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{total.working}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{total.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
                       return (
@@ -1392,7 +1470,7 @@ function Dashboard() {
                       {total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">–</span>}
                     </td>
                     <td className="py-2.5 text-right text-sm font-bold pl-2">
-                      {total.tempPresent > 0 ? <span className="text-amber-600">{total.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                      {total.tempPresent > 0 ? <span className="text-teal-700">{total.tempPresent}</span> : <span className="text-slate-300">–</span>}
                     </td>
                     <td className={`py-2.5 text-right text-sm font-bold ${totalDiffColor}`}>{totalDiffLabel}</td>
                   </tr>
@@ -1420,7 +1498,7 @@ function Dashboard() {
           return seg;
         });
         return (
-          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col" style={{ width: 220, flexShrink: 0 }}>
+          <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex flex-col" style={{ width: 220, flexShrink: 0 }}>
             <h3 className="font-semibold text-slate-700 text-sm mb-3">
               排班比例
               <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
@@ -1993,21 +2071,21 @@ function ScheduleTable() {
           <h2 className="text-xl font-bold text-slate-800">班表管理</h2>
           <input value={nameSearch} onChange={e => setNameSearch(e.target.value)}
             placeholder="搜尋姓名／員工編號…"
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {rangeMode ? (
             <div className="flex items-center gap-1">
               <button onClick={() => setViewOffset(v => v - 1)}
-                className="px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-100 font-bold"
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="上一個週期">◀</button>
               <span className={`px-3 py-1.5 border rounded-lg text-sm font-medium
-                ${viewOffset === 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
+                ${viewOffset === 0 ? 'bg-teal-50 border-teal-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
                 📅 {viewRange?.start} ~ {viewRange?.end}
                 {viewOffset !== 0 && <span className="ml-1 text-xs opacity-70">（{viewOffset > 0 ? `+${viewOffset}` : viewOffset} 期）</span>}
               </span>
               <button onClick={() => setViewOffset(v => v + 1)}
-                className="px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-100 font-bold"
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
               {viewOffset !== 0 && (
                 <button onClick={() => setViewOffset(0)}
@@ -2019,11 +2097,11 @@ function ScheduleTable() {
           ) : (
             <>
               <select value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}
-                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
                 {years.map(y => <option key={y} value={y}>{y}年</option>)}
               </select>
               <select value={selectedMonth} onChange={e => setSelectedMonth(+e.target.value)}
-                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
                 {months.map(m => <option key={m} value={m}>{m}月</option>)}
               </select>
             </>
@@ -2032,7 +2110,7 @@ function ScheduleTable() {
             className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 border transition-colors
               ${showConverted
                 ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+                : 'bg-white text-slate-600 border-[#DDD9D0] hover:bg-[#F5F2EC]'}`}>
             {showConverted ? '🔤 顯示代號中' : '🔡 顯示記號'}
           </button>
           {checkedEmpIds.size > 0 && (
@@ -2073,7 +2151,7 @@ function ScheduleTable() {
       </div>
 
       {/* Table */}
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
         <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
           <table className="border-collapse text-xs" style={{ minWidth: `${160 + days * 44}px` }}>
             <thead className="sticky top-0 z-10">
@@ -2095,7 +2173,7 @@ function ScheduleTable() {
                   return (
                   <th key={dk}
                     className={`px-1 py-1 w-11 min-w-[44px] text-center
-                                ${weekBand ? 'bg-slate-500' : ''}
+                                ${weekBand ? 'bg-[#F5F2EC]0' : ''}
                                 ${rangeMode && isMonthStart && month !== dayHeaders[0].month ? 'border-l-2 border-blue-400' : ''}`}>
                     {rangeMode && isMonthStart && <div className="text-[9px] text-blue-300 leading-none">{month}月</div>}
                     <div>{day}</div>
@@ -2127,7 +2205,7 @@ function ScheduleTable() {
                 })();
                 return (
                   <tr key={emp.id}
-                    className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                    className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}`}>
                     <td className="sticky left-0 z-10 px-2 py-2 text-center border-r border-slate-200 bg-inherit"
                       style={{ width: 32 }}>
                       <input type="checkbox"
@@ -2433,7 +2511,7 @@ function EmployeeRoster() {
     const [form, setForm] = useState(emp);
     return (
       <Modal onClose={onClose}>
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+        <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
           <h3 className="font-bold text-lg text-slate-800 mb-4">{title}</h3>
           {[
             { key: 'empId',  label: '員編' },
@@ -2445,18 +2523,18 @@ function EmployeeRoster() {
             <div key={f.key} className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
               <input value={form[f.key] ?? ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
           ))}
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">狀態</label>
             <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
-              className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
               <option>在職</option><option>已離職</option><option>臨時人員</option>
             </select>
           </div>
           <div className="flex gap-2 justify-end">
-            <button onClick={onClose} className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+            <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
             <button onClick={() => onSave(form)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
           </div>
         </div>
@@ -2488,9 +2566,9 @@ function EmployeeRoster() {
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="搜尋姓名 / 員編..." className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-52" />
+          placeholder="搜尋姓名 / 員編..." className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-52" />
         <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}
-          className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
           {vendorOptions.map(v => <option key={v}>{v}</option>)}
         </select>
         <span className="text-sm text-slate-500 self-center">共 {visible.length} 筆</span>
@@ -2500,7 +2578,7 @@ function EmployeeRoster() {
       </div>
 
       {/* Table */}
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
@@ -2515,7 +2593,7 @@ function EmployeeRoster() {
                 <tr><td colSpan={7} className="text-center py-8 text-slate-400">無人員資料</td></tr>
               )}
               {pagedVisible.map(emp => (
-                <tr key={emp.id} className="hover:bg-slate-50">
+                <tr key={emp.id} className="hover:bg-[#F5F2EC]">
                   <td className="px-4 py-2.5 font-mono text-slate-600 whitespace-nowrap">{emp.empId}</td>
                   <td className="px-4 py-2.5 font-medium text-slate-800 whitespace-nowrap">{emp.name}</td>
                   <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{emp.vendor}</td>
@@ -2538,7 +2616,7 @@ function EmployeeRoster() {
                   <td className="px-4 py-2.5">
                     <div className="flex gap-2">
                       <button onClick={() => setEditTarget(emp)}
-                        className="text-blue-600 hover:text-blue-800 text-xs">編輯</button>
+                        className="text-teal-700 hover:text-blue-800 text-xs">編輯</button>
                       <button onClick={() => handleDelete(emp.id)}
                         className="text-red-500 hover:text-red-700 text-xs">移除</button>
                     </div>
@@ -2554,11 +2632,11 @@ function EmployeeRoster() {
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 pt-1">
           <button onClick={() => setPage(1)} disabled={page === 1}
-            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
             ««
           </button>
           <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
             ‹
           </button>
           <span className="text-sm text-slate-600 px-2">
@@ -2568,11 +2646,11 @@ function EmployeeRoster() {
             </span>
           </span>
           <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
             ›
           </button>
           <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
             »»
           </button>
         </div>
@@ -3111,7 +3189,7 @@ function Reports() {
           const count = scopedEmployees.filter(e => e.vendor === vendor).length;
           return (
             <div key={vendor}
-              className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-3">
+              className="bg-white border border-[#DDD9D0] rounded-xl p-5 flex flex-col gap-3">
               <div>
                 <div className="font-semibold text-slate-800">{vendor}</div>
                 <div className="text-sm text-slate-500">{count} 人員</div>
@@ -3131,7 +3209,7 @@ function Reports() {
         })}
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
+      <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 text-sm text-blue-700">
         <p className="font-medium mb-1">匯出說明</p>
         <ul className="list-disc list-inside space-y-1 text-xs">
           <li>每份報表自動包含法規宣告文字與主管簽章欄位</li>
@@ -3177,7 +3255,7 @@ function AttendSubBtn({ active, onClick, icon, label }) {
       className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap
         ${active
           ? 'border-blue-600 text-blue-700 bg-white'
-          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
+          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-[#F5F2EC]'}`}>
       {label}
     </button>
   );
@@ -3475,14 +3553,14 @@ function Attendance() {
   // ── 點名分頁
   const AttendPane = () => (
     <div className="space-y-4">
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-4 items-end">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
         <div>
           <label className="block text-xs text-slate-500 mb-1">點名出勤日期</label>
           <input type="date" value={attendDate} onChange={e => setAttendDate(e.target.value)}
-            className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
         </div>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-sm text-slate-500">實到 <span className="font-bold text-blue-600">{presentCount}</span>/{totalCount}人</span>
+          <span className="text-sm text-slate-500">實到 <span className="font-bold text-teal-700">{presentCount}</span>/{totalCount}人</span>
           <button onClick={() => setAddModal(true)}
             className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
             👤 手動新增
@@ -3507,7 +3585,7 @@ function Attendance() {
                 <div key={vName} className="space-y-1">
                   {/* 長期人員卡 */}
                   {longEmps.length > 0 && (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
                       <div className="flex items-center justify-between bg-blue-700 text-white px-4 py-2.5">
                         <span className="font-semibold flex items-center gap-2">
                           👥 {vName}
@@ -3516,7 +3594,7 @@ function Attendance() {
                         </span>
                         <div className="flex gap-2">
                           <button onClick={() => toggleAll(vName, true)}
-                            className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded-full">全選到班</button>
+                            className="text-xs bg-blue-600 hover:bg-teal-500 px-3 py-1 rounded-full">全選到班</button>
                           <button onClick={() => toggleAll(vName, false)}
                             className="text-xs bg-blue-900 hover:bg-blue-800 px-3 py-1 rounded-full">取消全選</button>
                         </div>
@@ -3538,12 +3616,12 @@ function Attendance() {
                                   <>
                                     <select value={rec.lateEarly || defaultStatus}
                                       onChange={ev => setRecord(emp.id, { lateEarly: ev.target.value })}
-                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 min-w-[180px]">
+                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs text-slate-700 min-w-[180px]">
                                       {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
                                     <input type="text" value={rec.timeNote || ''} placeholder="時間備註"
                                       onChange={ev => setRecord(emp.id, { timeNote: ev.target.value })}
-                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-24" />
+                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs w-24" />
                                   </>
                                 ) : (
                                   <>
@@ -3555,7 +3633,7 @@ function Attendance() {
                                     </select>
                                     <input type="text" value={rec.note || ''} placeholder="備註原因"
                                       onChange={ev => setRecord(emp.id, { note: ev.target.value })}
-                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-28" />
+                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs w-28" />
                                   </>
                                 )}
                               </div>
@@ -3590,12 +3668,12 @@ function Attendance() {
                                 <>
                                   <select value={e.lateEarly || defaultStatus}
                                     onChange={ev => setExtraRecord(e.id, { lateEarly: ev.target.value })}
-                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs min-w-[180px]">
+                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs min-w-[180px]">
                                     {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
                                   </select>
                                   <input type="text" value={e.timeNote || ''} placeholder="時間備註"
                                     onChange={ev => setExtraRecord(e.id, { timeNote: ev.target.value })}
-                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-24" />
+                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs w-24" />
                                 </>
                               ) : (
                                 <>
@@ -3607,7 +3685,7 @@ function Attendance() {
                                   </select>
                                   <input type="text" value={e.note || ''} placeholder="備註原因"
                                     onChange={ev => setExtraRecord(e.id, { note: ev.target.value })}
-                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-28" />
+                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs w-28" />
                                 </>
                               )}
                               <button onClick={() => removeExtra(e.id)}
@@ -3633,16 +3711,16 @@ function Attendance() {
     const [rGroup, setRGroup] = useState(groupFilter);
     return (
       <div className="space-y-5">
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
           <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
           <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
           <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="text-center p-3 bg-slate-50 rounded-xl">
+            <div className="text-center p-3 bg-[#F5F2EC] rounded-xl">
               <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
               <div className="text-xs text-slate-500 mt-1">應到總計</div>
             </div>
-            <div className="text-center p-3 bg-blue-50 rounded-xl">
-              <div className="text-2xl font-bold text-blue-600">{presentCount}</div>
+            <div className="text-center p-3 bg-teal-50 rounded-xl">
+              <div className="text-2xl font-bold text-teal-700">{presentCount}</div>
               <div className="text-xs text-slate-500 mt-1">實到人數</div>
             </div>
             <div className="text-center p-3 bg-rose-50 rounded-xl">
@@ -3653,32 +3731,32 @@ function Attendance() {
           <div>
             <div className="flex justify-between text-xs text-slate-500 mb-1">
               <span>到班率</span>
-              <span className="font-semibold text-blue-600">{attendRate}%</span>
+              <span className="font-semibold text-teal-700">{attendRate}%</span>
             </div>
             <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
+              <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
             </div>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
           <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
           <div className="flex flex-wrap gap-3 items-end">
             <div>
               <label className="block text-xs text-slate-500 mb-1">報表日期</label>
               <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">報表組別</label>
               <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]">
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
                 <option value="">全選</option>
                 {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             <button onClick={() => exportStats(rDate, rGroup)}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium">
+              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
               📥 下載 Excel
             </button>
           </div>
@@ -3704,38 +3782,38 @@ function Attendance() {
 
     return (
       <div className="space-y-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-3 items-end">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-3 items-end">
           <div>
             <label className="block text-xs text-slate-500 mb-1">出勤日期</label>
             <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">作業組別</label>
             <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]">
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
               <option value="">全部</option>
               {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
           <button onClick={() => setText(generateReport(rDate, rGroup))}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
+            className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
             📋 產生回報文字
           </button>
         </div>
 
         {text ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <div className="bg-white border border-[#DDD9D0] rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
               <button onClick={handleCopy}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium">
+                className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-medium">
                 📋 一鍵複製文字
               </button>
             </div>
             <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
               rows={12}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono resize-y" />
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm font-mono resize-y" />
           </div>
         ) : (
           <p className="text-sm text-slate-400 text-center py-8">選擇日期與組別後，點擊「產生回報文字」</p>
@@ -3815,7 +3893,7 @@ function Attendance() {
       <div className="flex gap-2 mt-2">
         <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
           onKeyDown={e => e.key === 'Enter' && onAdd()}
-          className="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+          className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
         <button onClick={onAdd}
           className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
       </div>
@@ -3823,7 +3901,7 @@ function Attendance() {
 
     return (
       <div className="space-y-5">
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-5">
           <h3 className="font-semibold text-slate-700">系統參數維護</h3>
           <div>
             <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
@@ -3852,17 +3930,17 @@ function Attendance() {
             <div>
               <label className="block text-xs text-slate-500 mb-1">起始日期</label>
               <input type="date" value={cleanStart} onChange={e => setCleanStart(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">迄止日期</label>
               <input type="date" value={cleanEnd} onChange={e => setCleanEnd(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">清除組別</label>
               <select value={cleanGroup} onChange={e => setCleanGroup(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
+                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
                 <option value="">全部</option>
                 {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
@@ -3889,7 +3967,7 @@ function Attendance() {
                   <button onClick={executeClean}
                     className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-sm">確認</button>
                   <button onClick={() => setCleanConfirm(false)}
-                    className="px-4 py-1.5 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+                    className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
                 </div>
               )}
             </div>
@@ -4039,7 +4117,7 @@ function Attendance() {
 
     return (
       <div className="space-y-5">
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
           <h3 className="font-semibold text-slate-700 mb-1">匯入派工表</h3>
           <p className="text-xs text-slate-400 mb-5">
             支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。
@@ -4049,17 +4127,17 @@ function Attendance() {
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">匯入起日</label>
               <input type="date" value={importStart} onChange={e => setImportStart(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">匯入迄日</label>
               <input type="date" value={importEnd} onChange={e => setImportEnd(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
             </div>
           </div>
 
           {/* 目前選擇的組別提示 */}
-          <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-teal-50 text-blue-700 border border-teal-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
             <span>{activeGroup ? '✅' : '⚠️'}</span>
             <span>{activeGroup ? `匯入組別：${activeGroup}` : '請先在上方篩選列選擇組別'}</span>
           </div>
@@ -4067,7 +4145,7 @@ function Attendance() {
           <div className="mt-3">
             <label className="block text-xs font-medium text-slate-600 mb-2">上傳派工表檔案</label>
             <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-4 transition-colors
-              ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-blue-50 cursor-pointer' : 'border-slate-200 bg-slate-50 cursor-not-allowed opacity-60'}`}>
+              ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-teal-50 cursor-pointer' : 'border-slate-200 bg-[#F5F2EC] cursor-not-allowed opacity-60'}`}>
               <span className="text-2xl">📂</span>
               <div>
                 <div className="text-sm font-medium text-slate-700">
@@ -4082,7 +4160,7 @@ function Attendance() {
 
         {/* 解析結果預覽 */}
         {parsedRows !== null && (
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-slate-700">解析結果預覽</h3>
               <span className={`text-sm font-semibold px-3 py-1 rounded-full ${parsedRows.length > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
@@ -4094,7 +4172,7 @@ function Attendance() {
               <>
                 <div className="overflow-x-auto rounded-lg border border-slate-100 mb-4 max-h-60">
                   <table className="w-full text-xs">
-                    <thead className="bg-slate-50 sticky top-0">
+                    <thead className="bg-[#F5F2EC] sticky top-0">
                       <tr>
                         <th className="px-3 py-2 text-left text-slate-500 font-medium">報到日期</th>
                         <th className="px-3 py-2 text-left text-slate-500 font-medium">姓名</th>
@@ -4103,7 +4181,7 @@ function Attendance() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {parsedRows.slice(0, 50).map((r, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
+                        <tr key={i} className="hover:bg-[#F5F2EC]">
                           <td className="px-3 py-2 text-slate-600">{r.date}</td>
                           <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
                           <td className="px-3 py-2 text-slate-500">{r.vendor || '—'}</td>
@@ -4119,7 +4197,7 @@ function Attendance() {
                   ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
                 </div>
                 <button onClick={handleImport} disabled={importing}
-                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm">
+                  className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white rounded-xl font-medium text-sm">
                   ✅ 確認匯入 {parsedRows.length} 筆臨時人員
                 </button>
               </>
@@ -4128,7 +4206,7 @@ function Attendance() {
         )}
 
         {/* 說明 */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500 space-y-1">
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 text-xs text-slate-500 space-y-1">
           <div className="font-medium text-slate-600 mb-2">📋 必備欄位說明</div>
           <div>• <span className="font-medium">報到日期</span>：民國年格式（113/07/15）自動轉換西元年</div>
           <div>• <span className="font-medium">報名狀態</span>：只匯入標示「成功」的資料</div>
@@ -4143,7 +4221,7 @@ function Attendance() {
     <div className="p-6 space-y-4 max-w-4xl">
       <h2 className="text-xl font-bold text-slate-800">點名表</h2>
 
-      <div className="flex border-b border-slate-200 bg-slate-50 rounded-t-xl overflow-x-auto">
+      <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
         <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
         <AttendSubBtn active={subTab==='stats'}  onClick={() => setSubTab('stats')}  icon="📊" label="統計" />
         <AttendSubBtn active={subTab==='report'} onClick={() => setSubTab('report')} icon="📋" label="回報" />
@@ -4161,22 +4239,22 @@ function Attendance() {
 
       {addModal && (
         <Modal onClose={() => setAddModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">手動新增人員</h3>
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">姓名 <span className="text-red-400">*</span></label>
               <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="請輸入姓名" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="請輸入姓名" />
             </div>
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">廠商</label>
               <input value={addForm.vendor} onChange={e => setAddForm(p => ({ ...p, vendor: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
             </div>
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
               <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
                 <option value="">選填</option>
                 {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
@@ -4184,11 +4262,11 @@ function Attendance() {
             <div className="mb-5">
               <label className="block text-sm font-medium text-slate-700 mb-1">備註</label>
               <input value={addForm.note} onChange={e => setAddForm(p => ({ ...p, note: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setAddModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
               <button onClick={handleAddExtra}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
             </div>
@@ -4223,13 +4301,13 @@ function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
           <button onClick={() => { onSave(vendorName, draft.trim()); setEditing(false); }}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700">儲存</button>
           <button onClick={() => { setDraft(companyTitle); setEditing(false); }}
-            className="px-3 py-1 border border-slate-300 rounded-lg text-xs hover:bg-slate-50">取消</button>
+            className="px-3 py-1 border border-[#DDD9D0] rounded-lg text-xs hover:bg-[#F5F2EC]">取消</button>
         </>
       ) : (
         <>
           <span className="flex-1 text-sm text-slate-500">{companyTitle || <span className="italic text-slate-300">（未設定）</span>}</span>
           <button onClick={() => setEditing(true)}
-            className="px-3 py-1 border border-slate-300 rounded-lg text-xs hover:bg-slate-50 text-slate-600">編輯</button>
+            className="px-3 py-1 border border-[#DDD9D0] rounded-lg text-xs hover:bg-[#F5F2EC] text-slate-600">編輯</button>
         </>
       )}
     </div>
@@ -4375,7 +4453,7 @@ function Settings() {
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
       {/* ── 系統鎖定 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">系統鎖定</h3>
         <div className="flex items-center justify-between">
           <div className="text-sm text-slate-600">
@@ -4396,42 +4474,42 @@ function Settings() {
       </div>
 
       {/* ── 開放排班日期區間 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
         <p className="text-xs text-slate-500 mb-3">設定後，僅允許在此區間內編輯班表。留空表示不限制。</p>
         <div className="flex gap-3 items-end flex-wrap">
           <div>
             <label className="block text-xs text-slate-600 mb-1">開始日期</label>
             <input type="date" value={start} onChange={e => setStart(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <div>
             <label className="block text-xs text-slate-600 mb-1">結束日期</label>
             <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <button onClick={saveRange}
             className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
             儲存
           </button>
           <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
-            className="px-4 py-1.5 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
+            className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
             清除
           </button>
         </div>
         {scheduleRange.start && (
-          <p className="mt-3 text-xs text-blue-600">
+          <p className="mt-3 text-xs text-teal-700">
             目前區間：{scheduleRange.start} ～ {scheduleRange.end}
           </p>
         )}
       </div>
 
       {/* ── 開放排班國定假日 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-1">開放排班國定假日</h3>
         <p className="text-xs text-slate-500 mb-4">
           依上方開放排班日期區間自動篩選範圍內的國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
-          {!scheduleRange.start && <span className="text-amber-600 ml-1">（請先設定開放排班日期區間）</span>}
+          {!scheduleRange.start && <span className="text-teal-700 ml-1">（請先設定開放排班日期區間）</span>}
         </p>
         {(() => {
           // 解析區間
@@ -4471,7 +4549,7 @@ function Settings() {
                 <button onClick={() => setOpenHolidays(prev => [...new Set([...prev, ...allKeys])])}
                   className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">全選</button>
                 <button onClick={() => setOpenHolidays(prev => prev.filter(k => !allKeys.includes(k)))}
-                  className="px-3 py-1 text-xs border border-slate-300 rounded-lg hover:bg-slate-50">全不選</button>
+                  className="px-3 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC]">全不選</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {holidays.map(h => {
@@ -4479,7 +4557,7 @@ function Settings() {
                   return (
                     <label key={h.key}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer text-sm transition-colors
-                        ${checked ? 'bg-blue-50 border-blue-400 text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        ${checked ? 'bg-teal-50 border-blue-400 text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-[#F5F2EC]'}`}>
                       <input type="checkbox" checked={checked} onChange={() => toggle(h.key)} className="accent-blue-600" />
                       <span className="font-medium">{h.shortName}</span>
                       <span className="text-xs opacity-60">{h.month}/{h.day}</span>
@@ -4493,7 +4571,7 @@ function Settings() {
       </div>
 
       {/* ── 委外幹部排「國」開放鍵 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-slate-700">委外幹部國定假日排班權限</h3>
@@ -4512,13 +4590,13 @@ function Settings() {
               ${vendorHolidayOpen ? 'translate-x-6' : 'translate-x-1'}`} />
           </button>
         </div>
-        <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-blue-600' : 'text-slate-400'}`}>
+        <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-teal-700' : 'text-slate-400'}`}>
           {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
         </p>
       </div>
 
       {/* ── 廠商別維護 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-slate-700">廠商別維護</h3>
@@ -4530,9 +4608,9 @@ function Settings() {
           </button>
         </div>
 
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div className="border border-[#DDD9D0] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50">
+            <thead className="bg-[#F5F2EC]">
               <tr>
                 <th className="px-4 py-2.5 text-left font-medium text-slate-600 w-24">代碼</th>
                 <th className="px-4 py-2.5 text-left font-medium text-slate-600">廠商名稱</th>
@@ -4544,7 +4622,7 @@ function Settings() {
                 <tr><td colSpan={3} className="text-center py-6 text-slate-400 text-sm">尚未設定任何廠商</td></tr>
               )}
               {vendors.map(vd => (
-                <tr key={vd.id} className="hover:bg-slate-50">
+                <tr key={vd.id} className="hover:bg-[#F5F2EC]">
                   <td className="px-4 py-2.5">
                     <span className="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                       {vd.code || '—'}
@@ -4554,7 +4632,7 @@ function Settings() {
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => openEditVd(vd)}
-                        className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-600">
+                        className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC] text-slate-600">
                         編輯
                       </button>
                       <button onClick={() => deleteVd(vd.id)}
@@ -4571,7 +4649,7 @@ function Settings() {
       </div>
 
       {/* ── 倉別 × 課別 × 廠商別維護 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-slate-700">倉別 × 課別 × 廠商別維護</h3>
@@ -4589,9 +4667,9 @@ function Settings() {
 
         <div className="space-y-4">
           {warehouses.map(wh => (
-            <div key={wh.id} className="border border-slate-200 rounded-xl overflow-hidden">
+            <div key={wh.id} className="border border-[#DDD9D0] rounded-xl overflow-hidden">
               {/* 倉別 header */}
-              <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+              <div className="flex items-center justify-between bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0]">
                 <span className="font-bold text-slate-800">🏭 {wh.name}</span>
                 <div className="flex gap-2">
                   <button onClick={() => openAddDept(wh.id)}
@@ -4599,7 +4677,7 @@ function Settings() {
                     ＋ 新增課別
                   </button>
                   <button onClick={() => openEditWh(wh)}
-                    className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-white text-slate-600">
+                    className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
                     編輯
                   </button>
                   <button onClick={() => deleteWh(wh.id)}
@@ -4615,7 +4693,7 @@ function Settings() {
               ) : (
                 <div className="divide-y divide-slate-100">
                   {(wh.departments ?? []).map(dept => (
-                    <div key={dept.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50">
+                    <div key={dept.id} className="flex items-start gap-3 px-4 py-3 hover:bg-[#F5F2EC]">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
                           {dept.code && (
@@ -4631,7 +4709,7 @@ function Settings() {
                             ? <span className="text-xs text-slate-400 italic">尚未配置</span>
                             : (dept.vendors ?? []).map(v => (
                                 <span key={v}
-                                  className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200
+                                  className="px-2 py-0.5 bg-teal-50 text-blue-700 border border-teal-200
                                              rounded-full text-xs">
                                   {v}
                                 </span>
@@ -4654,7 +4732,7 @@ function Settings() {
                       </div>
                       <div className="flex gap-1.5 shrink-0">
                         <button onClick={() => openEditDept(wh.id, dept)}
-                          className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-white text-slate-600">
+                          className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
                           編輯
                         </button>
                         <button onClick={() => deleteDept(wh.id, dept.id)}
@@ -4686,7 +4764,7 @@ function Settings() {
         };
 
         return (
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
             <div className="mb-3">
               <h3 className="font-semibold text-slate-700">廠商公司抬頭</h3>
               <p className="text-xs text-slate-400 mt-0.5">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
@@ -4712,7 +4790,7 @@ function Settings() {
       {/* ── 廠商別新增/編輯 Modal ── */}
       {vdModal && (
         <Modal onClose={() => setVdModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {vdTarget ? '編輯廠商' : '新增廠商'}
             </h3>
@@ -4724,7 +4802,7 @@ function Settings() {
                 onChange={e => setVdForm(p => ({ ...p, code: e.target.value }))}
                 placeholder="例如：CS"
                 maxLength={6}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm uppercase" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm uppercase" />
             </div>
             <div className="mb-5">
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -4733,11 +4811,11 @@ function Settings() {
               <input value={vdForm.name}
                 onChange={e => setVdForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：承杺"
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setVdModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
                 取消
               </button>
               <button onClick={saveVd}
@@ -4752,7 +4830,7 @@ function Settings() {
       {/* ── 倉別 新增/編輯 Modal ── */}
       {whModal && (
         <Modal onClose={() => setWhModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {whTarget ? '編輯倉別' : '新增倉別'}
             </h3>
@@ -4763,11 +4841,11 @@ function Settings() {
               <input value={whForm.name}
                 onChange={e => setWhForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：大溪倉"
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setWhModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
                 取消
               </button>
               <button onClick={saveWh}
@@ -4782,7 +4860,7 @@ function Settings() {
       {/* ── 課別 新增/編輯 Modal ── */}
       {deptModal && (
         <Modal onClose={() => setDeptModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-1">
               {deptTarget ? '編輯課別' : '新增課別'}
             </h3>
@@ -4797,7 +4875,7 @@ function Settings() {
               <input value={deptForm.code}
                 onChange={e => setDeptForm(p => ({ ...p, code: e.target.value }))}
                 placeholder="例如：L035"
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -4806,7 +4884,7 @@ function Settings() {
               <input value={deptForm.name}
                 onChange={e => setDeptForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：大肚理貨課"
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
 
             <div className="mb-5">
@@ -4827,8 +4905,8 @@ function Settings() {
                           className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer
                                       transition-colors text-sm
                                       ${checked
-                                        ? 'bg-blue-50 border-blue-400 text-blue-800'
-                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                                        ? 'bg-teal-50 border-blue-400 text-blue-800'
+                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-[#F5F2EC]'}`}>
                           <input type="checkbox" checked={checked} onChange={() => toggleDeptVendor(v)}
                             className="rounded accent-blue-600" />
                           {v}
@@ -4879,7 +4957,7 @@ function Settings() {
                     }
                   }}
                   placeholder="輸入組別名稱（如 A組），按 Enter 新增"
-                  className="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                  className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
                 <button
                   type="button"
                   onClick={() => {
@@ -4896,7 +4974,7 @@ function Settings() {
 
             <div className="flex gap-2 justify-end">
               <button onClick={() => setDeptModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
                 取消
               </button>
               <button onClick={saveDept}
@@ -5178,12 +5256,12 @@ function ShiftSetup() {
       <h2 className="text-xl font-bold text-slate-800">人員班別設定</h2>
 
       {/* ── 班別時段管理 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <h3 className="font-semibold text-slate-700">班別時段管理</h3>
             {selectedWarehouse
-              ? <p className="text-xs text-blue-600 mt-0.5">目前倉別：{warehouses.find(w => w.id === selectedWarehouse)?.name ?? selectedWarehouse}</p>
+              ? <p className="text-xs text-teal-700 mt-0.5">目前倉別：{warehouses.find(w => w.id === selectedWarehouse)?.name ?? selectedWarehouse}</p>
               : <p className="text-xs text-amber-500 mt-0.5">請先從頂欄選擇倉別，各倉可獨立設定班別時段</p>
             }
           </div>
@@ -5215,7 +5293,7 @@ function ShiftSetup() {
       </div>
 
       {/* ── 班別匯入 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">班別匯入</h3>
         <p className="text-xs text-slate-500 mb-3">Excel 欄位（依序）：員工編號、姓名、上班時間、下班時間　範例：CY10901361 / 林雅蔆 / 0900 / 1800</p>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
@@ -5226,20 +5304,20 @@ function ShiftSetup() {
       </div>
 
       {/* ── 人員班別指派 ── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="font-semibold text-slate-700">人員班別指派</h3>
           <div className="flex gap-2 flex-wrap items-center">
             <input value={nameSearchSetup} onChange={e => setNameSearchSetup(e.target.value)}
               placeholder="搜尋姓名／員工編號…"
-              className="px-2 py-1 border border-slate-300 rounded-lg text-sm w-44" />
+              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm w-44" />
             <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}
-              className="px-2 py-1 border border-slate-300 rounded-lg text-sm">
+              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm">
               <option value="">全部廠商</option>
               {vendorNames.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
             <select value={filterShift} onChange={e => setFilterShift(e.target.value)}
-              className="px-2 py-1 border border-slate-300 rounded-lg text-sm">
+              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm">
               <option value="">全部班別</option>
               {sortedShiftTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               <option value="none">未指派</option>
@@ -5247,7 +5325,7 @@ function ShiftSetup() {
           </div>
         </div>
 
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
+        <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
@@ -5260,14 +5338,14 @@ function ShiftSetup() {
               {visibleEmps.map((emp, idx) => {
                 const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
                 return (
-                  <tr key={emp.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                  <tr key={emp.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}>
                     <td className="px-4 py-2 font-mono text-xs text-slate-500">{emp.empId}</td>
                     <td className="px-4 py-2 font-medium text-slate-800">{emp.name}</td>
                     <td className="px-4 py-2 text-slate-500 text-xs">{emp.vendor || '—'}</td>
                     <td className="px-4 py-2">
                       <select value={emp.shiftTypeId ?? ''}
                         onChange={e => assignShift(emp.id, e.target.value)}
-                        className="px-2 py-1 border border-slate-300 rounded text-xs">
+                        className="px-2 py-1 border border-[#DDD9D0] rounded text-xs">
                         <option value="">── 未指派 ──</option>
                         {sortedShiftTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
@@ -5292,26 +5370,26 @@ function ShiftSetup() {
       {/* 班別 Modal */}
       {showTypeModal && (
         <Modal onClose={() => setShowTypeModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6 space-y-4">
             <h3 className="font-bold text-lg text-slate-800">{editTypeId ? '編輯班別' : '新增班別'}</h3>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">班別名稱</label>
               <input value={typeForm.name} onChange={e => setTypeForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例：日班、夜班"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-700 mb-1">上班時間</label>
                 <select value={typeForm.startTime} onChange={e => setTypeForm(p => ({ ...p, startTime: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
                   {PRESET_TIMES.map(t => <option key={t} value={t}>{t.slice(0,2)}:{t.slice(2)}</option>)}
                 </select>
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-700 mb-1">下班時間</label>
                 <select value={typeForm.endTime} onChange={e => setTypeForm(p => ({ ...p, endTime: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
                   {PRESET_TIMES.map(t => <option key={t} value={t}>{t.slice(0,2)}:{t.slice(2)}</option>)}
                 </select>
               </div>
@@ -5332,7 +5410,7 @@ function ShiftSetup() {
               <button onClick={saveType}
                 className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
               <button onClick={() => setShowTypeModal(false)}
-                className="flex-1 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm hover:bg-slate-50">取消</button>
+                className="flex-1 py-2 border border-[#DDD9D0] text-slate-600 rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
             </div>
           </div>
         </Modal>
@@ -5512,7 +5590,7 @@ function ShiftCodeTable() {
       {/* 密碼驗證 Modal */}
       {showPwdModal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-2xl p-7 w-80">
+          <div className="bg-white rounded-xl shadow p-7 w-80">
             <div className="text-center mb-4">
               <div className="text-3xl mb-2">🔒</div>
               <h3 className="font-bold text-slate-800 text-lg">需要驗證密碼</h3>
@@ -5529,14 +5607,14 @@ function ShiftCodeTable() {
                 focus:outline-none focus:ring-2
                 ${pwdError
                   ? 'border-red-400 focus:ring-red-300 bg-red-50'
-                  : 'border-slate-300 focus:ring-blue-400'}`}
+                  : 'border-[#DDD9D0] focus:ring-blue-400'}`}
             />
             {pwdError && (
               <p className="text-red-500 text-sm text-center mt-2">密碼錯誤，請重新輸入</p>
             )}
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowPwdModal(false)}
-                className="flex-1 py-2 border border-slate-300 rounded-lg text-slate-600 text-sm hover:bg-slate-50">
+                className="flex-1 py-2 border border-[#DDD9D0] rounded-lg text-slate-600 text-sm hover:bg-[#F5F2EC]">
                 取消
               </button>
               <button onClick={submitPwd}
@@ -5555,7 +5633,7 @@ function ShiftCodeTable() {
             <h2 className="text-xl font-bold text-slate-800">班別代號對照表</h2>
             {unlocked
               ? <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full border border-green-200">🔓 已解鎖</span>
-              : <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs rounded-full border border-slate-200">🔒 唯讀</span>
+              : <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs rounded-full border border-[#DDD9D0]">🔒 唯讀</span>
             }
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -5570,7 +5648,7 @@ function ShiftCodeTable() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="搜尋代號（如 ZA8）"
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-44
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-44
                          focus:outline-none focus:ring-2 focus:ring-blue-400 pr-7"
             />
             {search && (
@@ -5588,8 +5666,8 @@ function ShiftCodeTable() {
           {/* 還原預設 */}
           {importedAt && (
             <button onClick={handleReset}
-              className="px-3 py-1.5 border border-slate-300 text-slate-600 rounded-lg text-sm
-                         hover:bg-slate-50 whitespace-nowrap">
+              className="px-3 py-1.5 border border-[#DDD9D0] text-slate-600 rounded-lg text-sm
+                         hover:bg-[#F5F2EC] whitespace-nowrap">
               ↩ 還原預設
             </button>
           )}
@@ -5600,8 +5678,8 @@ function ShiftCodeTable() {
       {searchResult !== null && (
         <div className={`px-4 py-2.5 rounded-lg text-sm ${
           searchResult.length > 0
-            ? 'bg-blue-50 border border-blue-200 text-blue-700'
-            : 'bg-slate-50 border border-slate-200 text-slate-500'
+            ? 'bg-teal-50 border border-teal-200 text-blue-700'
+            : 'bg-white border border-[#DDD9D0] text-slate-500'
         }`}>
           {searchResult.length === 0
             ? `找不到代號「${search.trim().toUpperCase()}」`
@@ -5627,7 +5705,7 @@ function ShiftCodeTable() {
       </div>
 
       {/* 表格 */}
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
         <div className="overflow-x-auto" style={{ maxHeight: '65vh' }}>
           <table className="border-collapse text-xs" style={{ minWidth: `${80 + (headers.length + 1) * 64}px` }}>
             <thead className="sticky top-0 z-10">
@@ -5650,7 +5728,7 @@ function ShiftCodeTable() {
             </thead>
             <tbody>
               {rows.map((row, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}>
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-1.5 font-mono font-semibold
                                  text-slate-700 border-r border-slate-200 whitespace-nowrap">
                     {row[0]}
@@ -5896,17 +5974,17 @@ function AccountManagement() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200">
+      <div className="flex gap-1 border-b border-[#DDD9D0]">
         {TAB_CFG.map(t => (
           <button key={t.key}
             onClick={() => { setActiveTab(t.key); setExpandedId(null); }}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-t-lg border border-b-0 transition-colors
                         ${activeTab === t.key
-                          ? 'bg-white border-slate-200 text-blue-600 -mb-px z-10'
-                          : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}`}>
+                          ? 'bg-white border-slate-200 text-teal-700 -mb-px z-10'
+                          : 'bg-[#F5F2EC] border-transparent text-slate-500 hover:text-slate-700'}`}>
             <span>{t.label}</span>
             <span className={`px-1.5 py-0.5 rounded-full text-xs
-                              ${activeTab === t.key ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
+                              ${activeTab === t.key ? 'bg-blue-100 text-teal-700' : 'bg-slate-200 text-slate-500'}`}>
               {t.count}
             </span>
           </button>
@@ -5915,9 +5993,9 @@ function AccountManagement() {
 
       {/* ── 委外人員 Tab ── */}
       {activeTab === 'worker' && (
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
+        <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
           <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
-                          bg-slate-100 px-4 py-2.5 border-b border-slate-200"
+                          bg-slate-100 px-4 py-2.5 border-b border-[#DDD9D0]"
                style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
             <span>員工編號</span>
             <span>姓名</span>
@@ -5932,7 +6010,7 @@ function AccountManagement() {
             {workerEmpList.map(emp => {
               const isUpgraded = upgradedEmpIds.has(emp.id);
               return (
-                <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-slate-50"
+                <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-[#F5F2EC]"
                      style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
                   <span className="font-mono text-sm text-slate-700">{emp.empId}</span>
                   <span className="text-sm text-slate-700">{emp.name}</span>
@@ -5962,7 +6040,7 @@ function AccountManagement() {
       {/* 清單表頭（員工 / 廠商 tab） */}
       {activeTab !== 'worker' && (
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
-                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-slate-200"
+                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-[#DDD9D0]"
            style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
         <span>帳號</span>
         <span>姓名</span>
@@ -5975,7 +6053,7 @@ function AccountManagement() {
       )}
 
       {activeTab !== 'worker' && (
-      <div className="border border-slate-200 rounded-b-xl divide-y divide-slate-100 overflow-hidden">
+      <div className="border border-[#DDD9D0] rounded-b-xl divide-y divide-slate-100 overflow-hidden">
         {tabUsers.map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
           const isOpen = expandedId === u.id;
@@ -5984,7 +6062,7 @@ function AccountManagement() {
           return (
             <div key={u.id}>
               {/* ── 摘要列 ── */}
-              <div className="grid items-center gap-2 px-4 py-3 hover:bg-slate-50"
+              <div className="grid items-center gap-2 px-4 py-3 hover:bg-[#F5F2EC]"
                    style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
 
                 <span className="font-mono font-bold text-slate-800 text-sm truncate">{u.username}</span>
@@ -5994,7 +6072,7 @@ function AccountManagement() {
                   {roleLabel[u.role]}
                 </span>
 
-                <span className="text-blue-600 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
+                <span className="text-teal-700 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
 
                 <span className="text-slate-500 text-xs truncate">
                   {u.role === ROLES.ADMIN ? '全部廠商' : u.vendors?.join('、') || '—'}
@@ -6011,7 +6089,7 @@ function AccountManagement() {
                 {/* 操作按鈕 */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button onClick={() => openEdit(u)}
-                    className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded">
+                    className="px-2 py-1 text-xs text-teal-700 hover:text-blue-800 hover:bg-teal-50 rounded">
                     編輯
                   </button>
                   <button onClick={() => handleDelete(u.id)}
@@ -6028,14 +6106,14 @@ function AccountManagement() {
 
               {/* ── 展開：細部權限 ── */}
               {isOpen && (
-                <div className="bg-slate-50 border-t border-slate-200 px-6 py-4">
+                <div className="bg-[#F5F2EC] border-t border-slate-200 px-6 py-4">
                   {u.role === ROLES.ADMIN
                     ? <p className="text-xs text-slate-400 italic">超級管理員擁有全部權限，無法調整。</p>
                     : <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
                         {PAGE_PERMISSIONS.map(page => {
                           const pagePerm = perms[page.key] ?? { view: false };
                           return (
-                            <div key={page.key} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                            <div key={page.key} className="bg-white rounded-xl border border-[#DDD9D0] p-3 space-y-2">
                               <label className="flex items-center gap-2 cursor-pointer select-none">
                                 <input type="checkbox" checked={!!pagePerm.view}
                                   onChange={e => togglePerm(u.id, page.key, 'view', e.target.checked)}
@@ -6053,7 +6131,7 @@ function AccountManagement() {
                                       <span className={`text-xs px-1.5 py-0.5 rounded-full border
                                         ${pagePerm[f.key]
                                           ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                          : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                                          : 'bg-[#F5F2EC] text-slate-400 border-slate-200'}`}>
                                         {f.label}
                                       </span>
                                     </label>
@@ -6076,7 +6154,7 @@ function AccountManagement() {
       {/* 帳號新增 / 編輯 Modal */}
       {showModal && (
         <Modal onClose={() => setShowModal(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {editUser ? '編輯帳號' : '新增帳號'}
             </h3>
@@ -6089,13 +6167,13 @@ function AccountManagement() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
                 <input type={f.type ?? 'text'} value={form[f.key] ?? ''}
                   onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
               </div>
             ))}
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">角色</label>
               <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
-                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
                 <option value={ROLES.ADMIN}>管理員</option>
                 <option value={ROLES.AREA}>當區幹部</option>
                 <option value={ROLES.VENDOR}>委外幹部</option>
@@ -6137,7 +6215,7 @@ function AccountManagement() {
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
               <button onClick={handleSave}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
             </div>
@@ -6373,12 +6451,12 @@ export default function App() {
     <ToastProvider>
       <AppContext.Provider value={ctx}>
         {idleWarning && (
-          <div className="fixed top-0 inset-x-0 z-[9999] bg-amber-500 text-white text-sm text-center py-2 px-4 flex items-center justify-center gap-3">
+          <div className="fixed top-0 inset-x-0 z-[9999] text-sm text-center py-2 px-4 flex items-center justify-center gap-3" style={{background:'var(--sms-amber)',color:'#fff'}}>
             <span>閒置逾時警告：即將自動登出，請繼續操作以維持登入狀態</span>
             <button onClick={resetIdle} className="underline font-semibold hover:no-underline">繼續使用</button>
           </div>
         )}
-        <div className="flex h-screen bg-slate-50 overflow-hidden">
+        <div className="flex h-screen overflow-hidden" style={{background:'var(--sms-bg)'}}>
           {/* Desktop sidebar */}
           <div className="hidden md:flex">
             <Sidebar
@@ -6398,7 +6476,7 @@ export default function App() {
           {/* Main content */}
           <main className="flex-1 flex flex-col overflow-hidden">
             {/* Mobile header */}
-            <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200">
+            <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-[#DDD9D0]" style={{fontFamily:'inherit'}}>
               <button onClick={() => setMobileNavOpen(true)} className="text-slate-600 text-2xl">☰</button>
               <span className="font-semibold text-slate-800">委外人力排班作業平台</span>
               <span className="text-sm text-slate-500">{currentUser.name}</span>
@@ -6407,7 +6485,7 @@ export default function App() {
             {/* 全域倉別 / 課別選擇列 */}
             <WarehouseDeptBar />
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
                 const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
                 const allowed = currentUser.role === ROLES.ADMIN || userPerms[currentPage]?.view !== false;
