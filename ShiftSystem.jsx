@@ -1360,11 +1360,12 @@ function Dashboard() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
-          { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-teal-50 border-teal-200' },
-          { label: '廠商數量',   value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
-          { label: `${dashMonth}/${safeDay} 出勤`, value: selectedDayWorking, icon: '✅', color: 'bg-green-50 border-green-200' },
-          { label: `${dashMonth}/${safeDay} 休假`, value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
-          { label: `${dashMonth}/${safeDay} 實到`, value: actualPresent, icon: '📋', color: 'bg-teal-50 border-teal-200',
+          { label: '長期在職',                       value: visibleEmployees.length,                      icon: '👥', color: 'bg-teal-50 border-teal-200' },
+          { label: `${dashMonth}/${safeDay} 長期出勤`, value: selectedDayWorking,                          icon: '✅', color: 'bg-green-50 border-green-200' },
+          { label: `${dashMonth}/${safeDay} 休假`,    value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
+          { label: `${dashMonth}/${safeDay} 實到`,    value: actualPresent,                               icon: '📋', color: 'bg-blue-50 border-blue-200',
+            sub: actualPresent === 0 ? '點名表未填寫' : null },
+          { label: `${dashMonth}/${safeDay} 臨時人數`, value: Math.max(0, actualPresent - selectedDayWorking), icon: '🔄', color: 'bg-amber-50 border-amber-200',
             sub: actualPresent === 0 ? '點名表未填寫' : null },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
