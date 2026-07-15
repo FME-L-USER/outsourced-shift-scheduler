@@ -7,107 +7,8 @@
 import React, {
   useState, useEffect, useCallback, useRef, createContext, useContext, useMemo
 } from 'react';
-
-// ── 全域設計語系注入 ──────────────────────────────────────────
-(function injectDesignTokens() {
-  if (document.getElementById('sms-tokens')) return;
-  // viewport meta — prevent iOS from auto-zooming
-  if (!document.querySelector('meta[name="viewport"]')) {
-    const vp = document.createElement('meta');
-    vp.name = 'viewport';
-    vp.content = 'width=device-width, initial-scale=1, maximum-scale=1';
-    document.head.appendChild(vp);
-  }
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap';
-  document.head.appendChild(link);
-  const style = document.createElement('style');
-  style.id = 'sms-tokens';
-  style.textContent = `
-    :root {
-      --sms-bg:           #FAF7F2;
-      --sms-surface:      #FFFFFF;
-      --sms-surface-2:    #F5F2EC;
-      --sms-teal:         #0F766E;
-      --sms-teal-dark:    #0D6660;
-      --sms-teal-light:   #CCFBF1;
-      --sms-teal-50:      #F0FDFA;
-      --sms-coral:        #E05252;
-      --sms-coral-bg:     #FEF2F2;
-      --sms-coral-border: #FECACA;
-      --sms-amber:        #B45309;
-      --sms-amber-bg:     #FFFBEB;
-      --sms-amber-border: #FDE68A;
-      --sms-border:       #DDD9D0;
-      --sms-border-dark:  #C8C4BA;
-      --sms-sidebar:      #14302D;
-      --sms-sidebar-hover:#1C4A46;
-      --sms-sidebar-active:#1E7A4A;
-      --sms-text:         #1C2B3A;
-      --sms-text-muted:   #6B7280;
-      --sms-radius-sm:    6px;
-      --sms-radius:       10px;
-      --sms-radius-lg:    14px;
-    }
-    html, body, #root {
-      font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
-      font-size: 14px;
-      background: var(--sms-bg);
-    }
-    .sms-input {
-      background: var(--sms-surface) !important;
-      border: 1px solid var(--sms-border) !important;
-      border-radius: var(--sms-radius-sm) !important;
-      font-family: inherit !important;
-      font-size: 14px !important;
-      transition: border-color .15s, box-shadow .15s;
-    }
-    .sms-input:focus {
-      outline: none;
-      border-color: var(--sms-teal) !important;
-      box-shadow: 0 0 0 3px rgba(15,118,110,.12) !important;
-    }
-    .sms-btn-primary {
-      background: var(--sms-teal) !important;
-      color: #fff !important;
-      border-radius: var(--sms-radius-sm) !important;
-      font-family: inherit !important;
-      font-size: 14px !important;
-      font-weight: 500 !important;
-      transition: background .15s;
-    }
-    .sms-btn-primary:hover { background: var(--sms-teal-dark) !important; }
-    .sms-card {
-      background: var(--sms-surface);
-      border: 1px solid var(--sms-border);
-      border-radius: var(--sms-radius-lg);
-    }
-    /* ── Mobile: prevent iOS input zoom (font-size must be ≥16px on focus) ── */
-    @media (max-width: 767px) {
-      input, select, textarea {
-        font-size: 16px !important;
-      }
-      /* larger touch targets */
-      button { min-height: 36px; }
-      /* prevent horizontal overflow */
-      body { overflow-x: hidden; }
-    }
-    /* ── Scrollable filter bar on mobile ── */
-    .sms-filter-bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .sms-filter-bar::-webkit-scrollbar { display: none; }
-  `;
-  document.head.appendChild(style);
-})();
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import html2pdf from 'html2pdf.js';
 
@@ -126,7 +27,7 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
-const ROLES = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker' };
+const ROLES = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor' };
 
 const SHIFT_CODES = {
   V:  { label: 'V',  color: 'bg-green-100 text-green-800',   meaning: '上班' },
@@ -234,10 +135,6 @@ const PAGE_PERMISSIONS = [
     { key: 'editAccount',   label: '編輯帳號' },
     { key: 'deleteAccount', label: '刪除帳號' },
   ]},
-  { key: 'attendance', label: '點名表', features: [
-    { key: 'editAttendance',   label: '編輯點名' },
-    { key: 'exportAttendance', label: '匯出點名' },
-  ]},
 ];
 
 function getDefaultPermissions(role) {
@@ -245,11 +142,9 @@ function getDefaultPermissions(role) {
   const isArea   = role === ROLES.AREA;
   const perms = {};
   PAGE_PERMISSIONS.forEach(page => {
-    const isWorker = role === ROLES.WORKER;
     const pageVisible =
       isAdmin ? true :
       isArea  ? !['settings','accounts'].includes(page.key) :
-      isWorker ? page.key === 'schedule' :
       ['dashboard','schedule','employees','shiftcodes'].includes(page.key);
 
     perms[page.key] = { view: pageVisible };
@@ -257,7 +152,6 @@ function getDefaultPermissions(role) {
       const on = pageVisible && (
         isAdmin ? true :
         isArea  ? !['deleteEmployee','clearAll','lockSchedule','manageWarehouse','addAccount','editAccount','deleteAccount'].includes(f.key) :
-        role === ROLES.WORKER ? f.key === 'editSchedule' :
         ['editSchedule'].includes(f.key)
       );
       perms[page.key][f.key] = on;
@@ -335,17 +229,17 @@ const mkUser = (id, username, password, role, name, vendors, system = false) => 
   permissions: getDefaultPermissions(role),
 });
 const SEED_USERS = [
-  // 預設密碼僅供首次登入；系統會強制要求立即修改
-  { ...mkUser('u0', 'admin',  'Admin@2024!', ROLES.ADMIN,  '系統管理員',    SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true },
-  { ...mkUser('u2', 'area01', 'Area@2024!',  ROLES.AREA,   '當區幹部A',     SEED_VENDORS.map(v=>v.name)),        mustChangePassword: true },
-  { ...mkUser('u3', 'cs',     'Cs@2024!',    ROLES.VENDOR, 'CS 承杺幹部',   ['承杺']),                           mustChangePassword: true },
-  { ...mkUser('u4', 'ct',     'Ct@2024!',    ROLES.VENDOR, 'CT 芊通幹部',   ['芊通']),                           mustChangePassword: true },
-  { ...mkUser('u5', 'cy',     'Cy@2024!',    ROLES.VENDOR, 'CY 承奕幹部',   ['承奕']),                           mustChangePassword: true },
-  { ...mkUser('u6', 'df',     'Df@2024!',    ROLES.VENDOR, 'DF 頂富幹部',   ['頂富']),                           mustChangePassword: true },
-  { ...mkUser('u7', 'ht',     'Ht@2024!',    ROLES.VENDOR, 'HT 華煬通幹部', ['華煬通']),                         mustChangePassword: true },
-  { ...mkUser('u8', 'sy',     'Sy@2024!',    ROLES.VENDOR, 'SY 三彥幹部',   ['三彥']),                           mustChangePassword: true },
-  { ...mkUser('u9', 'wy',     'Wy@2024!',    ROLES.VENDOR, 'WY 萬宜幹部',   ['萬宜']),                           mustChangePassword: true },
-  { ...mkUser('u10','xb',     'Xb@2024!',    ROLES.VENDOR, 'XB 信邦幹部',   ['信邦']),                           mustChangePassword: true },
+  // ⚠️ 部署後請立即修改以下密碼，不要使用預設值
+  mkUser('u0', 'admin',  'Admin@2024!', ROLES.ADMIN,  '系統管理員',    SEED_VENDORS.map(v=>v.name), true),
+  mkUser('u2', 'area01', 'Area@2024!',  ROLES.AREA,   '當區幹部A',     SEED_VENDORS.map(v=>v.name)),
+  mkUser('u3', 'cs',     'Cs@2024!',    ROLES.VENDOR, 'CS 承杺幹部',   ['承杺']),
+  mkUser('u4', 'ct',     'Ct@2024!',    ROLES.VENDOR, 'CT 芊通幹部',   ['芊通']),
+  mkUser('u5', 'cy',     'Cy@2024!',    ROLES.VENDOR, 'CY 承奕幹部',   ['承奕']),
+  mkUser('u6', 'df',     'Df@2024!',    ROLES.VENDOR, 'DF 頂富幹部',   ['頂富']),
+  mkUser('u7', 'ht',     'Ht@2024!',    ROLES.VENDOR, 'HT 華煬通幹部', ['華煬通']),
+  mkUser('u8', 'sy',     'Sy@2024!',    ROLES.VENDOR, 'SY 三彥幹部',   ['三彥']),
+  mkUser('u9', 'wy',     'Wy@2024!',    ROLES.VENDOR, 'WY 萬宜幹部',   ['萬宜']),
+  mkUser('u10','xb',     'Xb@2024!',    ROLES.VENDOR, 'XB 信邦幹部',   ['信邦']),
 ];
 
 /** 初始員工種子資料 */
@@ -449,39 +343,14 @@ const LS = {
   },
 };
 
-// 密碼雜湊工具（PBKDF2 + 隨機 salt，Web Crypto API）
-// 格式：pbkdf2:<saltHex>:<hashHex>
-// 向後相容 sha256:... 及明文（比對後自動升級為 pbkdf2）
+// 密碼雜湊工具（SHA-256，Web Crypto API）
 const hashPwd = async (plain) => {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const keyMat = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(plain), { name: 'PBKDF2' }, false, ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' }, keyMat, 256
-  );
-  const toHex = arr => Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
-  return `pbkdf2:${toHex(salt)}:${toHex(new Uint8Array(bits))}`;
-};
-const _sha256Hash = async (plain) => {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
   return 'sha256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
 };
 const verifyPwd = async (input, stored) => {
   if (!stored) return false;
-  if (stored.startsWith('pbkdf2:')) {
-    const [, saltHex, hashHex] = stored.split(':');
-    const salt = new Uint8Array(saltHex.match(/.{2}/g).map(h => parseInt(h, 16)));
-    const keyMat = await crypto.subtle.importKey(
-      'raw', new TextEncoder().encode(input), { name: 'PBKDF2' }, false, ['deriveBits']
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' }, keyMat, 256
-    );
-    const candidate = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2,'0')).join('');
-    return candidate === hashHex;
-  }
-  if (stored.startsWith('sha256:')) return (await _sha256Hash(input)) === stored;
+  if (stored.startsWith('sha256:')) return (await hashPwd(input)) === stored;
   return input === stored; // 舊明文：比對後在外層自動升級
 };
 
@@ -521,138 +390,12 @@ function filterByScope(list, warehouses, selectedWarehouse, selectedDept, select
 // AUTH SCREEN
 // ─────────────────────────────────────────────
 
-// ── 強制改密碼精靈（首次登入或管理員要求）──
-function ForcePwdChange({ user, onDone }) {
-  const [form, setForm] = useState({ pwd: '', confirm: '' });
-  const [show, setShow] = useState(false);
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const handleSubmit = async e => {
-    e.preventDefault();
-    setErr('');
-    if (form.pwd.length < 8)               { setErr('密碼至少需 8 個字元'); return; }
-    if (!/[A-Za-z]/.test(form.pwd))        { setErr('密碼需包含至少一個英文字母'); return; }
-    if (!/[0-9]/.test(form.pwd))           { setErr('密碼需包含至少一個數字'); return; }
-    if (form.pwd !== form.confirm)          { setErr('兩次密碼不一致'); return; }
-    setBusy(true);
-    const hashed = await hashPwd(form.pwd);
-    onDone({ ...user, password: hashed, mustChangePassword: false });
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-8 border border-[#DDD9D0]">
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-teal-50 rounded-xl mb-3">
-            <svg className="w-7 h-7 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-slate-800">請設定新密碼</h2>
-          <p className="text-sm text-slate-500 mt-1">首次登入必須修改預設密碼後才能繼續使用</p>
-        </div>
-        {err && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{err}</div>}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {[
-            { label: '新密碼',    key: 'pwd',     ph: '至少 8 碼，含英文及數字' },
-            { label: '確認新密碼', key: 'confirm', ph: '再次輸入新密碼' },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">{f.label}</label>
-              <div className="relative">
-                <input type={show ? 'text' : 'password'} value={form[f.key]} placeholder={f.ph}
-                  onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  className="w-full px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm pr-10
-                             focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
-                {f.key === 'pwd' && (
-                  <button type="button" onClick={() => setShow(p => !p)}
-                    className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      {show
-                        ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18"/>
-                        : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>
-                      }
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          <div className="text-xs text-slate-400 bg-[#F5F2EC] rounded-lg p-3">
-            密碼規則：至少 8 個字元，需包含英文字母與數字
-          </div>
-          <button type="submit" disabled={busy}
-            className="w-full py-3 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
-            {busy ? '儲存中…' : '儲存新密碼並進入系統'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwds = {} }) {
-  // identity: null | 'riyi' | 'vendor_mgr' | 'worker' | 'register'
-  const [identity, setIdentity] = useState('');
+function LoginScreen({ users, onLogin, onRegister, vendors }) {
+  // portal: 'staff' = 員工, 'vendor' = 廠商, 'register' = 申請廠商帳號
+  const [portal, setPortal] = useState('staff');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
-
-  // 驗證碼
-  const genCaptcha = () => {
-    const arr = new Uint32Array(1);
-    crypto.getRandomValues(arr);
-    return String(1000 + (arr[0] % 9000));
-  };
-  const [captcha, setCaptcha] = useState(genCaptcha);
-  const [captchaInput, setCaptchaInput] = useState('');
-  const captchaRef = useRef(null);
-
-  const refreshCaptcha = () => {
-    setCaptcha(genCaptcha());
-    setCaptchaInput('');
-  };
-
-  useEffect(() => {
-    const canvas = captchaRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-    // 背景
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(0, 0, W, H);
-    // 干擾線
-    for (let i = 0; i < 4; i++) {
-      ctx.strokeStyle = `hsl(${Math.floor(Math.random()*360)},50%,70%)`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(Math.random()*W, Math.random()*H);
-      ctx.lineTo(Math.random()*W, Math.random()*H);
-      ctx.stroke();
-    }
-    // 干擾點
-    for (let i = 0; i < 30; i++) {
-      ctx.fillStyle = `hsl(${Math.floor(Math.random()*360)},40%,75%)`;
-      ctx.fillRect(Math.random()*W, Math.random()*H, 2, 2);
-    }
-    // 數字
-    const colors = ['#1d4ed8','#0f766e','#7c3aed','#b45309'];
-    captcha.split('').forEach((ch, i) => {
-      const x = 18 + i * 28;
-      const y = 28 + (Math.random() * 6 - 3);
-      const angle = (Math.random() * 20 - 10) * Math.PI / 180;
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-      ctx.font = `bold ${22 + Math.floor(Math.random()*4)}px monospace`;
-      ctx.fillStyle = colors[i % colors.length];
-      ctx.fillText(ch, 0, 0);
-      ctx.restore();
-    });
-  }, [captcha, identity]);
 
   // 申請表單狀態
   const [regForm, setRegForm] = useState({ username: '', password: '', confirm: '', name: '', vendor: '' });
@@ -661,110 +404,26 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 
   const vendorNames = vendors?.map(v => v.name) ?? [];
 
-  const IDENTITY_OPTIONS = [
-    { value: 'riyi',       label: '日翊' },
-    { value: 'vendor_mgr', label: '廠商幹部' },
-    { value: 'worker',     label: '委外人員' },
-  ];
-
-  const IDENTITY_INFO = {
-    riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-teal-50 border-blue-100 text-blue-700' },
-    vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-teal-50 border-teal-100 text-emerald-700' },
-    worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
+  const portalConfig = {
+    staff:  { label: '員工入口',   icon: '🏢', color: 'bg-blue-600 hover:bg-blue-700',   roles: [ROLES.ADMIN, ROLES.AREA] },
+    vendor: { label: '廠商入口',   icon: '🤝', color: 'bg-emerald-600 hover:bg-emerald-700', roles: [ROLES.VENDOR] },
   };
 
-  const switchIdentity = v => { setIdentity(v); setUsername(''); setPassword(''); setError(''); setCaptchaInput(''); refreshCaptcha(); };
-
-  // 登入失敗鎖定：以 sessionStorage 記錄各帳號失敗次數
-  const getLockData  = (u) => { try { return JSON.parse(localStorage.getItem('_sms_lock_' + u) || '{"count":0,"until":0}'); } catch { return {count:0,until:0}; } };
-  const setLockData  = (u, d) => localStorage.setItem('_sms_lock_' + u, JSON.stringify(d));
-  const clearLock    = (u) => localStorage.removeItem('_sms_lock_' + u);
-  const recordFail   = (u) => {
-    const d = getLockData(u);
-    const newCount = d.count + 1;
-    const until = newCount >= 5 ? Date.now() + 15 * 60 * 1000 : 0;
-    setLockData(u, { count: newCount, until });
-    return { count: newCount, locked: newCount >= 5 };
-  };
+  const switchPortal = p => { setPortal(p); setUsername(''); setPassword(''); setError(''); };
+  const handleBack = () => { switchPortal('staff'); };
 
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
-
-    // 驗證碼校驗
-    if (captchaInput.trim() !== captcha) {
-      setError('驗證碼錯誤，請重新輸入');
-      refreshCaptcha();
-      return;
-    }
-
-    const uKey = username.trim().toLowerCase();
-
-    // 鎖定檢查
-    const lockData = getLockData(uKey);
-    if (lockData.until > Date.now()) {
-      const mins = Math.ceil((lockData.until - Date.now()) / 60000);
-      setError(`登入失敗次數過多，帳號已鎖定，請 ${mins} 分鐘後再試`);
-      refreshCaptcha();
-      return;
-    }
-
-    // 委外人員：首次用員編登入，之後用自訂密碼
-    if (identity === 'worker') {
-      const emp = (employees ?? []).find(em => em.empId === username);
-      if (!emp) {
-        const r = recordFail(uKey);
-        setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
-        refreshCaptcha();
-        return;
-      }
-      const storedPwd = workerPwds[emp.empId];
-      let pwdOk = false;
-      if (storedPwd) {
-        pwdOk = await verifyPwd(password, storedPwd);
-      } else {
-        // 首次登入：密碼必須等於員編
-        pwdOk = (password === emp.empId);
-      }
-      if (!pwdOk) {
-        const r = recordFail(uKey);
-        setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
-        refreshCaptcha();
-        return;
-      }
-      clearLock(uKey);
-      onLogin({
-        id: 'worker_' + emp.id,
-        username: emp.empId,
-        password: storedPwd ?? emp.empId,
-        name: emp.name,
-        role: ROLES.WORKER,
-        vendors: emp.vendor ? [emp.vendor] : [],
-        empId: emp.empId,
-        employeeId: emp.id,
-        approved: true,
-        mustChangePassword: !storedPwd,  // 首次登入強制改密碼
-      });
-      return;
-    }
-
-    const allowedRoles = identity === 'riyi' ? [ROLES.ADMIN, ROLES.AREA] : [ROLES.VENDOR];
-    const candidate = users.find(u => u.username === username && allowedRoles.includes(u.role));
-    if (!candidate) {
-      const r = recordFail(uKey);
-      setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
-      refreshCaptcha();
-      return;
-    }
+    const allowedRoles = portalConfig[portal].roles;
+    const candidate = users.find(u =>
+      u.username === username && allowedRoles.includes(u.role)
+    );
+    if (!candidate) { setError('帳號或密碼錯誤，或無此入口的登入權限。'); return; }
     const ok = await verifyPwd(password, candidate.password);
-    if (!ok) {
-      const r = recordFail(uKey);
-      setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
-      refreshCaptcha();
-      return;
-    }
-    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
-    clearLock(uKey);
+    if (!ok) { setError('帳號或密碼錯誤，或無此入口的登入權限。'); return; }
+    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); return; }
+    // 自動將明文密碼升級為 SHA-256 雜湊
     if (!candidate.password.startsWith('sha256:')) {
       const hashed = await hashPwd(password);
       onLogin({ ...candidate, password: hashed }, hashed);
@@ -787,9 +446,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     if (regForm.password !== regForm.confirm) {
       setRegError('兩次密碼不一致'); return;
     }
-    if (regForm.password.length < 8)         { setRegError('密碼至少需 8 個字元'); return; }
-    if (!/[A-Za-z]/.test(regForm.password)) { setRegError('密碼需包含至少一個英文字母'); return; }
-    if (!/[0-9]/.test(regForm.password))    { setRegError('密碼需包含至少一個數字'); return; }
+    if (regForm.password.length < 6) {
+      setRegError('密碼至少需 6 個字元'); return;
+    }
     if (users.find(u => u.username === regForm.username)) {
       setRegError('此帳號名稱已被使用，請更換'); return;
     }
@@ -809,25 +468,25 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   };
 
   // ── 申請廠商帳號畫面 ──
-  if (identity === 'register') {
+  if (portal === 'register') {
     if (regDone) return (
-      <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2]">
-        <div className="bg-white rounded-xl shadow p-8 w-full max-w-sm text-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
           <div className="text-5xl mb-4">✅</div>
           <h2 className="text-xl font-bold text-slate-800 mb-2">申請已送出</h2>
           <p className="text-sm text-slate-500 mb-6">請等候管理員審核後即可登入，謝謝。</p>
-          <button onClick={() => { setIdentity(''); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
-            className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
+          <button onClick={() => { setPortal(null); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
             返回登入
           </button>
         </div>
       </div>
     );
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2]">
-        <form onSubmit={handleRegister} className="bg-white rounded-xl shadow p-8 w-full max-w-sm">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
+        <form onSubmit={handleRegister} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
           <div className="flex items-center gap-3 mb-6">
-            <button type="button" onClick={() => setIdentity('')} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
+            <button type="button" onClick={() => setPortal(null)} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
             <div>
               <h1 className="text-xl font-bold text-slate-800">📝 申請廠商帳號</h1>
               <p className="text-xs text-slate-400">送出後等候管理員審核</p>
@@ -844,21 +503,21 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
               <input type={f.type} value={regForm[f.key]} placeholder={f.placeholder}
                 onChange={e => setRegForm(p => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
             </div>
           ))}
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-700 mb-1">所屬廠商</label>
             <select value={regForm.vendor} onChange={e => setRegForm(p => ({ ...p, vendor: e.target.value }))}
-              className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
               <option value="">── 請選擇廠商 ──</option>
               {vendorNames.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
-          <button type="submit" className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
+          <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
             送出申請
           </button>
-          <button type="button" onClick={() => setIdentity('')} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
+          <button type="button" onClick={() => setPortal(null)} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
             ← 返回入口選擇
           </button>
         </form>
@@ -866,15 +525,13 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     );
   }
 
-  // ── 主登入畫面（下拉身份選擇） ──
-  const info = identity ? IDENTITY_INFO[identity] : null;
-
+  // ── 主登入畫面（tab 式） ──
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-100 px-4">
 
-      {/* Logo + 標題 */}
+      {/* Logo + 標題（卡片外） */}
       <div className="text-center mb-7">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-xl shadow-md mb-4">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-md mb-4">
           <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-9 h-9">
             <path d="M20 6L34 13.5V18L20 25.5L6 18V13.5L20 6Z" fill="#3B82F6" opacity="0.25"/>
             <path d="M20 12L34 19.5V24L20 31.5L6 24V19.5L20 12Z" fill="#3B82F6" opacity="0.5"/>
@@ -886,42 +543,38 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       </div>
 
       {/* 卡片 */}
-      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
 
-        <form onSubmit={handleSubmit}>
+        {/* Tabs */}
+        <div className="flex">
+          {[
+            { key: 'staff',  label: '員工入口',  icon: '🏢' },
+            { key: 'vendor', label: '廠商入口', icon: '🤝' },
+          ].map(({ key, label, icon }) => (
+            <button key={key} type="button" onClick={() => switchPortal(key)}
+              className={`flex-1 py-3.5 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5
+                ${portal === key
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-500 bg-slate-50 hover:bg-slate-100 border-b border-slate-200'}`}>
+              <span>{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
 
-          {/* 身份下拉 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">登入身份</label>
-            <div className="relative">
-              <select
-                value={identity}
-                onChange={e => switchIdentity(e.target.value)}
-                className="w-full appearance-none px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
-                           focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition
-                           text-slate-700 cursor-pointer">
-                <option value="">請選擇登入身份</option>
-                {IDENTITY_OPTIONS.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </div>
+        <form onSubmit={handleSubmit} className="p-6">
+
+          {/* Info banner */}
+          <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 text-blue-700 text-xs rounded-lg px-3 py-2 mb-5">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM8.5 7a1.5 1.5 0 113 0v.5a1.5 1.5 0 01-3 0V7zm1.5 3a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"/>
+            </svg>
+            <span>
+              {portal === 'staff'
+                ? '使用員工帳號（管理員 · 當區幹部）登入'
+                : '使用委外廠商帳號（委外幹部）登入'}
+            </span>
           </div>
-
-          {/* 說明橫幅 */}
-          {info && (
-            <div className={`flex items-center gap-2 border text-xs rounded-lg px-3 py-2 mb-4 ${info.color}`}>
-              <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM8.5 7a1.5 1.5 0 113 0v.5a1.5 1.5 0 01-3 0V7zm1.5 3a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"/>
-              </svg>
-              <span>{info.text}</span>
-            </div>
-          )}
 
           {error && (
             <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
@@ -929,84 +582,34 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             </div>
           )}
 
-          {/* 帳號 / 密碼（選擇身份後才顯示） */}
-          {identity && (
-            <>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">帳號</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                    </svg>
-                  </span>
-                  <input type="text" value={username} onChange={e => setUsername(e.target.value)}
-                    required autoFocus
-                    placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? '公司 AD 帳號' : '帳號'}
-                    className="w-full pl-9 pr-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
-                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
-                </div>
-              </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">帳號</label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+              required autoFocus placeholder="請輸入帳號"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                         focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+          </div>
 
-              <div className="mb-5">
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">密碼</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                    </svg>
-                  </span>
-                  <input type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
-                    required
-                    placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? 'AD 密碼' : '密碼'}
-                    className="w-full pl-9 pr-10 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
-                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
-                  <button type="button" onClick={() => setShowPwd(p => !p)}
-                    className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600">
-                    {showPwd
-                      ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 4.411m0 0L21 21"/></svg>
-                      : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                    }
-                  </button>
-                </div>
-              </div>
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">密碼</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              required placeholder="請輸入密碼"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                         focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+          </div>
 
-              {/* 驗證碼 */}
-              <div className="mb-5">
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
-                <div className="flex items-center gap-2">
-                  <canvas ref={captchaRef} width={130} height={44}
-                    className="rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
-                    title="點擊刷新" onClick={refreshCaptcha} />
-                  <button type="button" onClick={refreshCaptcha}
-                    className="text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
-                  </button>
-                  <input type="text" value={captchaInput}
-                    onChange={e => setCaptchaInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    maxLength={4} placeholder="請輸入驗證碼"
-                    className="flex-1 px-3 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm text-center tracking-widest
-                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
-                </div>
-              </div>
+          <button type="submit"
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+            登入系統
+          </button>
 
-              <button type="submit"
-                className="w-full py-3 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
-                登入系統
-              </button>
-            </>
-          )}
-
-          {/* 廠商幹部：申請帳號連結 */}
-          {identity === 'vendor_mgr' && (
+          {portal === 'vendor' && (
             <div className="mt-4 pt-4 border-t border-slate-100 text-center">
               <span className="text-sm text-slate-400">還沒有帳號？</span>
               <button type="button"
-                onClick={() => { setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); setIdentity('register'); }}
-                className="ml-1 text-sm text-teal-700 hover:text-blue-700 font-medium">
-                申請廠商幹部帳號
+                onClick={() => { setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); setPortal('register'); }}
+                className="ml-1 text-sm text-blue-600 hover:text-blue-700 font-medium">
+                申請廠商帳號
               </button>
             </div>
           )}
@@ -1022,8 +625,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 
 const NAV_ITEMS = [
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
-  { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
-  { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -1040,11 +642,10 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
   );
 
   return (
-    <aside className={`flex flex-col text-white transition-all duration-300
-                       ${collapsed ? 'w-14' : 'w-56'} shrink-0 h-screen sticky top-0`}
-           style={{background:'var(--sms-sidebar)'}}>
+    <aside className={`flex flex-col bg-slate-900 text-white transition-all duration-300
+                       ${collapsed ? 'w-14' : 'w-56'} shrink-0 h-screen sticky top-0`}>
       {/* Logo */}
-      <div className="flex items-center gap-2 px-3 py-4 border-b border-[#1C4A46]">
+      <div className="flex items-center gap-2 px-3 py-4 border-b border-slate-700">
         <span className="text-2xl">🗓️</span>
         {!collapsed && <span className="font-bold text-sm leading-tight">班表管理<br/>系統</span>}
       </div>
@@ -1054,31 +655,27 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
         {items.map(item => (
           <button key={item.key}
             onClick={() => onNavigate(item.key)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors rounded-[6px] mx-0.5
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors
                         ${currentPage === item.key
-                          ? 'text-white font-medium'
-                          : 'text-slate-300 hover:text-white'}`}
-            style={currentPage === item.key
-              ? {background:'var(--sms-sidebar-active)'}
-              : undefined}
-            onMouseEnter={e => { if(currentPage !== item.key) e.currentTarget.style.background='var(--sms-sidebar-hover)'; }}
-            onMouseLeave={e => { if(currentPage !== item.key) e.currentTarget.style.background=''; }}>
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}>
+            <span className="text-lg shrink-0">{item.icon}</span>
             {!collapsed && <span className="truncate">{item.label}</span>}
           </button>
         ))}
       </nav>
 
       {/* User Info & Logout */}
-      <div className="border-t border-[#1C4A46] p-3">
+      <div className="border-t border-slate-700 p-3">
         {!collapsed && (
           <div className="mb-2 text-xs text-slate-400 truncate">
             <div className="font-medium text-slate-200">{currentUser.name}</div>
-            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
+            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : '委外幹部'}</div>
           </div>
         )}
         <button onClick={onLogout}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-400
-                     hover:text-red-300 transition-colors">
+                     hover:bg-slate-700 hover:text-red-400 transition-colors">
           <span>🚪</span>
           {!collapsed && '登出'}
         </button>
@@ -1086,7 +683,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
 
       {/* Collapse toggle */}
       <button onClick={onToggle}
-        className="absolute -right-3 top-16 bg-[#1C4A46] hover:bg-[#254E4A] text-white
+        className="absolute -right-3 top-16 bg-slate-700 hover:bg-slate-600 text-white
                    rounded-full w-6 h-6 flex items-center justify-center text-xs shadow">
         {collapsed ? '›' : '‹'}
       </button>
@@ -1106,14 +703,11 @@ function WarehouseDeptBar() {
     selectedGroup,     setSelectedGroup,
   } = useApp();
 
-  // 倉別可見範圍：ADMIN 看全部；AREA 只看 allowedWarehouses（空陣列 = 尚未指派，不顯示）；其他角色維持原邏輯
-  const isAdmin = currentUser?.role === ROLES.ADMIN;
+  // 限制該帳號可見的倉別（[] = 全部）
   const allowedWh = currentUser?.allowedWarehouses ?? [];
-  const visibleWarehouses = isAdmin
-    ? warehouses
-    : allowedWh.length > 0
-      ? warehouses.filter(w => allowedWh.includes(w.id))
-      : [];
+  const visibleWarehouses = allowedWh.length > 0
+    ? warehouses.filter(w => allowedWh.includes(w.id))
+    : warehouses;
 
   const whObj   = visibleWarehouses.find(w => w.id === selectedWarehouse) ?? null;
   const depts   = whObj?.departments ?? [];
@@ -1148,7 +742,7 @@ function WarehouseDeptBar() {
     <div className="flex items-center gap-2 flex-wrap text-sm">
       <span className="text-slate-500 font-medium whitespace-nowrap">🏭 倉別：</span>
       <select value={selectedWarehouse ?? ''} onChange={e => handleWhChange(e.target.value)}
-        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
         <option value="">全部倉別</option>
         {visibleWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
@@ -1156,7 +750,7 @@ function WarehouseDeptBar() {
       <span className="text-slate-500 font-medium whitespace-nowrap">課別：</span>
       <select value={selectedDept ?? ''} onChange={e => handleDeptChange(e.target.value)}
         disabled={!selectedWarehouse}
-        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
+        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
         <option value="">全部課別</option>
         {depts.map(d => <option key={d.id} value={d.id}>{d.code ? `${d.code} ${d.name}` : d.name}</option>)}
       </select>
@@ -1164,13 +758,13 @@ function WarehouseDeptBar() {
       <span className="text-slate-500 font-medium whitespace-nowrap">組別：</span>
       <select value={selectedGroup ?? ''} onChange={e => handleGroupChange(e.target.value)}
         disabled={!selectedDept || groups.length === 0}
-        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
+        className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-40">
         <option value="">全部組別</option>
         {groups.map(g => <option key={g} value={g}>{g}</option>)}
       </select>
       {hasFilter && (
         <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
-          className="px-2 py-0.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
+          className="px-2 py-0.5 text-xs text-slate-500 border border-slate-300 rounded-full hover:bg-slate-100">
           清除篩選
         </button>
       )}
@@ -1178,7 +772,7 @@ function WarehouseDeptBar() {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-slate-400 text-xs">廠商：</span>
           {deptObj.vendors.map(v => (
-            <span key={v} className="px-1.5 py-0.5 bg-teal-50 text-blue-700 border border-teal-200 rounded-full text-xs">{v}</span>
+            <span key={v} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs">{v}</span>
           ))}
         </div>
       )}
@@ -1186,7 +780,7 @@ function WarehouseDeptBar() {
   );
 
   return (
-    <div className="bg-white border-b border-[#DDD9D0] shrink-0">
+    <div className="bg-white border-b border-slate-200 shrink-0">
       {/* Desktop */}
       <div className="hidden md:flex items-center gap-2 px-4 py-2 flex-wrap text-sm">
         {selects}
@@ -1196,7 +790,7 @@ function WarehouseDeptBar() {
         <div className="flex items-center justify-between px-4 py-2">
           <span className="text-sm text-slate-600 truncate max-w-[200px]">🏭 {filterLabel}</span>
           <button onClick={() => setMobileFilterOpen(v => !v)}
-            className="text-xs px-2 py-1 border border-[#DDD9D0] rounded-lg text-slate-600 whitespace-nowrap">
+            className="text-xs px-2 py-1 border border-slate-300 rounded-lg text-slate-600 whitespace-nowrap">
             {mobileFilterOpen ? '收起 ▲' : '篩選 ▼'}
           </button>
         </div>
@@ -1205,7 +799,7 @@ function WarehouseDeptBar() {
             <div className="flex items-center gap-2">
               <span className="text-slate-500 w-12 shrink-0">倉別</span>
               <select value={selectedWarehouse ?? ''} onChange={e => handleWhChange(e.target.value)}
-                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
                 <option value="">全部倉別</option>
                 {visibleWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
@@ -1214,7 +808,7 @@ function WarehouseDeptBar() {
               <span className="text-slate-500 w-12 shrink-0">課別</span>
               <select value={selectedDept ?? ''} onChange={e => handleDeptChange(e.target.value)}
                 disabled={!selectedWarehouse}
-                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
+                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
                 <option value="">全部課別</option>
                 {depts.map(d => <option key={d.id} value={d.id}>{d.code ? `${d.code} ${d.name}` : d.name}</option>)}
               </select>
@@ -1223,14 +817,14 @@ function WarehouseDeptBar() {
               <span className="text-slate-500 w-12 shrink-0">組別</span>
               <select value={selectedGroup ?? ''} onChange={e => handleGroupChange(e.target.value)}
                 disabled={!selectedDept || groups.length === 0}
-                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
+                className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm disabled:opacity-40">
                 <option value="">全部組別</option>
                 {groups.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             {hasFilter && (
               <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
-                className="self-start px-3 py-1 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
+                className="self-start px-3 py-1 text-xs text-slate-500 border border-slate-300 rounded-full hover:bg-slate-100">
                 清除篩選
               </button>
             )}
@@ -1251,37 +845,24 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-      <aside className="fixed left-0 top-0 h-full w-72 text-white z-50 flex flex-col"
-             style={{background:'var(--sms-sidebar)'}}>
-        <div className="flex items-center justify-between px-4 py-4 border-b border-[#1C4A46]">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🗓️</span>
-            <span className="font-bold text-sm">委外人力排班作業平台</span>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">✕</button>
+      <aside className="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-50 flex flex-col">
+        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-700">
+          <span className="font-bold">委外人力排班作業平台</span>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
-        <nav className="flex-1 py-3 overflow-y-auto">
+        <nav className="flex-1 py-3">
           {items.map(item => (
             <button key={item.key}
               onClick={() => { onNavigate(item.key); onClose(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors
-                          ${currentPage === item.key ? 'font-medium text-white' : 'text-slate-300'}`}
-              style={currentPage === item.key ? {background:'var(--sms-sidebar-active)'} : undefined}
-              onTouchStart={e => { if(currentPage !== item.key) e.currentTarget.style.background='var(--sms-sidebar-hover)'; }}
-              onTouchEnd={e => { if(currentPage !== item.key) e.currentTarget.style.background=''; }}>
-              <span className="text-base w-6 text-center">{item.icon}</span>
-              <span>{item.label}</span>
+              className={`w-full flex items-center gap-3 px-4 py-3 text-sm
+                          ${currentPage === item.key ? 'bg-blue-600' : 'hover:bg-slate-700'}`}>
+              <span>{item.icon}</span><span>{item.label}</span>
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-[#1C4A46] text-sm text-slate-300">
-          <div className="font-medium text-slate-200 mb-1">{currentUser.name}</div>
-          <div className="text-xs text-slate-400 mb-3">
-            {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
-          </div>
-          <button onClick={onLogout} className="flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors">
-            <span>🚪</span><span>登出</span>
-          </button>
+        <div className="p-4 border-t border-slate-700 text-sm text-slate-300">
+          <div>{currentUser.name}</div>
+          <button onClick={onLogout} className="mt-2 text-red-400 hover:text-red-300">登出</button>
         </div>
       </aside>
     </>
@@ -1296,7 +877,6 @@ function Dashboard() {
   const {
     employees, schedule, currentUser, selectedYear, selectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
-    attendData, extras,
   } = useApp();
 
   const today = new Date();
@@ -1337,11 +917,10 @@ function Dashboard() {
   const vendorStats = useMemo(() => {
     const dk   = dateKey(dashYear, dashMonth, safeDay);
     const dkPW = dateKey(prevWeekDate.year, prevWeekDate.month, prevWeekDate.day);
-    const attendDkPad = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
     const map = {};
     visibleEmployees.forEach(emp => {
       if (!map[emp.vendor]) {
-        map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
+        map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {} };
         GROUP_COLS.forEach(gc => { map[emp.vendor].groups[gc.label] = 0; });
       }
       map[emp.vendor].roster++;
@@ -1349,6 +928,7 @@ function Dashboard() {
       const isWorking = code === 'V';
       if (isWorking) {
         map[emp.vendor].working++;
+        // 組別細分
         const g = emp.group ?? '';
         GROUP_COLS.forEach(gc => {
           if (gc.match(g)) map[emp.vendor].groups[gc.label]++;
@@ -1356,21 +936,6 @@ function Dashboard() {
       }
       const codePW = schedule[emp.id]?.[dkPW] ?? 'V';
       if (codePW === 'V') map[emp.vendor].prevWorking++;
-      // 長期到班：點名表勾選
-      if (attendData[attendDkPad]?.[emp.id]?.present) map[emp.vendor].longPresent++;
-    });
-    // 臨時到班：extras 依廠商計算，依選擇的組別篩選
-    const dayExtras = (extras[attendDkPad] ?? []).filter(e =>
-      !selectedGroup || !e.group || e.group === selectedGroup
-    );
-    dayExtras.forEach(e => {
-      const v = e.vendor || '未分配';
-      if (!map[v]) {
-        map[v] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
-        GROUP_COLS.forEach(gc => { map[v].groups[gc.label] = 0; });
-      }
-      if (!map[v].tempPresent) map[v].tempPresent = 0;
-      if (e.present) map[v].tempPresent++;
     });
     return Object.entries(map).map(([vendor, s]) => ({
       vendor,
@@ -1379,42 +944,33 @@ function Dashboard() {
       prevWorking: s.prevWorking,
       diff:        s.working - s.prevWorking,
       groups:      s.groups,
-      longPresent: s.longPresent ?? 0,
-      tempPresent: s.tempPresent ?? 0,
     }));
-  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
+  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
-  // 點名表實到人數（來源：attendData）
-  const attendDk = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
-  const actualPresent = useMemo(() => {
-    const dayData = attendData[attendDk] ?? {};
-    return Object.values(dayData).filter(r => r.present).length;
-  }, [attendData, attendDk]);
-
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header + 日期選擇器 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h2 className="text-xl font-bold text-slate-800">儀表板</h2>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-slate-500">查詢日期：</span>
           <select value={dashYear} onChange={e => setDashYear(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
             {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}年</option>)}
           </select>
           <select value={dashMonth} onChange={e => setDashMonth(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
             {Array.from({length:12},(_,i)=>i+1).map(m => <option key={m} value={m}>{m}月</option>)}
           </select>
           <select value={safeDay} onChange={e => setDashDay(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
             {Array.from({length:daysInDashMonth},(_,i)=>i+1).map(d => <option key={d} value={d}>{d}日</option>)}
           </select>
           {!isToday && (
             <button onClick={() => { setDashYear(today.getFullYear()); setDashMonth(today.getMonth()+1); setDashDay(today.getDate()); }}
-              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-teal-200 rounded-lg text-xs hover:bg-blue-200">
+              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs hover:bg-blue-200">
               回今日
             </button>
           )}
@@ -1425,26 +981,23 @@ function Dashboard() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: '長期在職人數',           value: visibleEmployees.length,                           icon: '👥', color: 'bg-teal-50 border-teal-200' },
-          { label: `${dashMonth}/${safeDay} 出勤總人數`,   value: actualPresent,                      icon: '📋', color: 'bg-blue-50 border-blue-200',
-            sub: actualPresent === 0 ? '點名表未填寫' : null },
-          { label: `${dashMonth}/${safeDay} 長期（今日出勤）`, value: selectedDayWorking,             icon: '✅', color: 'bg-green-50 border-green-200' },
-          { label: `${dashMonth}/${safeDay} 臨時（今日出勤）`, value: Math.max(0, actualPresent - selectedDayWorking), icon: '🔄', color: 'bg-amber-50 border-amber-200',
-            sub: actualPresent === 0 ? '點名表未填寫' : null },
+          { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-blue-50 border-blue-200' },
+          { label: '廠商數量',   value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
+          { label: `${dashMonth}/${safeDay} 出勤`, value: selectedDayWorking, icon: '✅', color: 'bg-green-50 border-green-200' },
+          { label: `${dashMonth}/${safeDay} 休假`, value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
             <div className="text-2xl mb-1">{c.icon}</div>
             <div className="text-3xl font-bold text-slate-800">{c.value}</div>
             <div className="text-xs text-slate-500 mt-1">{c.label}</div>
-            {c.sub && <div className="text-xs text-slate-400 mt-0.5">{c.sub}</div>}
           </div>
         ))}
       </div>
 
       {/* Vendor Stats + Donut Chart */}
-      <div className="flex flex-col md:flex-row gap-4 items-start">
+      <div className="flex gap-4 items-start">
       {/* Vendor Stats Table */}
-      <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex-1 min-w-0 w-full">
+      <div className="bg-white rounded-xl border border-slate-200 p-5 flex-1 min-w-0">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-700">
             各廠商人力
@@ -1463,8 +1016,6 @@ function Dashboard() {
               <col style={{ width: 56 }} />
               {GROUP_COLS.map(gc => <col key={gc.label} style={{ width: 88 }} />)}
               <col style={{ width: 60 }} />
-              <col style={{ width: 60 }} />
-              <col style={{ width: 60 }} />
             </colgroup>
             <thead>
               <tr className="border-b-2 border-slate-200">
@@ -1474,21 +1025,19 @@ function Dashboard() {
                 {GROUP_COLS.map(gc => (
                   <th key={gc.label} className="text-right pb-2 text-xs font-semibold text-slate-400 pl-2">{gc.label}</th>
                 ))}
-                <th className="text-right pb-2 text-xs font-semibold text-teal-600 pl-2">到班(長)</th>
-                <th className="text-right pb-2 text-xs font-semibold text-teal-700 pl-2">到班(臨)</th>
                 <th className="text-right pb-2 text-xs font-semibold text-slate-500">前周差</th>
               </tr>
             </thead>
             <tbody>
               {vendorStats.map((s, i) => {
-                const diffColor = s.diff > 0 ? 'text-teal-700' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const diffColor = s.diff > 0 ? 'text-emerald-600' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
                 const diffLabel = s.diff > 0 ? `+${s.diff}` : s.diff < 0 ? `${s.diff}` : '–';
                 return (
                   <tr key={s.vendor}
-                    className={`hover:bg-[#F5F2EC] transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                    className={`hover:bg-slate-50 transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
                     <td className="py-2.5 text-sm font-medium text-slate-700">{s.vendor}</td>
                     <td className="py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{s.working}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{s.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = s.groups[gc.label] ?? 0;
                       return (
@@ -1497,12 +1046,6 @@ function Dashboard() {
                         </td>
                       );
                     })}
-                    <td className="py-2.5 text-right text-sm pl-2">
-                      {s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">–</span>}
-                    </td>
-                    <td className="py-2.5 text-right text-sm pl-2">
-                      {s.tempPresent > 0 ? <span className="font-semibold text-teal-700">{s.tempPresent}</span> : <span className="text-slate-300">–</span>}
-                    </td>
                     <td className={`py-2.5 text-right text-sm font-bold ${diffColor}`}>{diffLabel}</td>
                   </tr>
                 );
@@ -1510,19 +1053,17 @@ function Dashboard() {
               {/* 合計列 */}
               {vendorStats.length > 0 && (() => {
                 const total = {
-                  roster:      vendorStats.reduce((a, s) => a + s.roster,      0),
-                  working:     vendorStats.reduce((a, s) => a + s.working,     0),
-                  diff:        vendorStats.reduce((a, s) => a + s.diff,        0),
-                  longPresent: vendorStats.reduce((a, s) => a + s.longPresent, 0),
-                  tempPresent: vendorStats.reduce((a, s) => a + s.tempPresent, 0),
+                  roster:  vendorStats.reduce((a, s) => a + s.roster,  0),
+                  working: vendorStats.reduce((a, s) => a + s.working, 0),
+                  diff:    vendorStats.reduce((a, s) => a + s.diff,    0),
                 };
-                const totalDiffColor = total.diff > 0 ? 'text-teal-700' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const totalDiffColor = total.diff > 0 ? 'text-emerald-600' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
                 const totalDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '–';
                 return (
-                  <tr className="border-t-2 border-[#DDD9D0] bg-[#F5F2EC]">
+                  <tr className="border-t-2 border-slate-300 bg-slate-50">
                     <td className="py-2.5 text-xs font-bold text-slate-500 tracking-wide">合計</td>
                     <td className="py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{total.working}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{total.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
                       return (
@@ -1531,12 +1072,6 @@ function Dashboard() {
                         </td>
                       );
                     })}
-                    <td className="py-2.5 text-right text-sm font-bold pl-2">
-                      {total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">–</span>}
-                    </td>
-                    <td className="py-2.5 text-right text-sm font-bold pl-2">
-                      {total.tempPresent > 0 ? <span className="text-teal-700">{total.tempPresent}</span> : <span className="text-slate-300">–</span>}
-                    </td>
                     <td className={`py-2.5 text-right text-sm font-bold ${totalDiffColor}`}>{totalDiffLabel}</td>
                   </tr>
                 );
@@ -1546,39 +1081,31 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Donut Chart — 出勤比例 */}
+      {/* Donut Chart */}
       {(() => {
         const COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
-        const total = vendorStats.reduce((a, s) => a + (s.longPresent ?? 0), 0);
-        if (total === 0) return (
-          <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex flex-col items-center justify-center w-full md:w-56 md:flex-shrink-0">
-            <h3 className="font-semibold text-slate-700 text-sm mb-3 self-start">
-              出勤比例
-              <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
-            </h3>
-            <p className="text-xs text-slate-400 mt-4 text-center">點名表未填寫</p>
-          </div>
-        );
+        const total = vendorStats.reduce((a, s) => a + s.working, 0);
+        if (total === 0) return null;
         const R = 70, cx = 96, cy = 96, stroke = 26;
         const circ = 2 * Math.PI * R;
         let offset = 0;
-        const slices = vendorStats.filter(s => (s.longPresent ?? 0) > 0).map((s, i) => {
-          const val  = s.longPresent ?? 0;
-          const pct  = val / total;
+        const slices = vendorStats.filter(s => s.working > 0).map((s, i) => {
+          const pct = s.working / total;
           const dash = pct * circ;
           const gap  = circ - dash;
-          const seg  = { vendor: s.vendor, val, pct, dash, gap, offset, color: COLORS[i % COLORS.length] };
+          const seg  = { vendor: s.vendor, working: s.working, pct, dash, gap, offset, color: COLORS[i % COLORS.length] };
           offset += dash;
           return seg;
         });
         return (
-          <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex flex-col w-full md:w-56 md:flex-shrink-0">
+          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col" style={{ width: 220, flexShrink: 0 }}>
             <h3 className="font-semibold text-slate-700 text-sm mb-3">
-              出勤比例
+              排班比例
               <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
             </h3>
             <div className="flex justify-center">
               <svg width={192} height={192} viewBox="0 0 192 192">
+                {/* 底圈 */}
                 <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f1f5f9" strokeWidth={stroke} />
                 {slices.map(seg => (
                   <circle key={seg.vendor} cx={cx} cy={cy} r={R} fill="none"
@@ -1587,10 +1114,12 @@ function Dashboard() {
                     strokeDashoffset={-seg.offset}
                     style={{ transform: 'rotate(-90deg)', transformOrigin: `${cx}px ${cy}px` }} />
                 ))}
+                {/* 中心文字 */}
                 <text x={cx} y={cy - 6} textAnchor="middle" fontSize="22" fontWeight="700" fill="#1e293b">{total}</text>
-                <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#94a3b8">今日出勤</text>
+                <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#94a3b8">今日排班</text>
               </svg>
             </div>
+            {/* 圖例 */}
             <div className="mt-2 space-y-1.5">
               {slices.map(seg => (
                 <div key={seg.vendor} className="flex items-center justify-between text-xs">
@@ -1599,7 +1128,7 @@ function Dashboard() {
                     <span className="text-slate-600 truncate">{seg.vendor}</span>
                   </div>
                   <span className="ml-2 font-semibold text-slate-700 flex-shrink-0">
-                    {seg.val}
+                    {seg.working}
                     <span className="font-normal text-slate-400 ml-0.5">({Math.round(seg.pct * 100)}%)</span>
                   </span>
                 </div>
@@ -1628,11 +1157,10 @@ function ScheduleTable() {
   } = useApp();
   const toast = useToast();
 
-  // 讀取班別設定與代號表（依所選倉別）
+  // 讀取班別設定與代號表
   const shiftTypes = useMemo(() => {
-    const key = selectedWarehouse ? `sms_shift_types_${selectedWarehouse}` : 'sms_shift_types';
-    try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; }
-  }, [selectedWarehouse]);
+    try { return JSON.parse(localStorage.getItem('sms_shift_types') ?? '[]'); } catch { return []; }
+  }, []);
   const shiftCodeRows = useMemo(() => {
     try {
       const saved = localStorage.getItem('sms_shiftcode_rows');
@@ -1781,10 +1309,6 @@ function ScheduleTable() {
   };
 
   const visibleEmployees = useMemo(() => {
-    // 委外人員只能看自己
-    if (currentUser.role === ROLES.WORKER) {
-      return employees.filter(e => e.id === currentUser.employeeId);
-    }
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees;
@@ -1799,26 +1323,19 @@ function ScheduleTable() {
     return list;
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, nameSearch]);
 
-  /** 計算當週某代碼出現次數（週一～週日） */
-  const getWeeklyCode = useCallback((empId, dk, code) => {
+  /** 委外幹部：計算當週休假數（以 dk 為基準） */
+  const getWeeklyLeaves = useCallback((empId, dk) => {
     const [y, m, d] = dk.split('-').map(Number);
     const base = new Date(y, m - 1, d);
-    // getDay(): 0=日,1=一,...,6=六 → 轉為週一=0,...,週日=6
-    const dowMon = (base.getDay() + 6) % 7;
+    const dow  = base.getDay();
     let count = 0;
-    for (let offset = -dowMon; offset <= 6 - dowMon; offset++) {
+    for (let offset = -dow; offset <= 6 - dow; offset++) {
       const cur = new Date(y, m - 1, d + offset);
       const k = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
-      if (schedule[empId]?.[k] === code) count++;
+      if (schedule[empId]?.[k] === '例') count++;
     }
     return count;
   }, [schedule]);
-
-  /** 委外幹部：計算當週例假數 */
-  const getWeeklyLeaves = useCallback((empId, dk) => getWeeklyCode(empId, dk, '例'), [getWeeklyCode]);
-
-  /** 計算當週休假日數（'休'） */
-  const getWeeklyRest = useCallback((empId, dk) => getWeeklyCode(empId, dk, '休'), [getWeeklyCode]);
 
   const isEditable = useCallback((dk) => {
     if (systemLocked) return false;
@@ -1848,26 +1365,6 @@ function ScheduleTable() {
       }
     }
 
-    // WORKER 嚴格限制在 scheduleRange 內（不隨 viewRange 放寬）
-    if (currentUser.role === ROLES.WORKER && scheduleRange.start && scheduleRange.end) {
-      const [y, m, d] = dk.split('-').map(Number);
-      const date = new Date(y, m - 1, d);
-      const rs = parseLocal(scheduleRange.start);
-      const re = parseLocal(scheduleRange.end);
-      if (date < rs || date > re) {
-        toast('此日期超出開放排班區間，無法修改。', 'warn');
-        return;
-      }
-    }
-
-    // M3：WORKER 只能修改自己那一列
-    if (currentUser.role === ROLES.WORKER) {
-      if (empId !== currentUser.employeeId) {
-        toast('您只能修改自己的班表。', 'error');
-        return;
-      }
-    }
-
     const current = schedule[empId]?.[dk] ?? '';
     const idx = SHIFT_CYCLE.indexOf(current);
     let next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
@@ -1875,11 +1372,6 @@ function ScheduleTable() {
     // 委外幹部排「國」：依系統設定開放鍵決定
     if (currentUser.role === ROLES.VENDOR && next === '國' && !vendorHolidayOpen) {
       next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
-    }
-
-    // WORKER：只能在 V ↔ 休 之間切換
-    if (currentUser.role === ROLES.WORKER) {
-      next = current === '休' ? 'V' : '休';
     }
 
     // 防呆：委外幹部每週限排一天例休
@@ -1892,21 +1384,11 @@ function ScheduleTable() {
       }
     }
 
-    // 防呆：WORKER / VENDOR 每週限排一天休假
-    if ((currentUser.role === ROLES.WORKER || currentUser.role === ROLES.VENDOR) && next === '休') {
-      const weeklyRest = getWeeklyRest(empId, dk);
-      const alreadyRest = schedule[empId]?.[dk] === '休';
-      if (!alreadyRest && weeklyRest >= 1) {
-        toast('每週只能選一天休假日，本週已達上限。', 'error');
-        return;
-      }
-    }
-
     setSchedule(prev => ({
       ...prev,
       [empId]: { ...prev[empId], [dk]: next },
     }));
-  }, [schedule, employees, isEditable, currentUser, getWeeklyLeaves, getWeeklyRest, setSchedule, toast]);
+  }, [schedule, employees, isEditable, currentUser, getWeeklyLeaves, setSchedule, toast]);
 
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years  = [2024, 2025, 2026, 2027];
@@ -2142,21 +1624,21 @@ function ScheduleTable() {
           <h2 className="text-xl font-bold text-slate-800">班表管理</h2>
           <input value={nameSearch} onChange={e => setNameSearch(e.target.value)}
             placeholder="搜尋姓名／員工編號…"
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {rangeMode ? (
             <div className="flex items-center gap-1">
               <button onClick={() => setViewOffset(v => v - 1)}
-                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
+                className="px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="上一個週期">◀</button>
               <span className={`px-3 py-1.5 border rounded-lg text-sm font-medium
-                ${viewOffset === 0 ? 'bg-teal-50 border-teal-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
+                ${viewOffset === 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
                 📅 {viewRange?.start} ~ {viewRange?.end}
                 {viewOffset !== 0 && <span className="ml-1 text-xs opacity-70">（{viewOffset > 0 ? `+${viewOffset}` : viewOffset} 期）</span>}
               </span>
               <button onClick={() => setViewOffset(v => v + 1)}
-                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
+                className="px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
               {viewOffset !== 0 && (
                 <button onClick={() => setViewOffset(0)}
@@ -2168,11 +1650,11 @@ function ScheduleTable() {
           ) : (
             <>
               <select value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
                 {years.map(y => <option key={y} value={y}>{y}年</option>)}
               </select>
               <select value={selectedMonth} onChange={e => setSelectedMonth(+e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
                 {months.map(m => <option key={m} value={m}>{m}月</option>)}
               </select>
             </>
@@ -2181,7 +1663,7 @@ function ScheduleTable() {
             className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 border transition-colors
               ${showConverted
                 ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                : 'bg-white text-slate-600 border-[#DDD9D0] hover:bg-[#F5F2EC]'}`}>
+                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
             {showConverted ? '🔤 顯示代號中' : '🔡 顯示記號'}
           </button>
           {checkedEmpIds.size > 0 && (
@@ -2222,7 +1704,7 @@ function ScheduleTable() {
       </div>
 
       {/* Table */}
-      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
           <table className="border-collapse text-xs" style={{ minWidth: `${160 + days * 44}px` }}>
             <thead className="sticky top-0 z-10">
@@ -2244,7 +1726,7 @@ function ScheduleTable() {
                   return (
                   <th key={dk}
                     className={`px-1 py-1 w-11 min-w-[44px] text-center
-                                ${weekBand ? 'bg-[#F5F2EC]0' : ''}
+                                ${weekBand ? 'bg-slate-500' : ''}
                                 ${rangeMode && isMonthStart && month !== dayHeaders[0].month ? 'border-l-2 border-blue-400' : ''}`}>
                     {rangeMode && isMonthStart && <div className="text-[9px] text-blue-300 leading-none">{month}月</div>}
                     <div>{day}</div>
@@ -2276,7 +1758,7 @@ function ScheduleTable() {
                 })();
                 return (
                   <tr key={emp.id}
-                    className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}`}>
+                    className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
                     <td className="sticky left-0 z-10 px-2 py-2 text-center border-r border-slate-200 bg-inherit"
                       style={{ width: 32 }}>
                       <input type="checkbox"
@@ -2582,7 +2064,7 @@ function EmployeeRoster() {
     const [form, setForm] = useState(emp);
     return (
       <Modal onClose={onClose}>
-        <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
           <h3 className="font-bold text-lg text-slate-800 mb-4">{title}</h3>
           {[
             { key: 'empId',  label: '員編' },
@@ -2594,18 +2076,18 @@ function EmployeeRoster() {
             <div key={f.key} className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
               <input value={form[f.key] ?? ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
             </div>
           ))}
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">狀態</label>
             <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+              className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
               <option>在職</option><option>已離職</option><option>臨時人員</option>
             </select>
           </div>
           <div className="flex gap-2 justify-end">
-            <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+            <button onClick={onClose} className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
             <button onClick={() => onSave(form)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
           </div>
         </div>
@@ -2637,9 +2119,9 @@ function EmployeeRoster() {
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="搜尋姓名 / 員編..." className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-52" />
+          placeholder="搜尋姓名 / 員編..." className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-52" />
         <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}
-          className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+          className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
           {vendorOptions.map(v => <option key={v}>{v}</option>)}
         </select>
         <span className="text-sm text-slate-500 self-center">共 {visible.length} 筆</span>
@@ -2649,7 +2131,7 @@ function EmployeeRoster() {
       </div>
 
       {/* Table */}
-      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
@@ -2664,7 +2146,7 @@ function EmployeeRoster() {
                 <tr><td colSpan={7} className="text-center py-8 text-slate-400">無人員資料</td></tr>
               )}
               {pagedVisible.map(emp => (
-                <tr key={emp.id} className="hover:bg-[#F5F2EC]">
+                <tr key={emp.id} className="hover:bg-slate-50">
                   <td className="px-4 py-2.5 font-mono text-slate-600 whitespace-nowrap">{emp.empId}</td>
                   <td className="px-4 py-2.5 font-medium text-slate-800 whitespace-nowrap">{emp.name}</td>
                   <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{emp.vendor}</td>
@@ -2687,7 +2169,7 @@ function EmployeeRoster() {
                   <td className="px-4 py-2.5">
                     <div className="flex gap-2">
                       <button onClick={() => setEditTarget(emp)}
-                        className="text-teal-700 hover:text-blue-800 text-xs">編輯</button>
+                        className="text-blue-600 hover:text-blue-800 text-xs">編輯</button>
                       <button onClick={() => handleDelete(emp.id)}
                         className="text-red-500 hover:text-red-700 text-xs">移除</button>
                     </div>
@@ -2703,11 +2185,11 @@ function EmployeeRoster() {
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 pt-1">
           <button onClick={() => setPage(1)} disabled={page === 1}
-            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
+            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
             ««
           </button>
           <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
+            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
             ‹
           </button>
           <span className="text-sm text-slate-600 px-2">
@@ -2717,11 +2199,11 @@ function EmployeeRoster() {
             </span>
           </span>
           <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
+            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
             ›
           </button>
           <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-            className="px-2 py-1 text-xs border border-[#DDD9D0] rounded-lg disabled:opacity-40 hover:bg-[#F5F2EC]">
+            className="px-2 py-1 text-xs border border-slate-300 rounded-lg disabled:opacity-40 hover:bg-slate-50">
             »»
           </button>
         </div>
@@ -2762,8 +2244,7 @@ const esc = s => String(s ?? '')
 
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup,
-    vendorCompanyNames } = useApp();
+    warehouses, selectedWarehouse, selectedDept, selectedGroup } = useApp();
   const toast = useToast();
   const days = getDaysInMonth(selectedYear, selectedMonth);
 
@@ -2819,7 +2300,7 @@ function Reports() {
       return r;
     };
 
-    const companyName = vendorCompanyNames[vendor] ?? vendor;
+    const companyName = VENDOR_COMPANY_NAMES[vendor] ?? vendor;
     const dateRange = `確認排班區間：${rocYear}年${selectedMonth}月1日~${rocYear}年${selectedMonth}月${daysInMonth}日`;
 
     // Month row: position 1=月份, 2=empty, 3..3+days-1=month numbers, 3+days=各假別計算, 3+days+4=員工簽名, 3+days+5=確認日期, 3+days+6=備註
@@ -2876,13 +2357,11 @@ function Reports() {
     const noteRow3 = new Array(totalCols).fill(null);
     noteRow3[1] = '2. 當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。';
 
-    // Title row: B2=廠商名(red), center=當月排班確認表, right-of-days=確認排班區間
-    const midCol  = Math.floor((3 + dc) / 2);
-    const rgtCol  = dc - 3;
+    // Title row: B2=廠商名(red), I2=當月排班確認表, Q2=確認排班區間
     const titleRow = new Array(totalCols).fill(null);
-    titleRow[1]       = companyName;
-    titleRow[midCol]  = '當月排班確認表';
-    titleRow[rgtCol]  = dateRange;
+    titleRow[1] = companyName;           // B2 — styled red in exportVendor
+    titleRow[8] = '當月排班確認表';      // I2
+    titleRow[16] = dateRange;            // Q2
 
     return [
       new Array(totalCols).fill(null),
@@ -2900,179 +2379,21 @@ function Reports() {
     ];
   };
 
-  const applySheetStyles = (ws, daysInMonth, empsCount) => {
-    const dc        = 3 + daysInMonth;   // first count-col index (0-based)
-    const totalCols = dc + 7;
-    const midCol    = Math.floor((3 + dc) / 2);
-    const rgtCol    = dc - 3;
-
-    // ── helpers ──────────────────────────────────────────────────────────
-    const colLetter = (idx) => {
-      let s = '', i = idx + 1;
-      while (i > 0) { const m = (i-1)%26; s = String.fromCharCode(65+m)+s; i = Math.floor((i-1)/26); }
-      return s;
-    };
-    const cr  = (r, c) => colLetter(c) + (r + 1);
-    const ec  = (r, c) => { const k = cr(r,c); if (!ws[k]) ws[k] = {t:'z',v:null}; return ws[k]; };
-    const sty = (r, c, s) => { ec(r,c).s = s; };
-
-    const F    = '微軟正黑體';
-    const thin = { style:'thin', color:{rgb:'000000'} };
-    const bdr  = { top:thin, bottom:thin, left:thin, right:thin };
-    const bdrM = bdr;
-
-    // colour palette matching reference
-    const ODD  = 'BDD7EE';  // light blue  (odd  7-day block)
-    const EVEN = 'F2F2F2';  // light grey  (even 7-day block)
-    const CBLUE= '0070C0';  // solid blue  count-col headers
-    const CGRN = 'E2EFDA';  // light green count-col data
-    const SALM = 'FCE4D6';  // light salmon sig / date cols
-    const WHITE= 'FFFFFF';
-
-    const weekBg = (d) => Math.floor((d-1)/7) % 2 === 0 ? ODD : EVEN;
-
-    const mkS = (bg, rgb, sz, bold, halign, wrap) => ({
-      font:      { name:F, sz:sz||12, bold:!!bold, color:{rgb: rgb||'000000'} },
-      fill:      bg ? { patternType:'solid', fgColor:{rgb:bg} } : {},
-      alignment: { horizontal:halign||'center', vertical:'center', wrapText:!!wrap },
-      border:    bdr,
-    });
-
-    // ── row heights (hpt = height in points) ─────────────────────────────
-    ws['!rows'] = [
-      {hpt:8},   // r0  row1 spacer
-      {hpt:30},  // r1  row2 title
-      {hpt:8},   // r2  row3 spacer
-      {hpt:25},  // r3  row4 note1
-      {hpt:25},  // r4  row5 note2
-      {hpt:25},  // r5  row6 note3
-      {hpt:8},   // r6  row7 spacer
-      {hpt:20},  // r7  row8  月份
-      {hpt:20},  // r8  row9  日期
-      {hpt:20},  // r9  row10 星期
-      {hpt:20},  // r10 row11 員工編號
-      ...Array.from({length:empsCount}, ()=>({hpt:30})),
-    ];
-
-    // ── column widths ─────────────────────────────────────────────────────
-    ws['!cols'] = [
-      {wch:1.5},  // A spacer
-      {wch:16},   // B empId
-      {wch:11},   // C empName
-      ...Array.from({length:daysInMonth}, ()=>({wch:4.5})),
-      {wch:5.5},{wch:5.5},{wch:5.5},{wch:5.5},  // 4 count cols
-      {wch:21},   // sig
-      {wch:11},   // confirm date
-      {wch:30},   // remarks
-      {wch:1.5},  // trailing spacer
-    ];
-
-    // ── merges ────────────────────────────────────────────────────────────
-    ws['!merges'] = [
-      // note rows B:count_end
-      {s:{r:3,c:1}, e:{r:3,c:dc+3}},
-      {s:{r:4,c:1}, e:{r:4,c:dc+3}},
-      {s:{r:5,c:1}, e:{r:5,c:dc+3}},
-      // 人力廠商 box spans note rows + sig cols
-      {s:{r:3,c:dc+4}, e:{r:5,c:dc+6}},
-      // header label cells B:C merged per row
-      {s:{r:7,c:1}, e:{r:7,c:2}},   // 月份
-      {s:{r:8,c:1}, e:{r:8,c:2}},   // 日期
-      {s:{r:9,c:1}, e:{r:9,c:2}},   // 星期
-      // 各假別計算 spans 4 count cols in month row
-      {s:{r:7,c:dc}, e:{r:7,c:dc+3}},
-      // sig / date / remarks span all 4 header rows (r7–r10)
-      {s:{r:7,c:dc+4}, e:{r:10,c:dc+4}},
-      {s:{r:7,c:dc+5}, e:{r:10,c:dc+5}},
-      {s:{r:7,c:dc+6}, e:{r:10,c:dc+6}},
-      // count headers span rows 日期→員工編號 (r8–r10)
-      {s:{r:8,c:dc},   e:{r:10,c:dc}},
-      {s:{r:8,c:dc+1}, e:{r:10,c:dc+1}},
-      {s:{r:8,c:dc+2}, e:{r:10,c:dc+2}},
-      {s:{r:8,c:dc+3}, e:{r:10,c:dc+3}},
-      // each date col: 星期 row merged down into 員工編號 row (r9–r10)
-      ...Array.from({length:daysInMonth}, (_,i) => ({s:{r:9,c:3+i}, e:{r:10,c:3+i}})),
-    ];
-
-    // ── title row (r=1) ───────────────────────────────────────────────────
-    sty(1, 1,      { font:{name:F,sz:16,bold:true,color:{rgb:'CC0000'}}, alignment:{horizontal:'left',  vertical:'center'} });
-    sty(1, midCol, { font:{name:F,sz:16,bold:true,color:{rgb:'000000'}}, alignment:{horizontal:'center',vertical:'center'} });
-    sty(1, rgtCol, { font:{name:F,sz:11,bold:true,color:{rgb:'000000'}}, alignment:{horizontal:'right', vertical:'center'} });
-
-    // ── note rows (r=3,4,5) ───────────────────────────────────────────────
-    const noteS = mkS(WHITE,'333333',10,false,'left',true);
-    for (let r=3;r<=5;r++) sty(r, 1, noteS);
-    // 人力廠商 box — medium border, salmon bg
-    sty(3, dc+4, { font:{name:F,sz:11,bold:true,color:{rgb:'000000'}},
-                   fill:{patternType:'solid',fgColor:{rgb:SALM}},
-                   alignment:{horizontal:'center',vertical:'center',wrapText:true},
-                   border:bdrM });
-
-    // ── header rows ───────────────────────────────────────────────────────
-    const hLbl = mkS(EVEN,'000000',12,false,'center',false);  // light gray — not blank
-    const hCnt = mkS(CBLUE,'FFFFFF',10,true,'center',true);
-    const hSig = mkS(SALM,'000000',12,false,'center',true);
-    const hRmk = mkS(EVEN,'000000',12,false,'left',false);
-
-    // row 7 (月份): label B:C, month-number cells, 各假別計算, sig/date/remarks
-    sty(7,1,hLbl); sty(7,2,hLbl);
-    for (let i=0;i<daysInMonth;i++) sty(7,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
-    for (let i=0;i<4;i++) sty(7,dc+i,hCnt);
-    sty(7,dc+4,hSig); sty(7,dc+5,hSig); sty(7,dc+6,hRmk);
-
-    // row 8 (日期): label, day numbers, count headers (rowspan covers r8-r10)
-    sty(8,1,hLbl); sty(8,2,hLbl);
-    for (let i=0;i<daysInMonth;i++) sty(8,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
-    for (let i=0;i<4;i++) sty(8,dc+i,hCnt);
-
-    // row 9 (星期): label, weekday chars (each merges down into r10)
-    sty(9,1,hLbl); sty(9,2,hLbl);
-    for (let i=0;i<daysInMonth;i++) sty(9,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
-
-    // row 10 (員工編號 / 員工姓名): only B and C visible (date cols merged from r9)
-    sty(10,1,hLbl); sty(10,2,hLbl);
-
-    // ── data rows ─────────────────────────────────────────────────────────
-    for (let row=0; row<empsCount; row++) {
-      const r = 11 + row;
-      sty(r,1, mkS(WHITE,'000000',12,false,'center',false));
-      sty(r,2, mkS(WHITE,'000000',12,false,'center',false));
-      for (let i=0;i<daysInMonth;i++) sty(r,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
-      for (let i=0;i<4;i++) sty(r,dc+i,  mkS(CGRN,'000000',12,false,'center',false));
-      sty(r,dc+4, mkS(SALM,'000000',12,false,'center',false));
-      sty(r,dc+5, mkS(SALM,'000000',12,false,'center',false));
-      sty(r,dc+6, mkS(EVEN,'000000',12,false,'left',true));
-    }
-
-    // ── border sweep: ensure every cell in the table area has borders ──────
-    // Merged cells whose non-top-left members have no style need borders set
-    // so Excel renders the outer boundary of each merge correctly.
-    for (let r = 7; r <= 10 + empsCount; r++) {
-      for (let c = 1; c <= dc + 6; c++) {
-        const cell = ec(r, c);
-        if (!cell.s) cell.s = { border: bdr, alignment: { horizontal: 'center', vertical: 'center' } };
-        else cell.s.border = bdr;
-      }
-    }
-    // Note rows: vendor box cells
-    for (let r = 3; r <= 5; r++) {
-      for (let c = 1; c <= dc + 6; c++) {
-        const cell = ec(r, c);
-        if (!cell.s) cell.s = { border: bdr };
-        else cell.s.border = bdr;
-      }
-    }
-    // Restore medium border on vendor box top-left
-    ec(3, dc+4).s.border = bdrM;
+  const applySheetStyles = (ws) => {
+    // B2: 廠商名稱 — 紅色粗體
+    if (ws['B2']) ws['B2'].s = { font: { bold: true, sz: 13, color: { rgb: 'CC0000' } } };
+    // I2: 當月排班確認表 — 粗體
+    if (ws['I2']) ws['I2'].s = { font: { bold: true, sz: 13 } };
+    // Q2: 確認排班區間 — 粗體
+    if (ws['Q2']) ws['Q2'].s = { font: { bold: true, sz: 12 } };
   };
 
   const exportVendor = (vendor) => {
     try {
       const wb = XLSX.utils.book_new();
-      const emps = scopedEmployees.filter(e => e.vendor === vendor);
       const wsData = buildVendorSheet(vendor);
       const ws = XLSX.utils.aoa_to_sheet(wsData);
-      applySheetStyles(ws, days, emps.length);
+      applySheetStyles(ws);
       XLSX.utils.book_append_sheet(wb, ws, vendor.substring(0, 30));
       const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
       saveAs(new Blob([buf], { type: 'application/octet-stream' }),
@@ -3087,7 +2408,7 @@ function Reports() {
     const rocYear = selectedYear - 1911;
     const emps = scopedEmployees.filter(e => e.vendor === vendor);
     const daysInMonth = days;
-    const companyName = vendorCompanyNames[vendor] ?? vendor;
+    const companyName = VENDOR_COMPANY_NAMES[vendor] ?? vendor;
     const WD = ['日','一','二','三','四','五','六'];
     const getCode = (emp, d) => schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V';
     const countCode = (emp, code) => { let c = 0; for (let d = 1; d <= daysInMonth; d++) if (getCode(emp,d)===code) c++; return c; };
@@ -3110,40 +2431,24 @@ function Reports() {
     });
 
     // Inline style constants — avoid class-based styles which html2canvas may not honour
-    const F   = "font-family:'微軟正黑體','Microsoft JhengHei',Arial,sans-serif;";
-    // C = wrapper div forces center alignment in html2canvas
-    const C   = (t) => `<div style="text-align:center;width:100%;display:block;">${t}</div>`;
-    // Base cell 8pt — enough room in 13px day cols for single CJK/Latin chars
-    const CS  = `border:1px solid #888;padding:1px 1px;text-align:center;vertical-align:middle;font-size:8pt;${F}`;
+    const F  = "font-family:'微軟正黑體','Microsoft JhengHei',Arial,sans-serif;";
+    const CS = `border:1px solid #AAA;padding:1px 2px;text-align:center;vertical-align:middle;font-size:7pt;${F}`;
     const HS  = CS + 'background:#4472C4;color:#fff;font-weight:bold;';
     const HDS = CS + 'background:#2F5496;color:#fff;font-weight:bold;';
     const HSG = CS + 'background:#F4B8A0;color:#333;font-weight:bold;';
-    const HCN = CS + 'background:#4472C4;color:#fff;font-weight:bold;font-size:6.5pt;line-height:1.3;';
-    const HWK = CS + 'background:#2F5496;color:#fff;font-weight:bold;';   // weekend header
+    const HCN = CS + 'background:#4472C4;color:#fff;font-weight:bold;font-size:6pt;width:28px;';
+    const HWK = CS + 'background:#2F5496;color:#fff;font-weight:bold;';  // weekend header
     const CNT = CS + 'background:#DEEAF1;';
     const SIG = CS + 'background:#FDE9D9;';
-    const RMK = `border:1px solid #888;padding:1px 3px;text-align:left;vertical-align:middle;white-space:normal;word-break:break-all;font-size:7pt;background:#FDE9D9;${F}`;
+    const RMK = `border:1px solid #AAA;padding:1px 3px;text-align:left;white-space:normal;word-break:break-all;font-size:6.5pt;background:#FDE9D9;${F}`;
 
-    const dCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.d)}</th>`;
-    const wCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.weekday)}</th>`;
-    const eDay  = ()  => `<th style="${HS}width:13px;"></th>`;
+    const mCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.month}</th>`;
+    const dCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.d}</th>`;
+    const wCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.weekday}</th>`;
+    const eDay  = ()  => `<th style="${HS}width:14px;"></th>`;
     const eCnt  = ()  => `<th style="${HS}width:28px;"></th>`;
 
-    // Merge consecutive same-month day columns into one colspan cell
-    const monthGroupCells = (() => {
-      const groups = [];
-      dayInfos.forEach(di => {
-        if (!groups.length || groups[groups.length-1].month !== di.month) {
-          groups.push({ month: di.month, count: 1 });
-        } else {
-          groups[groups.length-1].count++;
-        }
-      });
-      return groups.map(g =>
-        `<th style="${HS}" colspan="${g.count}">${C(g.month)}</th>`
-      ).join('');
-    })();
-
+    const monthCells = dayInfos.map(mCell).join('');
     const dateCells  = dayInfos.map(dCell).join('');
     const weekCells  = dayInfos.map(wCell).join('');
     const emptyDays  = dayInfos.map(eDay).join('');
@@ -3153,69 +2458,70 @@ function Reports() {
       const rowBg = idx%2===1 ? 'background:#FFF5F5;' : '';
       const dayCells = dayInfos.map(di=>{
         const code = getCode(emp,di.d);
-        const wkBg = di.isSat||di.isSun ? 'background:#DAE3F3;' : rowBg;
-        return `<td style="${CS}${wkBg}${codeStyle(code)}">${C(code)}</td>`;
+        const bg = di.isSat||di.isSun ? 'background:#E8EDF7;' : rowBg;
+        return `<td style="${CS}${bg}${codeStyle(code)}">${code}</td>`;
       }).join('');
       const leave=countCode(emp,'事')+countCode(emp,'病'), rest=countCode(emp,'休'),
             hol=countCode(emp,'例'), nat=countCode(emp,'國'), rmk=getRemarks(emp);
-      return `<tr style="height:21px;">
-        <td style="${CS}${rowBg}font-size:7.5pt;">${C(esc(emp.empId))}</td>
-        <td style="${CS}${rowBg}font-size:8pt;">${C(esc(emp.name))}</td>
+      return `<tr style="height:22px;">
+        <td style="${CS}${rowBg}white-space:normal;word-break:break-all;">${esc(emp.empId)}</td>
+        <td style="${CS}${rowBg}white-space:normal;word-break:break-word;">${esc(emp.name)}</td>
         ${dayCells}
-        <td style="${CNT}">${C(leave)}</td><td style="${CNT}">${C(rest)}</td>
-        <td style="${CNT}">${C(hol)}</td><td style="${CNT}">${C(nat)}</td>
+        <td style="${CNT}">${leave}</td><td style="${CNT}">${rest}</td>
+        <td style="${CNT}">${hol}</td><td style="${CNT}">${nat}</td>
         <td style="${SIG}"></td><td style="${SIG}"></td>
         <td style="${RMK}">${esc(rmk)}</td>
       </tr>`;
     }).join('');
 
     const html = `<div style="font-size:8pt;background:#fff;padding:0;margin:0;${F}">
-<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:2px;">
-  <tr>
-    <td style="border:none;color:#CC0000;font-weight:bold;font-size:12pt;white-space:nowrap;padding:0 8px 0 0;${F}">${companyName}</td>
-    <td style="border:none;font-weight:bold;font-size:12pt;text-align:center;${F}">當月排班確認表</td>
-    <td style="border:none;font-weight:bold;font-size:9pt;text-align:right;white-space:nowrap;${F}">確認排班區間：${rocYear}年${selectedMonth}月1日&nbsp;~&nbsp;${rocYear}年${selectedMonth}月${daysInMonth}日</td>
-  </tr>
-</table>
 <table style="width:100%;border-collapse:collapse;border:none;margin-bottom:3px;">
   <tr>
-    <td style="border:none;font-size:8pt;line-height:1.65;vertical-align:top;padding-right:6px;${F}">
-      <div>1.&nbsp;本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。</div>
-      <div style="margin-left:14px;">※班別／狀態說明：V＝出勤日　例＝例假日　休＝休假日　事＝事假　病＝病假　國＝國定假日</div>
-      <div>2.&nbsp;當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。</div>
+    <td style="border:none;color:#CC0000;font-weight:bold;font-size:12pt;white-space:nowrap;padding:0 10px 0 0;${F}">${companyName}</td>
+    <td style="border:none;font-weight:bold;font-size:12pt;text-align:center;${F}">當月排班確認表</td>
+    <td style="border:none;font-weight:bold;font-size:10pt;text-align:right;white-space:nowrap;${F}">確認排班區間：${rocYear}年${selectedMonth}月1日~${rocYear}年${selectedMonth}月${daysInMonth}日</td>
+  </tr>
+</table>
+<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:4px;">
+  <tr>
+    <td style="border:none;font-size:8pt;line-height:1.7;vertical-align:top;padding-right:8px;${F}">
+      <div>1. 本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。</div>
+      <div style="margin-left:12px">※班別／狀態說明：V＝出勤日&emsp;例＝例假日&emsp;休＝休假日&emsp;事＝事假&emsp;病＝病假&emsp;國＝國定假日</div>
+      <div>2. 當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。</div>
     </td>
-    <td style="border:2px solid #888;width:160px;text-align:center;vertical-align:middle;font-weight:bold;font-size:9pt;padding:6px 4px;${F}">人力廠商&nbsp;假別確認簽章</td>
+    <td style="border:1.5px solid #999;width:165px;min-height:68px;text-align:center;vertical-align:middle;font-weight:bold;font-size:9pt;padding:5px;${F}">人力廠商 假別確認簽章</td>
   </tr>
 </table>
 <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
   <colgroup>
-    <col style="width:86px"><col style="width:72px">
-    ${dayInfos.map(()=>`<col style="width:13px">`).join('')}
+    <col style="width:75px"><col style="width:90px">
+    ${dayInfos.map(()=>`<col style="width:14px">`).join('')}
     <col style="width:28px"><col style="width:28px"><col style="width:28px"><col style="width:28px">
-    <col style="width:52px"><col style="width:52px"><col>
+    <col style="width:60px"><col style="width:60px"><col style="width:120px">
   </colgroup>
   <thead>
     <tr>
-      <th style="${HS}" colspan="2">月份</th>
-      ${monthGroupCells}
+      <th style="${HS}">月份</th><th style="${HS}"></th>
+      ${monthCells}
       <th style="${HDS}" colspan="4">各假別計算</th>
       <th style="${HSG}" rowspan="4">員工簽名</th>
       <th style="${HSG}" rowspan="4">確認日期</th>
       <th style="${HSG}" rowspan="4">備註</th>
     </tr>
     <tr>
-      <th style="${HS}" colspan="2">日期</th>
+      <th style="${HS}">日期</th><th style="${HS}"></th>
       ${dateCells}
-      <th style="${HCN}" rowspan="3">請假<br>天數</th><th style="${HCN}" rowspan="3">休假<br>天數</th>
-      <th style="${HCN}" rowspan="3">例假日<br>天數</th><th style="${HCN}" rowspan="3">國定<br>假日<br>天數</th>
+      <th style="${HCN}">請假<br>天數</th><th style="${HCN}">休假<br>天數</th>
+      <th style="${HCN}">例假日<br>天數</th><th style="${HCN}">國定<br>假日<br>天數</th>
     </tr>
     <tr>
-      <th style="${HS}" colspan="2">星期</th>
+      <th style="${HS}">星期</th><th style="${HS}"></th>
       ${weekCells}
+      ${emptyCount}
     </tr>
     <tr>
       <th style="${HS}">員工編號</th><th style="${HS}">員工姓名</th>
-      ${emptyDays}
+      ${emptyDays}${emptyCount}
     </tr>
   </thead>
   <tbody>${empRows}</tbody>
@@ -3260,7 +2566,7 @@ function Reports() {
           const count = scopedEmployees.filter(e => e.vendor === vendor).length;
           return (
             <div key={vendor}
-              className="bg-white border border-[#DDD9D0] rounded-xl p-5 flex flex-col gap-3">
+              className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-3">
               <div>
                 <div className="font-semibold text-slate-800">{vendor}</div>
                 <div className="text-sm text-slate-500">{count} 人員</div>
@@ -3280,7 +2586,7 @@ function Reports() {
         })}
       </div>
 
-      <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 text-sm text-blue-700">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
         <p className="font-medium mb-1">匯出說明</p>
         <ul className="list-disc list-inside space-y-1 text-xs">
           <li>每份報表自動包含法規宣告文字與主管簽章欄位</li>
@@ -3310,1088 +2616,12 @@ const getHolidayShort = (h, springIdx) => {
 // key 格式: "year-month-day"
 const holidayKey = (h) => `${h.year}-${h.month}-${h.day}`;
 
-// ─────────────────────────────────────────────
-// ATTENDANCE (點名表)
-// ─────────────────────────────────────────────
-
-const DEFAULT_ATTEND_SETTINGS = {
-  leaveTypes: ['事假', '病假', '特休假', '公假', '喪假', '婚假', '其他'],
-  lateEarlyStatus: ['正常到班（無遲到早退）', '遲到', '早退', '遲到且早退'],
-  groups: [],
-};
-
-function AttendSubBtn({ active, onClick, icon, label }) {
-  return (
-    <button onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap
-        ${active
-          ? 'border-blue-600 text-blue-700 bg-white'
-          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-[#F5F2EC]'}`}>
-      {label}
-    </button>
-  );
-}
-
-function Attendance() {
-  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras } = useApp();
-  const toast = useToast();
-
-  const todayStr = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  })();
-
-  const [subTab, setSubTab] = useState('attend');
-  const [attendDate, setAttendDate] = useState(todayStr);
-  const [groupFilter, setGroupFilter] = useState('');
-  const [attendSettings, setAttendSettings] = useState(() => LS.get('sms_attend_settings', DEFAULT_ATTEND_SETTINGS));
-  const [addModal, setAddModal] = useState(false);
-  const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
-
-  useEffect(() => { LS.set('sms_attend_settings', attendSettings); }, [attendSettings]);
-
-  const groupOptions = useMemo(() => {
-    const fromEmps = new Set(employees.map(e => e.shiftType).filter(Boolean));
-    const custom = attendSettings.groups ?? [];
-    return [...new Set([...fromEmps, ...custom])].sort();
-  }, [employees, attendSettings.groups]);
-
-  const ABSENT_CODES = new Set(['休', '例', '國']);
-
-  const scopedEmps = useMemo(() => {
-    let list = currentUser.role === ROLES.VENDOR
-      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-    if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
-    // 班表當日排休/例/國 → 不出現在點名名單
-    // dateKey 格式無補零 (2026-7-16)，attendDate 有補零 (2026-07-16)，需轉換
-    const [ay, am, ad] = attendDate.split('-').map(Number);
-    const attendDk = dateKey(ay, am, ad);
-    list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk]));
-    return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, groupFilter, attendDate, schedule]);
-
-  const dateExtras = (extras[attendDate] ?? []).filter(e =>
-    !selectedGroup || !e.group || e.group === selectedGroup
-  );
-
-  const vendorGroups = useMemo(() => {
-    const map = {};
-    scopedEmps.forEach(e => {
-      const v = e.vendor || '未分配';
-      if (!map[v]) map[v] = [];
-      map[v].push(e);
-    });
-    return map;
-  }, [scopedEmps]);
-
-  // 臨時人員依廠商分組（含匯入 + 手動新增）
-  const extrasVendorGroups = useMemo(() => {
-    const map = {};
-    (extras[attendDate] ?? []).forEach(e => {
-      // 依目前選擇的組別篩選，無組別限制時全部顯示
-      if (selectedGroup && e.group && e.group !== selectedGroup) return;
-      const v = e.vendor || '未分配';
-      if (!map[v]) map[v] = [];
-      map[v].push(e);
-    });
-    return map;
-  }, [extras, attendDate, selectedGroup]);
-
-  const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
-
-  const getRecord = (empId) => {
-    if (attendData[attendDate]?.[empId]) return attendData[attendDate][empId];
-    const shiftCode = schedule[empId]?.[attendDate];
-    // 班表 V → 預設未勾選（點名時再確認）
-    if (shiftCode === 'V') {
-      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '' };
-    }
-    // 班表休/例/國定 → 預設缺勤並帶入假別
-    const SHIFT_LEAVE_MAP = { '休': '休假', '例': '例假', '國': '國定假日' };
-    if (SHIFT_LEAVE_MAP[shiftCode]) {
-      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: SHIFT_LEAVE_MAP[shiftCode], note: '' };
-    }
-    // 無班表記錄 → 預設未到班
-    return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '' };
-  };
-
-  const setRecord = (empId, patch) => {
-    setAttendData(prev => ({
-      ...prev,
-      [attendDate]: { ...(prev[attendDate] ?? {}), [empId]: { ...getRecord(empId), ...patch } },
-    }));
-  };
-
-  const toggleAll = (vendorName, val) => {
-    const emps = vendorGroups[vendorName] ?? [];
-    setAttendData(prev => {
-      const day = { ...(prev[attendDate] ?? {}) };
-      emps.forEach(e => { day[e.id] = { ...getRecord(e.id), present: val }; });
-      return { ...prev, [attendDate]: day };
-    });
-  };
-
-  const handleAddExtra = () => {
-    if (!addForm.name.trim()) { toast('姓名為必填', 'error'); return; }
-    const e = { id: 'extra_' + Date.now(), ...addForm, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
-    setExtras(prev => ({ ...prev, [attendDate]: [...(prev[attendDate] ?? []), e] }));
-    setAddModal(false);
-    setAddForm({ name: '', vendor: '', group: '', note: '' });
-    toast('已新增：' + addForm.name, 'success');
-  };
-
-  const removeExtra = (id) =>
-    setExtras(prev => ({ ...prev, [attendDate]: (prev[attendDate] ?? []).filter(e => e.id !== id) }));
-
-  const setExtraRecord = (id, patch) =>
-    setExtras(prev => ({
-      ...prev,
-      [attendDate]: (prev[attendDate] ?? []).map(e => e.id === id ? { ...e, ...patch } : e),
-    }));
-
-  const totalCount = scopedEmps.length + dateExtras.length;
-  const presentCount = scopedEmps.filter(e => getRecord(e.id).present).length + dateExtras.filter(e => e.present).length;
-  const absentCount = totalCount - presentCount;
-  const attendRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
-
-  // ── 統計 Excel
-  const exportStats = (reportDate, reportGroup) => {
-    try {
-      let emps = reportGroup
-        ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
-        : scopedEmps;
-      const exExtras = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
-      const getData = id => attendData[reportDate]?.[id] ?? { present: true };
-
-      const s1 = [['廠商', '應到', '實到', '缺勤', '到班率']];
-      const vm = {};
-      emps.forEach(e => {
-        const v = e.vendor || '未分配';
-        if (!vm[v]) vm[v] = { t: 0, p: 0 };
-        vm[v].t++; if (getData(e.id).present) vm[v].p++;
-      });
-      exExtras.forEach(e => {
-        const v = e.vendor || '手動新增';
-        if (!vm[v]) vm[v] = { t: 0, p: 0 };
-        vm[v].t++; if (e.present) vm[v].p++;
-      });
-      let tt = 0, tp = 0;
-      Object.entries(vm).forEach(([v, d]) => {
-        tt += d.t; tp += d.p;
-        s1.push([v, d.t, d.p, d.t - d.p, d.t > 0 ? `${Math.round((d.p/d.t)*100)}%` : '—']);
-      });
-      s1.push(['合計', tt, tp, tt - tp, tt > 0 ? `${Math.round((tp/tt)*100)}%` : '—']);
-
-      const s2 = [['日期', '廠商', '員工編號', '姓名', '出勤狀況', '假別/遲到狀態', '備註']];
-      emps.forEach(emp => {
-        const rec = getData(emp.id);
-        if (!rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus)) {
-          s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
-            rec.present ? '出勤' : '缺勤',
-            rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
-            rec.note || '']);
-        }
-      });
-      exExtras.forEach(e => {
-        if (!e.present || (e.lateEarly && e.lateEarly !== defaultStatus)) {
-          s2.push([reportDate, e.vendor || '', '', e.name,
-            e.present ? '出勤' : '缺勤',
-            e.present ? (e.lateEarly || '') : (e.absType || ''),
-            e.note || '']);
-        }
-      });
-
-      const wb = XLSX.utils.book_new();
-      const ws1 = XLSX.utils.aoa_to_sheet(s1);
-      ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }];
-      const ws2 = XLSX.utils.aoa_to_sheet(s2);
-      ws2['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 20 }, { wch: 20 }];
-      XLSX.utils.book_append_sheet(wb, ws1, '出勤人數統計');
-      XLSX.utils.book_append_sheet(wb, ws2, '請假與異常名單');
-      XLSX.writeFile(wb, `點名統計_${reportDate}${reportGroup ? '_' + reportGroup : ''}.xlsx`);
-      toast('匯出成功', 'success');
-    } catch (err) { toast('匯出失敗：' + err.message, 'error'); }
-  };
-
-  // ── 回報文字
-  const generateReport = (reportDate, reportGroup) => {
-    // 長期 = 清冊人員；臨時 = 手動新增
-    const longEmps = (reportGroup
-      ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
-      : scopedEmps
-    ).filter(e => {
-      let list = currentUser.role === ROLES.VENDOR
-        ? employees.filter(x => currentUser.vendors.includes(x.vendor)) : employees;
-      list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-      return list.some(x => x.id === e.id);
-    });
-    const tempEmps = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
-    const getData = id => attendData[reportDate]?.[id] ?? { present: true };
-
-    // 星期對照
-    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-    const [y, m, d] = reportDate.split('-').map(Number);
-    const dow = weekdays[new Date(y, m - 1, d).getDay()];
-    const dateLabel = `${m}/${d}（${dow}）`;
-
-    // 課別標頭
-    const deptLabel = selectedDept || selectedWarehouse || '';
-    const groupLabel = reportGroup || groupFilter || '';
-    const header = deptLabel ? `${deptLabel}${groupLabel ? `（${groupLabel}）` : ''}` : groupLabel;
-
-    // 統計輔助
-    const countAbsTypes = (list, getRecFn) => {
-      const map = {};
-      list.forEach(e => {
-        const rec = getRecFn(e);
-        if (!rec.present) {
-          const t = rec.absType || '缺勤';
-          map[t] = (map[t] || 0) + 1;
-        }
-      });
-      return map;
-    };
-
-    const longPresent = longEmps.filter(e => getData(e.id).present).length;
-    const longAbsent  = longEmps.length - longPresent;
-    const longAbsMap  = countAbsTypes(longEmps, e => getData(e.id));
-
-    const tempPresent = tempEmps.filter(e => e.present).length;
-    const tempAbsent  = tempEmps.length - tempPresent;
-    const tempAbsMap  = countAbsTypes(tempEmps, e => e);
-
-    const fmtAbsMap = (map) => {
-      const parts = Object.entries(map).map(([t, n]) => `${t}*${n}`);
-      return parts.length ? `（${parts.join('、')}）` : '（無缺勤）';
-    };
-
-    // 廠商分組
-    const buildVm = (list, getRecFn) => {
-      const vm = {};
-      list.forEach(e => {
-        const v = e.vendor || '未分配';
-        if (!vm[v]) vm[v] = { long: { t: 0, p: 0 }, temp: { t: 0, p: 0 }, absent: [] };
-        const rec = getRecFn(e);
-        if (e._isTemp) {
-          vm[v].temp.t++;
-          if (rec.present) vm[v].temp.p++;
-          else vm[v].absent.push({ name: e.name, type: rec.absType || '缺勤' });
-        } else {
-          vm[v].long.t++;
-          if (rec.present) vm[v].long.p++;
-          else vm[v].absent.push({ name: e.name, type: rec.absType || '缺勤' });
-        }
-      });
-      return vm;
-    };
-
-    const allList = [
-      ...longEmps.map(e => ({ ...e, _isTemp: false })),
-      ...tempEmps.map(e => ({ ...e, _isTemp: true })),
-    ];
-    const vm = buildVm(allList, e => e._isTemp ? e : getData(e.id));
-
-    let text = '';
-    if (header) text += `${header}\n\n`;
-    text += `總出勤人力回報\n\n`;
-    text += `出勤日期：${dateLabel}\n\n`;
-    text += `應到人數（長期）：${longEmps.length}人\n`;
-    text += `實到人數（長期）：${longPresent}人\n`;
-    text += `缺勤人數（長期）：${longAbsent}人\n`;
-    text += `${fmtAbsMap(longAbsMap)}\n\n`;
-    text += `應到人數（臨時）：${tempEmps.length}人\n`;
-    text += `實到人數（臨時）：${tempPresent}人\n`;
-    text += `缺勤人數（臨時）：${tempAbsent}人\n`;
-    text += `${fmtAbsMap(tempAbsMap)}\n\n`;
-
-    Object.entries(vm).forEach(([v, d]) => {
-      text += `\n《${v}》\n`;
-      text += `應到（長期）:${d.long.t} 實到（長期）:${d.long.p}\n`;
-      text += `應到（臨時）:${d.temp.t} 實到（臨時）:${d.temp.p}\n`;
-      // 缺勤按假別分組列出
-      const absByType = {};
-      d.absent.forEach(a => { if (!absByType[a.type]) absByType[a.type] = []; absByType[a.type].push(a.name); });
-      Object.entries(absByType).forEach(([t, names]) => {
-        text += `${t}：${names.join('、')}\n`;
-      });
-    });
-
-    return text;
-  };
-
-  // ── 點名分頁
-  const AttendPane = () => (
-    <div className="space-y-4">
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
-        <div>
-          <label className="block text-xs text-slate-500 mb-1">點名出勤日期</label>
-          <input type="date" value={attendDate} onChange={e => setAttendDate(e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="text-sm text-slate-500">實到 <span className="font-bold text-teal-700">{presentCount}</span>/{totalCount}人</span>
-          <button onClick={() => setAddModal(true)}
-            className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
-            👤 手動新增
-          </button>
-        </div>
-      </div>
-
-      {Object.keys(vendorGroups).length === 0 && dateExtras.length === 0 ? (
-        <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
-      ) : (() => {
-        // 合併所有廠商名稱，維持出現順序
-        const allVendors = [...new Set([
-          ...Object.keys(vendorGroups),
-          ...Object.keys(extrasVendorGroups),
-        ])];
-        return (
-          <div className="space-y-2">
-            {allVendors.map(vName => {
-              const longEmps = vendorGroups[vName] ?? [];
-              const tempEmps = extrasVendorGroups[vName] ?? [];
-              return (
-                <div key={vName} className="space-y-1">
-                  {/* 長期人員卡 */}
-                  {longEmps.length > 0 && (
-                    <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
-                      <div className="flex items-center justify-between bg-blue-700 text-white px-4 py-2.5">
-                        <span className="font-semibold flex items-center gap-2">
-                          👥 {vName}
-                          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{longEmps.filter(e => getRecord(e.id).present).length}/{longEmps.length}人</span>
-                          <span className="text-xs opacity-70">長期</span>
-                        </span>
-                        <div className="flex gap-2">
-                          <button onClick={() => toggleAll(vName, true)}
-                            className="text-xs bg-blue-600 hover:bg-teal-500 px-3 py-1 rounded-full">全選到班</button>
-                          <button onClick={() => toggleAll(vName, false)}
-                            className="text-xs bg-blue-900 hover:bg-blue-800 px-3 py-1 rounded-full">取消全選</button>
-                        </div>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {longEmps.map(emp => {
-                          const rec = getRecord(emp.id);
-                          return (
-                            <div key={emp.id} className={`px-3 py-3 ${rec.present ? '' : 'bg-rose-50'}`}>
-                              <div className="flex items-start gap-3 flex-wrap">
-                                <input type="checkbox" checked={rec.present}
-                                  onChange={ev => setRecord(emp.id, { present: ev.target.checked })}
-                                  className="w-6 h-6 mt-0.5 accent-blue-600 cursor-pointer flex-shrink-0" />
-                                <div className="min-w-[80px] flex-shrink-0">
-                                  <div className="font-medium text-slate-800 text-sm">{emp.name}</div>
-                                  <div className="text-xs text-slate-400">{emp.empId}</div>
-                                </div>
-                                {rec.present ? (
-                                  <>
-                                    <select value={rec.lateEarly || defaultStatus}
-                                      onChange={ev => setRecord(emp.id, { lateEarly: ev.target.value })}
-                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm text-slate-700 flex-1 min-w-0">
-                                      {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                    <input type="text" value={rec.timeNote || ''} placeholder="時間備註"
-                                      onChange={ev => setRecord(emp.id, { timeNote: ev.target.value })}
-                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs w-24" />
-                                  </>
-                                ) : (
-                                  <>
-                                    <select value={rec.absType || ''}
-                                      onChange={ev => setRecord(emp.id, { absType: ev.target.value })}
-                                      className="border border-rose-200 bg-white rounded-lg px-2 py-1.5 text-sm text-slate-700 flex-1 min-w-0">
-                                      <option value="">請選假別</option>
-                                      {(attendSettings.leaveTypes ?? []).map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                    <input type="text" value={rec.note || ''} placeholder="備註原因"
-                                      onChange={ev => setRecord(emp.id, { note: ev.target.value })}
-                                      className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-full sm:w-32" />
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {/* 臨時人員卡 */}
-                  {tempEmps.length > 0 && (
-                    <div className="border border-amber-200 rounded-xl overflow-hidden">
-                      <div className="flex items-center justify-between bg-amber-500 text-white px-4 py-2.5">
-                        <span className="font-semibold flex items-center gap-2">
-                          👥 {vName}
-                          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{tempEmps.filter(e => e.present).length}/{tempEmps.length}人</span>
-                          <span className="text-xs opacity-70">臨時</span>
-                        </span>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {tempEmps.map(e => (
-                          <div key={e.id} className={`px-3 py-3 ${e.present ? '' : 'bg-rose-50'}`}>
-                            <div className="flex items-start gap-3 flex-wrap">
-                              <input type="checkbox" checked={e.present}
-                                onChange={ev => setExtraRecord(e.id, { present: ev.target.checked })}
-                                className="w-6 h-6 mt-0.5 accent-amber-500 cursor-pointer flex-shrink-0" />
-                              <div className="min-w-[80px] flex-shrink-0">
-                                <div className="font-medium text-slate-800 text-sm">{e.name}</div>
-                                <div className="text-xs text-slate-400">{e._isImport ? '派工匯入' : '手動新增'}</div>
-                              </div>
-                              {e.present ? (
-                                <>
-                                  <select value={e.lateEarly || defaultStatus}
-                                    onChange={ev => setExtraRecord(e.id, { lateEarly: ev.target.value })}
-                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 min-w-0">
-                                    {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
-                                  </select>
-                                  <input type="text" value={e.timeNote || ''} placeholder="時間備註"
-                                    onChange={ev => setExtraRecord(e.id, { timeNote: ev.target.value })}
-                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-full sm:w-24" />
-                                </>
-                              ) : (
-                                <>
-                                  <select value={e.absType || ''}
-                                    onChange={ev => setExtraRecord(e.id, { absType: ev.target.value })}
-                                    className="border border-rose-200 bg-white rounded-lg px-2 py-1.5 text-sm flex-1 min-w-0">
-                                    <option value="">請選假別</option>
-                                    {(attendSettings.leaveTypes ?? []).map(t => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                  <input type="text" value={e.note || ''} placeholder="備註原因"
-                                    onChange={ev => setExtraRecord(e.id, { note: ev.target.value })}
-                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-full sm:w-28" />
-                                </>
-                              )}
-                              <button onClick={() => removeExtra(e.id)}
-                                className="text-slate-300 hover:text-red-400 ml-auto">🗑</button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
-    </div>
-  );
-
-  // ── 統計分頁
-  const StatsPane = () => {
-    const [rDate, setRDate] = useState(attendDate);
-    const [rGroup, setRGroup] = useState(groupFilter);
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
-          <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="text-center p-3 bg-[#F5F2EC] rounded-xl">
-              <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
-              <div className="text-xs text-slate-500 mt-1">應到總計</div>
-            </div>
-            <div className="text-center p-3 bg-teal-50 rounded-xl">
-              <div className="text-2xl font-bold text-teal-700">{presentCount}</div>
-              <div className="text-xs text-slate-500 mt-1">實到人數</div>
-            </div>
-            <div className="text-center p-3 bg-rose-50 rounded-xl">
-              <div className="text-2xl font-bold text-rose-500">{absentCount}</div>
-              <div className="text-xs text-slate-500 mt-1">缺勤人數</div>
-            </div>
-          </div>
-          <div>
-            <div className="flex justify-between text-xs text-slate-500 mb-1">
-              <span>到班率</span>
-              <span className="font-semibold text-teal-700">{attendRate}%</span>
-            </div>
-            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">報表日期</label>
-              <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">報表組別</label>
-              <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
-                <option value="">全選</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <button onClick={() => exportStats(rDate, rGroup)}
-              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
-              📥 下載 Excel
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」與「請假與異常名單」兩個分頁</p>
-        </div>
-      </div>
-    );
-  };
-
-  // ── 回報分頁
-  const ReportPane = () => {
-    const [rDate, setRDate] = useState(attendDate);
-    const [rGroup, setRGroup] = useState(groupFilter);
-    const [text, setText] = useState('');
-    const textRef = React.useRef(null);
-
-    const handleCopy = () => {
-      navigator.clipboard.writeText(text).then(
-        () => toast('已複製至剪貼簿', 'success'),
-        () => { textRef.current?.select(); document.execCommand('copy'); toast('已複製', 'success'); }
-      );
-    };
-
-    return (
-      <div className="space-y-4">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">出勤日期</label>
-            <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">作業組別</label>
-            <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
-              <option value="">全部</option>
-              {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </div>
-          <button onClick={() => setText(generateReport(rDate, rGroup))}
-            className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
-            📋 產生回報文字
-          </button>
-        </div>
-
-        {text ? (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
-              <button onClick={handleCopy}
-                className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-medium">
-                📋 一鍵複製文字
-              </button>
-            </div>
-            <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
-              rows={12}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm font-mono resize-y" />
-          </div>
-        ) : (
-          <p className="text-sm text-slate-400 text-center py-8">選擇日期與組別後，點擊「產生回報文字」</p>
-        )}
-      </div>
-    );
-  };
-
-  // ── 維護分頁
-  const MaintPane = () => {
-    const [newLeave, setNewLeave] = useState('');
-    const [newGroup, setNewGroup] = useState('');
-    const [newStatus, setNewStatus] = useState('');
-    const [cleanStart, setCleanStart] = useState('');
-    const [cleanEnd, setCleanEnd] = useState('');
-    const [cleanGroup, setCleanGroup] = useState('');
-    const [cleanPreview, setCleanPreview] = useState(null);
-    const [cleanConfirm, setCleanConfirm] = useState(false);
-
-    const addItem = (key, val, setter) => {
-      if (!val.trim()) return;
-      if ((attendSettings[key] ?? []).includes(val.trim())) { toast('已存在', 'warn'); return; }
-      setAttendSettings(prev => ({ ...prev, [key]: [...(prev[key] ?? []), val.trim()] }));
-      setter('');
-    };
-    const removeItem = (key, val) =>
-      setAttendSettings(prev => ({ ...prev, [key]: (prev[key] ?? []).filter(x => x !== val) }));
-
-    const previewClean = () => {
-      if (!cleanStart || !cleanEnd) { toast('請設定起迄日期', 'error'); return; }
-      let count = 0;
-      Object.keys(attendData).forEach(dk => {
-        if (dk >= cleanStart && dk <= cleanEnd) {
-          if (!cleanGroup) count += Object.keys(attendData[dk]).length;
-          else {
-            const g = cleanGroup;
-            count += employees.filter(e => (e.shiftType === g || e.group === g) && attendData[dk][e.id]).length;
-          }
-        }
-      });
-      setCleanPreview(count);
-      setCleanConfirm(false);
-    };
-
-    const executeClean = () => {
-      setAttendData(prev => {
-        const next = { ...prev };
-        Object.keys(next).forEach(dk => {
-          if (dk >= cleanStart && dk <= cleanEnd) {
-            if (!cleanGroup) { delete next[dk]; }
-            else {
-              const day = { ...next[dk] };
-              const g = cleanGroup;
-              employees.filter(e => e.shiftType === g || e.group === g).forEach(e => delete day[e.id]);
-              next[dk] = day;
-            }
-          }
-        });
-        return next;
-      });
-      toast('已清除完成', 'success');
-      setCleanPreview(null); setCleanConfirm(false);
-    };
-
-    const TagList = ({ items, onRemove }) => (
-      <div className="flex flex-wrap gap-2 mt-2">
-        {(items ?? []).map(item => (
-          <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
-            {item}
-            <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
-          </span>
-        ))}
-      </div>
-    );
-
-    const AddRow = ({ value, onChange, onAdd, placeholder }) => (
-      <div className="flex gap-2 mt-2">
-        <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-          onKeyDown={e => e.key === 'Enter' && onAdd()}
-          className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-        <button onClick={onAdd}
-          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
-      </div>
-    );
-
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-5">
-          <h3 className="font-semibold text-slate-700">系統參數維護</h3>
-          <div>
-            <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
-            <TagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
-            <AddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
-              onAdd={() => addItem('leaveTypes', newLeave, setNewLeave)} />
-          </div>
-          <div className="border-t border-slate-100 pt-4">
-            <div className="text-sm font-medium text-slate-600">🏭 作業組別</div>
-            <TagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
-            <AddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
-              onAdd={() => addItem('groups', newGroup, setNewGroup)} />
-          </div>
-          <div className="border-t border-slate-100 pt-4">
-            <div className="text-sm font-medium text-slate-600">📊 出勤狀況</div>
-            <TagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
-            <AddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
-              onAdd={() => addItem('lateEarlyStatus', newStatus, setNewStatus)} />
-          </div>
-        </div>
-
-        <div className="bg-white border border-rose-100 rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-1">🗑 異常資料清理</h3>
-          <p className="text-xs text-slate-400 mb-4">清除特定日期範圍的點名記錄，此操作不可逆。</p>
-          <div className="flex flex-wrap gap-3 items-end mb-4">
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">起始日期</label>
-              <input type="date" value={cleanStart} onChange={e => setCleanStart(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">迄止日期</label>
-              <input type="date" value={cleanEnd} onChange={e => setCleanEnd(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">清除組別</label>
-              <select value={cleanGroup} onChange={e => setCleanGroup(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
-                <option value="">全部</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <button onClick={previewClean}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm">
-              預覽影響筆數
-            </button>
-          </div>
-          {cleanPreview !== null && (
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
-              <p className="text-sm text-rose-700">
-                將清除 <strong>{cleanStart}</strong> 至 <strong>{cleanEnd}</strong>
-                {cleanGroup ? `（${cleanGroup}）` : '（全部組別）'} 共 <strong>{cleanPreview}</strong> 筆資料。
-              </p>
-              {!cleanConfirm ? (
-                <button onClick={() => setCleanConfirm(true)}
-                  className="mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm">
-                  確認清除
-                </button>
-              ) : (
-                <div className="mt-3 flex gap-2 items-center">
-                  <span className="text-sm text-rose-600 font-medium">確定要永久清除？</span>
-                  <button onClick={executeClean}
-                    className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-sm">確認</button>
-                  <button onClick={() => setCleanConfirm(false)}
-                    className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // ── 匯入分頁
-  const ImportPane = () => {
-    const [importStart, setImportStart] = useState(todayStr);
-    const [importEnd, setImportEnd] = useState(todayStr);
-    const [parsedRows, setParsedRows] = useState(null); // null = not yet parsed
-    const [fileName, setFileName] = useState('');
-    const [importing, setImporting] = useState(false);
-
-    const parseRocDate = (raw) => {
-      if (raw == null) return null;
-      const s = String(raw).trim();
-      if (!s) return null;
-      if (s.includes('/')) {
-        const parts = s.split('/');
-        if (parts.length === 3) {
-          const [y, m, d] = parts.map(Number);
-          const wy = y < 1000 ? y + 1911 : y;
-          return `${wy}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        }
-      }
-      // Excel serial date number
-      if (!isNaN(Number(s))) {
-        const serial = Number(s);
-        const epoch = new Date(1899, 11, 30);
-        const dt = new Date(epoch.getTime() + serial * 86400000);
-        return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      }
-      return null;
-    };
-
-    const findColIdx = (headers, keywords) =>
-      headers.findIndex(h => keywords.some(k => String(h ?? '').includes(k)));
-
-    // 使用頂部已選的組別（selectedGroup 優先，其次 groupFilter）
-    const activeGroup = selectedGroup || groupFilter;
-
-    const handleFile = (e) => {
-      if (!activeGroup) {
-        toast('請先在上方選擇組別後再上傳', 'error');
-        e.target.value = '';
-        return;
-      }
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setFileName(file.name);
-      setParsedRows(null);
-
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        try {
-          const wb = XLSX.read(ev.target.result, { type: 'array' });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-          if (rows.length < 2) { toast('檔案無資料', 'error'); return; }
-
-          // 尋找標題列（第一列含關鍵字的）
-          let headerIdx = 0;
-          for (let i = 0; i < Math.min(5, rows.length); i++) {
-            const r = rows[i].map(String);
-            if (r.some(c => ['報到日期','報名狀態','姓名','名字','廠商','公司'].some(k => c.includes(k)))) {
-              headerIdx = i; break;
-            }
-          }
-          const headers = rows[headerIdx].map(String);
-          const dateCol   = findColIdx(headers, ['報到日期']);
-          const statusCol = findColIdx(headers, ['報名狀態']);
-          const nameCol   = findColIdx(headers, ['姓名', '名字']);
-          const vendorCol = findColIdx(headers, ['廠商', '公司']);
-
-          if (dateCol < 0 || nameCol < 0) {
-            toast('找不到必要欄位（報到日期、姓名）', 'error'); return;
-          }
-
-          const result = [];
-          for (let i = headerIdx + 1; i < rows.length; i++) {
-            const row = rows[i];
-            const dateStr = parseRocDate(row[dateCol]);
-            if (!dateStr) continue;
-            if (dateStr < importStart || dateStr > importEnd) continue;
-            const status = statusCol >= 0 ? String(row[statusCol] ?? '').trim() : '成功';
-            if (status !== '成功') continue;
-            const name = String(row[nameCol] ?? '').trim();
-            const vendor = vendorCol >= 0 ? String(row[vendorCol] ?? '').trim() : '';
-            if (!name) continue;
-            result.push({ date: dateStr, name, vendor });
-          }
-
-          setParsedRows(result);
-          if (result.length === 0) toast('符合條件的資料為 0 筆，請確認狀態欄位是否標示「成功」', 'error');
-          else toast(`成功解析 ${result.length} 筆資料`, 'success');
-        } catch (err) {
-          toast('解析失敗：' + err.message, 'error');
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      e.target.value = '';
-    };
-
-    const handleImport = () => {
-      if (!activeGroup) { toast('請先在上方選擇組別', 'error'); return; }
-      if (!parsedRows || parsedRows.length === 0) { toast('無可匯入資料', 'error'); return; }
-      setImporting(true);
-
-      setExtras(prev => {
-        const next = { ...prev };
-        // 清除日期區間內舊的匯入臨時資料
-        for (let dk = importStart; dk <= importEnd; ) {
-          if (next[dk]) {
-            next[dk] = next[dk].filter(e => !e._isImport);
-          }
-          const d = new Date(dk);
-          d.setDate(d.getDate() + 1);
-          dk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        }
-        // 寫入新資料
-        parsedRows.forEach(r => {
-          if (!next[r.date]) next[r.date] = [];
-          next[r.date].push({
-            id: 'imp_' + r.date + '_' + r.name + '_' + Math.random().toString(36).slice(2,6),
-            name: r.name,
-            vendor: r.vendor,
-            group: activeGroup,
-            note: '臨時人員',
-            present: false,
-            lateEarly: defaultStatus,
-            timeNote: '', absType: '',
-            _isImport: true,
-          });
-        });
-        return next;
-      });
-
-      toast(`已匯入 ${parsedRows.length} 筆臨時人員`, 'success');
-      setParsedRows(null);
-      setFileName('');
-      setImporting(false);
-    };
-
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-1">匯入派工表</h3>
-          <p className="text-xs text-slate-400 mb-5">
-            支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。
-          </p>
-
-          <div className="flex gap-3 flex-wrap items-end">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">匯入起日</label>
-              <input type="date" value={importStart} onChange={e => setImportStart(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">匯入迄日</label>
-              <input type="date" value={importEnd} onChange={e => setImportEnd(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-
-          {/* 目前選擇的組別提示 */}
-          <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-teal-50 text-blue-700 border border-teal-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-            <span>{activeGroup ? '✅' : '⚠️'}</span>
-            <span>{activeGroup ? `匯入組別：${activeGroup}` : '請先在上方篩選列選擇組別'}</span>
-          </div>
-
-          <div className="mt-3">
-            <label className="block text-xs font-medium text-slate-600 mb-2">上傳派工表檔案</label>
-            <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-4 transition-colors
-              ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-teal-50 cursor-pointer' : 'border-slate-200 bg-[#F5F2EC] cursor-not-allowed opacity-60'}`}>
-              <span className="text-2xl">📂</span>
-              <div>
-                <div className="text-sm font-medium text-slate-700">
-                  {fileName ? fileName : '點擊選擇 Excel 檔案'}
-                </div>
-                <div className="text-xs text-slate-400 mt-0.5">支援 .xlsx</div>
-              </div>
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
-            </label>
-          </div>
-        </div>
-
-        {/* 解析結果預覽 */}
-        {parsedRows !== null && (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-slate-700">解析結果預覽</h3>
-              <span className={`text-sm font-semibold px-3 py-1 rounded-full ${parsedRows.length > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                共 {parsedRows.length} 筆
-              </span>
-            </div>
-
-            {parsedRows.length > 0 && (
-              <>
-                <div className="overflow-x-auto rounded-lg border border-slate-100 mb-4 max-h-60">
-                  <table className="w-full text-xs">
-                    <thead className="bg-[#F5F2EC] sticky top-0">
-                      <tr>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">報到日期</th>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">姓名</th>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">廠商</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {parsedRows.slice(0, 50).map((r, i) => (
-                        <tr key={i} className="hover:bg-[#F5F2EC]">
-                          <td className="px-3 py-2 text-slate-600">{r.date}</td>
-                          <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.vendor || '—'}</td>
-                        </tr>
-                      ))}
-                      {parsedRows.length > 50 && (
-                        <tr><td colSpan={3} className="px-3 py-2 text-center text-slate-400">... 僅顯示前 50 筆</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
-                  ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
-                </div>
-                <button onClick={handleImport} disabled={importing}
-                  className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white rounded-xl font-medium text-sm">
-                  ✅ 確認匯入 {parsedRows.length} 筆臨時人員
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* 說明 */}
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 text-xs text-slate-500 space-y-1">
-          <div className="font-medium text-slate-600 mb-2">📋 必備欄位說明</div>
-          <div>• <span className="font-medium">報到日期</span>：民國年格式（113/07/15）自動轉換西元年</div>
-          <div>• <span className="font-medium">報名狀態</span>：只匯入標示「成功」的資料</div>
-          <div>• <span className="font-medium">姓名／名字</span>：人員名稱（必填）</div>
-          <div>• <span className="font-medium">廠商／公司</span>：派工單位</div>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="p-6 space-y-4 max-w-4xl">
-      <h2 className="text-xl font-bold text-slate-800">點名表</h2>
-
-      <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
-        <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
-        <AttendSubBtn active={subTab==='stats'}  onClick={() => setSubTab('stats')}  icon="📊" label="統計" />
-        <AttendSubBtn active={subTab==='report'} onClick={() => setSubTab('report')} icon="📋" label="回報" />
-        <AttendSubBtn active={subTab==='maint'}  onClick={() => setSubTab('maint')}  icon="⚙️" label="維護" />
-        <AttendSubBtn active={subTab==='import'} onClick={() => setSubTab('import')} icon="📂" label="匯入" />
-      </div>
-
-      <div>
-        {subTab === 'attend' && <AttendPane />}
-        {subTab === 'stats'  && <StatsPane />}
-        {subTab === 'report' && <ReportPane />}
-        {subTab === 'maint'  && <MaintPane />}
-        {subTab === 'import' && <ImportPane />}
-      </div>
-
-      {addModal && (
-        <Modal onClose={() => setAddModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
-            <h3 className="font-bold text-lg text-slate-800 mb-4">手動新增人員</h3>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">姓名 <span className="text-red-400">*</span></label>
-              <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="請輸入姓名" />
-            </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">廠商</label>
-              <input value={addForm.vendor} onChange={e => setAddForm(p => ({ ...p, vendor: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
-            </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
-              <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-                <option value="">選填</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <div className="mb-5">
-              <label className="block text-sm font-medium text-slate-700 mb-1">備註</label>
-              <input value={addForm.note} onChange={e => setAddForm(p => ({ ...p, note: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setAddModal(false)}
-                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
-              <button onClick={handleAddExtra}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState(companyTitle);
-
-  React.useEffect(() => { setDraft(companyTitle); }, [companyTitle]);
-
-  return (
-    <div className="flex items-center gap-3 py-2.5 px-1">
-      <span className="w-20 shrink-0 text-sm font-medium text-slate-700">{vendorName}</span>
-      {editing ? (
-        <>
-          <input
-            autoFocus
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') { onSave(vendorName, draft.trim()); setEditing(false); }
-              if (e.key === 'Escape') { setDraft(companyTitle); setEditing(false); }
-            }}
-            className="flex-1 border border-blue-400 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-          />
-          <button onClick={() => { onSave(vendorName, draft.trim()); setEditing(false); }}
-            className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700">儲存</button>
-          <button onClick={() => { setDraft(companyTitle); setEditing(false); }}
-            className="px-3 py-1 border border-[#DDD9D0] rounded-lg text-xs hover:bg-[#F5F2EC]">取消</button>
-        </>
-      ) : (
-        <>
-          <span className="flex-1 text-sm text-slate-500">{companyTitle || <span className="italic text-slate-300">（未設定）</span>}</span>
-          <button onClick={() => setEditing(true)}
-            className="px-3 py-1 border border-[#DDD9D0] rounded-lg text-xs hover:bg-[#F5F2EC] text-slate-600">編輯</button>
-        </>
-      )}
-    </div>
-  );
-}
-
 function Settings() {
   const {
     systemLocked, setSystemLocked,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
-    vendorCompanyNames, setVendorCompanyNames,
     vendors, setVendors,
     warehouses, setWarehouses,
     selectedYear,
@@ -4524,7 +2754,7 @@ function Settings() {
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
       {/* ── 系統鎖定 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">系統鎖定</h3>
         <div className="flex items-center justify-between">
           <div className="text-sm text-slate-600">
@@ -4545,42 +2775,42 @@ function Settings() {
       </div>
 
       {/* ── 開放排班日期區間 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
         <p className="text-xs text-slate-500 mb-3">設定後，僅允許在此區間內編輯班表。留空表示不限制。</p>
         <div className="flex gap-3 items-end flex-wrap">
           <div>
             <label className="block text-xs text-slate-600 mb-1">開始日期</label>
             <input type="date" value={start} onChange={e => setStart(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <div>
             <label className="block text-xs text-slate-600 mb-1">結束日期</label>
             <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <button onClick={saveRange}
             className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
             儲存
           </button>
           <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
-            className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+            className="px-4 py-1.5 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
             清除
           </button>
         </div>
         {scheduleRange.start && (
-          <p className="mt-3 text-xs text-teal-700">
+          <p className="mt-3 text-xs text-blue-600">
             目前區間：{scheduleRange.start} ～ {scheduleRange.end}
           </p>
         )}
       </div>
 
       {/* ── 開放排班國定假日 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-1">開放排班國定假日</h3>
         <p className="text-xs text-slate-500 mb-4">
           依上方開放排班日期區間自動篩選範圍內的國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
-          {!scheduleRange.start && <span className="text-teal-700 ml-1">（請先設定開放排班日期區間）</span>}
+          {!scheduleRange.start && <span className="text-amber-600 ml-1">（請先設定開放排班日期區間）</span>}
         </p>
         {(() => {
           // 解析區間
@@ -4620,7 +2850,7 @@ function Settings() {
                 <button onClick={() => setOpenHolidays(prev => [...new Set([...prev, ...allKeys])])}
                   className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">全選</button>
                 <button onClick={() => setOpenHolidays(prev => prev.filter(k => !allKeys.includes(k)))}
-                  className="px-3 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC]">全不選</button>
+                  className="px-3 py-1 text-xs border border-slate-300 rounded-lg hover:bg-slate-50">全不選</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {holidays.map(h => {
@@ -4628,7 +2858,7 @@ function Settings() {
                   return (
                     <label key={h.key}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer text-sm transition-colors
-                        ${checked ? 'bg-teal-50 border-blue-400 text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                        ${checked ? 'bg-blue-50 border-blue-400 text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
                       <input type="checkbox" checked={checked} onChange={() => toggle(h.key)} className="accent-blue-600" />
                       <span className="font-medium">{h.shortName}</span>
                       <span className="text-xs opacity-60">{h.month}/{h.day}</span>
@@ -4642,7 +2872,7 @@ function Settings() {
       </div>
 
       {/* ── 委外幹部排「國」開放鍵 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-slate-700">委外幹部國定假日排班權限</h3>
@@ -4661,13 +2891,13 @@ function Settings() {
               ${vendorHolidayOpen ? 'translate-x-6' : 'translate-x-1'}`} />
           </button>
         </div>
-        <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-teal-700' : 'text-slate-400'}`}>
+        <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-blue-600' : 'text-slate-400'}`}>
           {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
         </p>
       </div>
 
       {/* ── 廠商別維護 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-slate-700">廠商別維護</h3>
@@ -4679,9 +2909,9 @@ function Settings() {
           </button>
         </div>
 
-        <div className="border border-[#DDD9D0] rounded-lg overflow-hidden">
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-[#F5F2EC]">
+            <thead className="bg-slate-50">
               <tr>
                 <th className="px-4 py-2.5 text-left font-medium text-slate-600 w-24">代碼</th>
                 <th className="px-4 py-2.5 text-left font-medium text-slate-600">廠商名稱</th>
@@ -4693,7 +2923,7 @@ function Settings() {
                 <tr><td colSpan={3} className="text-center py-6 text-slate-400 text-sm">尚未設定任何廠商</td></tr>
               )}
               {vendors.map(vd => (
-                <tr key={vd.id} className="hover:bg-[#F5F2EC]">
+                <tr key={vd.id} className="hover:bg-slate-50">
                   <td className="px-4 py-2.5">
                     <span className="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                       {vd.code || '—'}
@@ -4703,7 +2933,7 @@ function Settings() {
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => openEditVd(vd)}
-                        className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC] text-slate-600">
+                        className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-600">
                         編輯
                       </button>
                       <button onClick={() => deleteVd(vd.id)}
@@ -4720,7 +2950,7 @@ function Settings() {
       </div>
 
       {/* ── 倉別 × 課別 × 廠商別維護 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-slate-700">倉別 × 課別 × 廠商別維護</h3>
@@ -4738,9 +2968,9 @@ function Settings() {
 
         <div className="space-y-4">
           {warehouses.map(wh => (
-            <div key={wh.id} className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+            <div key={wh.id} className="border border-slate-200 rounded-xl overflow-hidden">
               {/* 倉別 header */}
-              <div className="flex items-center justify-between bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0]">
+              <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5 border-b border-slate-200">
                 <span className="font-bold text-slate-800">🏭 {wh.name}</span>
                 <div className="flex gap-2">
                   <button onClick={() => openAddDept(wh.id)}
@@ -4748,7 +2978,7 @@ function Settings() {
                     ＋ 新增課別
                   </button>
                   <button onClick={() => openEditWh(wh)}
-                    className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
+                    className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-white text-slate-600">
                     編輯
                   </button>
                   <button onClick={() => deleteWh(wh.id)}
@@ -4764,7 +2994,7 @@ function Settings() {
               ) : (
                 <div className="divide-y divide-slate-100">
                   {(wh.departments ?? []).map(dept => (
-                    <div key={dept.id} className="flex items-start gap-3 px-4 py-3 hover:bg-[#F5F2EC]">
+                    <div key={dept.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
                           {dept.code && (
@@ -4780,7 +3010,7 @@ function Settings() {
                             ? <span className="text-xs text-slate-400 italic">尚未配置</span>
                             : (dept.vendors ?? []).map(v => (
                                 <span key={v}
-                                  className="px-2 py-0.5 bg-teal-50 text-blue-700 border border-teal-200
+                                  className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200
                                              rounded-full text-xs">
                                   {v}
                                 </span>
@@ -4803,7 +3033,7 @@ function Settings() {
                       </div>
                       <div className="flex gap-1.5 shrink-0">
                         <button onClick={() => openEditDept(wh.id, dept)}
-                          className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
+                          className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg hover:bg-white text-slate-600">
                           編輯
                         </button>
                         <button onClick={() => deleteDept(wh.id, dept.id)}
@@ -4820,48 +3050,10 @@ function Settings() {
         </div>
       </div>
 
-      {/* ── 廠商公司抬頭維護 ── */}
-      {(() => {
-        const allVendors = [...new Set([
-          ...Object.keys(VENDOR_COMPANY_NAMES),
-          ...vendors.map(v => v.name),
-        ])].filter(Boolean).sort();
-
-        const saveCompanyName = (vendorName, newTitle) => {
-          const updated = { ...vendorCompanyNames, [vendorName]: newTitle };
-          setVendorCompanyNames(updated);
-          LS.set('sms_vendor_company_names', updated);
-          toast('已儲存：' + vendorName, 'success');
-        };
-
-        return (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-            <div className="mb-3">
-              <h3 className="font-semibold text-slate-700">廠商公司抬頭</h3>
-              <p className="text-xs text-slate-400 mt-0.5">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
-            </div>
-            {allVendors.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-4">尚未有廠商資料</p>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {allVendors.map(vName => (
-                  <VendorCompanyRow
-                    key={vName}
-                    vendorName={vName}
-                    companyTitle={vendorCompanyNames[vName] ?? ''}
-                    onSave={saveCompanyName}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
       {/* ── 廠商別新增/編輯 Modal ── */}
       {vdModal && (
         <Modal onClose={() => setVdModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {vdTarget ? '編輯廠商' : '新增廠商'}
             </h3>
@@ -4873,7 +3065,7 @@ function Settings() {
                 onChange={e => setVdForm(p => ({ ...p, code: e.target.value }))}
                 placeholder="例如：CS"
                 maxLength={6}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm uppercase" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm uppercase" />
             </div>
             <div className="mb-5">
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -4882,11 +3074,11 @@ function Settings() {
               <input value={vdForm.name}
                 onChange={e => setVdForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：承杺"
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setVdModal(false)}
-                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
                 取消
               </button>
               <button onClick={saveVd}
@@ -4901,7 +3093,7 @@ function Settings() {
       {/* ── 倉別 新增/編輯 Modal ── */}
       {whModal && (
         <Modal onClose={() => setWhModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {whTarget ? '編輯倉別' : '新增倉別'}
             </h3>
@@ -4912,11 +3104,11 @@ function Settings() {
               <input value={whForm.name}
                 onChange={e => setWhForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：大溪倉"
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setWhModal(false)}
-                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
                 取消
               </button>
               <button onClick={saveWh}
@@ -4931,7 +3123,7 @@ function Settings() {
       {/* ── 課別 新增/編輯 Modal ── */}
       {deptModal && (
         <Modal onClose={() => setDeptModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-1">
               {deptTarget ? '編輯課別' : '新增課別'}
             </h3>
@@ -4946,7 +3138,7 @@ function Settings() {
               <input value={deptForm.code}
                 onChange={e => setDeptForm(p => ({ ...p, code: e.target.value }))}
                 placeholder="例如：L035"
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -4955,7 +3147,7 @@ function Settings() {
               <input value={deptForm.name}
                 onChange={e => setDeptForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：大肚理貨課"
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
             </div>
 
             <div className="mb-5">
@@ -4976,8 +3168,8 @@ function Settings() {
                           className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer
                                       transition-colors text-sm
                                       ${checked
-                                        ? 'bg-teal-50 border-blue-400 text-blue-800'
-                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                                        ? 'bg-blue-50 border-blue-400 text-blue-800'
+                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
                           <input type="checkbox" checked={checked} onChange={() => toggleDeptVendor(v)}
                             className="rounded accent-blue-600" />
                           {v}
@@ -5028,7 +3220,7 @@ function Settings() {
                     }
                   }}
                   placeholder="輸入組別名稱（如 A組），按 Enter 新增"
-                  className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                  className="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
                 <button
                   type="button"
                   onClick={() => {
@@ -5045,7 +3237,7 @@ function Settings() {
 
             <div className="flex gap-2 justify-end">
               <button onClick={() => setDeptModal(false)}
-                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">
                 取消
               </button>
               <button onClick={saveDept}
@@ -5125,12 +3317,6 @@ const CODE_COL_LEAVE_COLOR = 'bg-yellow-50 text-yellow-800';
 // SHIFT SETUP (人員班別設定)
 // ─────────────────────────────────────────────
 
-const SHIFT_TYPE_DEFAULTS = [
-  { id: 'st1', name: '日班', startTime: '0800', endTime: '1700', color: 'bg-blue-100 text-blue-800' },
-  { id: 'st2', name: '晚班', startTime: '1900', endTime: '0300', color: 'bg-purple-100 text-purple-800' },
-  { id: 'st3', name: '夜班', startTime: '2300', endTime: '0700', color: 'bg-slate-100 text-slate-800' },
-];
-
 const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
   const h = String(Math.floor(i / 2)).padStart(2, '0');
   const m = i % 2 === 0 ? '00' : '30';
@@ -5141,18 +3327,16 @@ function ShiftSetup() {
   const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser } = useApp();
   const toast = useToast();
 
-  // 班別定義 list: { id, name, startTime, endTime, color } — 每倉獨立存放
-  const getWhKey = (whId) => whId ? `sms_shift_types_${whId}` : 'sms_shift_types';
-  const loadTypes = (whId) => {
-    try { return JSON.parse(localStorage.getItem(getWhKey(whId)) ?? 'null') ?? SHIFT_TYPE_DEFAULTS; }
-    catch { return SHIFT_TYPE_DEFAULTS; }
-  };
-  const saveTypes = (types, whId) => {
-    localStorage.setItem(getWhKey(whId), JSON.stringify(types));
-  };
-  const [shiftTypes, setShiftTypes] = useState(() => loadTypes(selectedWarehouse));
-  // 切換倉別時重新載入，不觸發 save
-  useEffect(() => { setShiftTypes(loadTypes(selectedWarehouse)); }, [selectedWarehouse]);
+  // 班別定義 list: { id, name, startTime, endTime, color }
+  const [shiftTypes, setShiftTypes] = useState(() => {
+    const saved = localStorage.getItem('sms_shift_types');
+    return saved ? JSON.parse(saved) : [
+      { id: 'st1', name: '日班', startTime: '0800', endTime: '1700', color: 'bg-blue-100 text-blue-800' },
+      { id: 'st2', name: '晚班', startTime: '1900', endTime: '0300', color: 'bg-purple-100 text-purple-800' },
+      { id: 'st3', name: '夜班', startTime: '2300', endTime: '0700', color: 'bg-slate-100 text-slate-800' },
+    ];
+  });
+  useEffect(() => { localStorage.setItem('sms_shift_types', JSON.stringify(shiftTypes)); }, [shiftTypes]);
 
   const [showTypeModal, setShowTypeModal] = useState(false);
   const emptyType = { id: '', name: '', startTime: '0900', endTime: '1800', color: 'bg-blue-100 text-blue-800' };
@@ -5177,19 +3361,18 @@ function ShiftSetup() {
     if (!typeForm.name || !typeForm.startTime || !typeForm.endTime) {
       toast('班別名稱與時間為必填', 'error'); return;
     }
-    const newTypes = editTypeId
-      ? shiftTypes.map(t => t.id === editTypeId ? { ...typeForm, id: editTypeId } : t)
-      : [...shiftTypes, { ...typeForm, id: 'st' + Date.now() }];
-    setShiftTypes(newTypes);
-    saveTypes(newTypes, selectedWarehouse);
-    toast(editTypeId ? '班別已更新' : '班別已新增', 'success');
+    if (editTypeId) {
+      setShiftTypes(p => p.map(t => t.id === editTypeId ? { ...typeForm, id: editTypeId } : t));
+      toast('班別已更新', 'success');
+    } else {
+      setShiftTypes(p => [...p, { ...typeForm, id: 'st' + Date.now() }]);
+      toast('班別已新增', 'success');
+    }
     setShowTypeModal(false);
   };
 
   const deleteType = id => {
-    const newTypes = shiftTypes.filter(t => t.id !== id);
-    setShiftTypes(newTypes);
-    saveTypes(newTypes, selectedWarehouse);
+    setShiftTypes(p => p.filter(t => t.id !== id));
     setEmployees(p => p.map(e => e.shiftTypeId === id ? { ...e, shiftTypeId: '' } : e));
     toast('班別已刪除', 'info');
   };
@@ -5253,7 +3436,6 @@ function ShiftSetup() {
         });
 
         setShiftTypes(newTypes);
-        saveTypes(newTypes, selectedWarehouse);
         setEmployees(newEmps);
         toast(`匯入完成：新增 ${added} 筆，更新班別 ${updated} 筆`, 'success');
       } catch (err) {
@@ -5280,32 +3462,12 @@ function ShiftSetup() {
   const [filterVendor, setFilterVendor] = useState('');
   const [filterShift,  setFilterShift]  = useState('');
   const [nameSearchSetup, setNameSearchSetup] = useState('');
-
-  // 拖曳排序
-  const dragSrcIdx = useRef(null);
-  const [dragOverIdx, setDragOverIdx] = useState(null);
-  const onDragStart = (e, idx) => { dragSrcIdx.current = idx; e.dataTransfer.effectAllowed = 'move'; };
-  const onDragOver  = (e, idx) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIdx(idx); };
-  const onDrop      = (e, idx) => {
-    e.preventDefault();
-    const src = dragSrcIdx.current;
-    if (src == null || src === idx) { setDragOverIdx(null); return; }
-    const reordered = [...shiftTypes];
-    const [moved] = reordered.splice(src, 1);
-    reordered.splice(idx, 0, moved);
-    setShiftTypes(reordered);
-    saveTypes(reordered, selectedWarehouse);
-    dragSrcIdx.current = null;
-    setDragOverIdx(null);
-  };
-  const onDragEnd = () => { dragSrcIdx.current = null; setDragOverIdx(null); };
-
   const visibleEmps = (() => {
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees;
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-    const filtered = list.filter(e => {
+    return list.filter(e => {
       if (filterVendor && e.vendor !== filterVendor) return false;
       if (filterShift  && e.shiftTypeId !== filterShift) return false;
       if (nameSearchSetup.trim()) {
@@ -5313,13 +3475,12 @@ function ShiftSetup() {
         if (!(e.name ?? '').toLowerCase().includes(q) && !(e.empId ?? '').toLowerCase().includes(q)) return false;
       }
       return true;
+    }).sort((a, b) => {
+      // 未指派班別的員工排最上方
+      const aSet = !!a.shiftTypeId, bSet = !!b.shiftTypeId;
+      if (aSet !== bSet) return aSet ? 1 : -1;
+      return 0;
     });
-    // 未指派排最上方（shiftTypeId 空值或找不到對應班別皆視為未指派）
-    const isAssigned = e => !!e.shiftTypeId && shiftTypes.some(t => t.id === e.shiftTypeId);
-    return [
-      ...filtered.filter(e => !isAssigned(e)),
-      ...filtered.filter(e =>  isAssigned(e)),
-    ];
   })();
 
   return (
@@ -5327,32 +3488,17 @@ function ShiftSetup() {
       <h2 className="text-xl font-bold text-slate-800">人員班別設定</h2>
 
       {/* ── 班別時段管理 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h3 className="font-semibold text-slate-700">班別時段管理</h3>
-            {selectedWarehouse
-              ? <p className="text-xs text-teal-700 mt-0.5">目前倉別：{warehouses.find(w => w.id === selectedWarehouse)?.name ?? selectedWarehouse}</p>
-              : <p className="text-xs text-amber-500 mt-0.5">請先從頂欄選擇倉別，各倉可獨立設定班別時段</p>
-            }
-          </div>
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-slate-700">班別時段管理</h3>
           <button onClick={openAddType}
             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
             ➕ 新增班別
           </button>
         </div>
         <div className="flex flex-wrap gap-3">
-          {shiftTypes.map((t, idx) => (
-            <div key={t.id}
-              draggable
-              onDragStart={e => onDragStart(e, idx)}
-              onDragOver={e => onDragOver(e, idx)}
-              onDrop={e => onDrop(e, idx)}
-              onDragEnd={onDragEnd}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${t.color} border-opacity-40 cursor-grab active:cursor-grabbing select-none transition-opacity
-                ${dragOverIdx === idx && dragSrcIdx.current !== idx ? 'ring-2 ring-blue-400 opacity-80' : ''}
-                ${dragSrcIdx.current === idx ? 'opacity-40' : ''}`}>
-              <span className="text-slate-400 text-xs mr-0.5">⠿</span>
+          {shiftTypes.map(t => (
+            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${t.color} border-opacity-40`}>
               <span className="font-semibold text-sm">{t.name}</span>
               <span className="text-xs opacity-70">{t.startTime.slice(0,2)}:{t.startTime.slice(2)} ~ {t.endTime.slice(0,2)}:{t.endTime.slice(2)}</span>
               <button onClick={() => openEditType(t)} className="text-xs opacity-60 hover:opacity-100 ml-1">✏️</button>
@@ -5364,7 +3510,7 @@ function ShiftSetup() {
       </div>
 
       {/* ── 班別匯入 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">班別匯入</h3>
         <p className="text-xs text-slate-500 mb-3">Excel 欄位（依序）：員工編號、姓名、上班時間、下班時間　範例：CY10901361 / 林雅蔆 / 0900 / 1800</p>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
@@ -5375,20 +3521,20 @@ function ShiftSetup() {
       </div>
 
       {/* ── 人員班別指派 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-3">
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="font-semibold text-slate-700">人員班別指派</h3>
           <div className="flex gap-2 flex-wrap items-center">
             <input value={nameSearchSetup} onChange={e => setNameSearchSetup(e.target.value)}
               placeholder="搜尋姓名／員工編號…"
-              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm w-44" />
+              className="px-2 py-1 border border-slate-300 rounded-lg text-sm w-44" />
             <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}
-              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm">
+              className="px-2 py-1 border border-slate-300 rounded-lg text-sm">
               <option value="">全部廠商</option>
               {vendorNames.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
             <select value={filterShift} onChange={e => setFilterShift(e.target.value)}
-              className="px-2 py-1 border border-[#DDD9D0] rounded-lg text-sm">
+              className="px-2 py-1 border border-slate-300 rounded-lg text-sm">
               <option value="">全部班別</option>
               {sortedShiftTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               <option value="none">未指派</option>
@@ -5396,7 +3542,7 @@ function ShiftSetup() {
           </div>
         </div>
 
-        <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
@@ -5409,14 +3555,14 @@ function ShiftSetup() {
               {visibleEmps.map((emp, idx) => {
                 const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
                 return (
-                  <tr key={emp.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}>
+                  <tr key={emp.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                     <td className="px-4 py-2 font-mono text-xs text-slate-500">{emp.empId}</td>
                     <td className="px-4 py-2 font-medium text-slate-800">{emp.name}</td>
                     <td className="px-4 py-2 text-slate-500 text-xs">{emp.vendor || '—'}</td>
                     <td className="px-4 py-2">
                       <select value={emp.shiftTypeId ?? ''}
                         onChange={e => assignShift(emp.id, e.target.value)}
-                        className="px-2 py-1 border border-[#DDD9D0] rounded text-xs">
+                        className="px-2 py-1 border border-slate-300 rounded text-xs">
                         <option value="">── 未指派 ──</option>
                         {sortedShiftTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
@@ -5441,26 +3587,26 @@ function ShiftSetup() {
       {/* 班別 Modal */}
       {showTypeModal && (
         <Modal onClose={() => setShowTypeModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-sm p-6 space-y-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <h3 className="font-bold text-lg text-slate-800">{editTypeId ? '編輯班別' : '新增班別'}</h3>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">班別名稱</label>
               <input value={typeForm.name} onChange={e => setTypeForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例：日班、夜班"
-                className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-700 mb-1">上班時間</label>
                 <select value={typeForm.startTime} onChange={e => setTypeForm(p => ({ ...p, startTime: e.target.value }))}
-                  className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   {PRESET_TIMES.map(t => <option key={t} value={t}>{t.slice(0,2)}:{t.slice(2)}</option>)}
                 </select>
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-700 mb-1">下班時間</label>
                 <select value={typeForm.endTime} onChange={e => setTypeForm(p => ({ ...p, endTime: e.target.value }))}
-                  className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   {PRESET_TIMES.map(t => <option key={t} value={t}>{t.slice(0,2)}:{t.slice(2)}</option>)}
                 </select>
               </div>
@@ -5481,7 +3627,7 @@ function ShiftSetup() {
               <button onClick={saveType}
                 className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
               <button onClick={() => setShowTypeModal(false)}
-                className="flex-1 py-2 border border-[#DDD9D0] text-slate-600 rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+                className="flex-1 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm hover:bg-slate-50">取消</button>
             </div>
           </div>
         </Modal>
@@ -5661,7 +3807,7 @@ function ShiftCodeTable() {
       {/* 密碼驗證 Modal */}
       {showPwdModal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-xl shadow p-7 w-80">
+          <div className="bg-white rounded-2xl shadow-2xl p-7 w-80">
             <div className="text-center mb-4">
               <div className="text-3xl mb-2">🔒</div>
               <h3 className="font-bold text-slate-800 text-lg">需要驗證密碼</h3>
@@ -5678,14 +3824,14 @@ function ShiftCodeTable() {
                 focus:outline-none focus:ring-2
                 ${pwdError
                   ? 'border-red-400 focus:ring-red-300 bg-red-50'
-                  : 'border-[#DDD9D0] focus:ring-blue-400'}`}
+                  : 'border-slate-300 focus:ring-blue-400'}`}
             />
             {pwdError && (
               <p className="text-red-500 text-sm text-center mt-2">密碼錯誤，請重新輸入</p>
             )}
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowPwdModal(false)}
-                className="flex-1 py-2 border border-[#DDD9D0] rounded-lg text-slate-600 text-sm hover:bg-[#F5F2EC]">
+                className="flex-1 py-2 border border-slate-300 rounded-lg text-slate-600 text-sm hover:bg-slate-50">
                 取消
               </button>
               <button onClick={submitPwd}
@@ -5704,7 +3850,7 @@ function ShiftCodeTable() {
             <h2 className="text-xl font-bold text-slate-800">班別代號對照表</h2>
             {unlocked
               ? <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full border border-green-200">🔓 已解鎖</span>
-              : <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs rounded-full border border-[#DDD9D0]">🔒 唯讀</span>
+              : <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-xs rounded-full border border-slate-200">🔒 唯讀</span>
             }
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -5719,7 +3865,7 @@ function ShiftCodeTable() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="搜尋代號（如 ZA8）"
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-44
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-44
                          focus:outline-none focus:ring-2 focus:ring-blue-400 pr-7"
             />
             {search && (
@@ -5737,8 +3883,8 @@ function ShiftCodeTable() {
           {/* 還原預設 */}
           {importedAt && (
             <button onClick={handleReset}
-              className="px-3 py-1.5 border border-[#DDD9D0] text-slate-600 rounded-lg text-sm
-                         hover:bg-[#F5F2EC] whitespace-nowrap">
+              className="px-3 py-1.5 border border-slate-300 text-slate-600 rounded-lg text-sm
+                         hover:bg-slate-50 whitespace-nowrap">
               ↩ 還原預設
             </button>
           )}
@@ -5749,8 +3895,8 @@ function ShiftCodeTable() {
       {searchResult !== null && (
         <div className={`px-4 py-2.5 rounded-lg text-sm ${
           searchResult.length > 0
-            ? 'bg-teal-50 border border-teal-200 text-blue-700'
-            : 'bg-white border border-[#DDD9D0] text-slate-500'
+            ? 'bg-blue-50 border border-blue-200 text-blue-700'
+            : 'bg-slate-50 border border-slate-200 text-slate-500'
         }`}>
           {searchResult.length === 0
             ? `找不到代號「${search.trim().toUpperCase()}」`
@@ -5776,7 +3922,7 @@ function ShiftCodeTable() {
       </div>
 
       {/* 表格 */}
-      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto" style={{ maxHeight: '65vh' }}>
           <table className="border-collapse text-xs" style={{ minWidth: `${80 + (headers.length + 1) * 64}px` }}>
             <thead className="sticky top-0 z-10">
@@ -5799,7 +3945,7 @@ function ShiftCodeTable() {
             </thead>
             <tbody>
               {rows.map((row, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}>
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-1.5 font-mono font-semibold
                                  text-slate-700 border-r border-slate-200 whitespace-nowrap">
                     {row[0]}
@@ -5885,33 +4031,22 @@ function AccountManagement() {
   const openAdd  = () => { setForm(emptyForm); setEditUser(null); setShowModal(true); };
   const openEdit = u  => { setForm({ ...u });  setEditUser(u);   setShowModal(true); };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.username || !form.password || !form.name) {
       toast('帳號、密碼、姓名為必填', 'error'); return;
     }
-    // 密碼強度驗證（明文時才檢查）
-    if (!form.password.startsWith('sha256:')) {
-      if (form.password.length < 8)          { toast('密碼至少需 8 個字元', 'error'); return; }
-      if (!/[A-Za-z]/.test(form.password))   { toast('密碼需包含至少一個英文字母', 'error'); return; }
-      if (!/[0-9]/.test(form.password))      { toast('密碼需包含至少一個數字', 'error'); return; }
-    }
-    const pwd = form.password.startsWith('sha256:')
-      ? form.password
-      : await hashPwd(form.password);
-    const saved = { ...form, password: pwd };
     if (editUser) {
-      setUsers(prev => prev.map(u => u.id === saved.id ? saved : u));
-      toast('帳號已更新：' + saved.username, 'success');
+      setUsers(prev => prev.map(u => u.id === form.id ? form : u));
+      toast('帳號已更新：' + form.username, 'success');
     } else {
-      setUsers(prev => [...prev, { ...saved, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(saved.role) }]);
-      toast('帳號已新增：' + saved.username, 'success');
+      setUsers(prev => [...prev, { ...form, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(form.role) }]);
+      toast('帳號已新增：' + form.username, 'success');
     }
     setShowModal(false);
   };
 
   const handleDelete = id => {
-    const target = users.find(u => u.id === id);
-    if (target?.system) { toast('系統帳號不可刪除', 'error'); return; }
+    if (id === 'u1') { toast('無法刪除系統管理員帳號', 'error'); return; }
     setUsers(prev => prev.filter(u => u.id !== id));
     toast('帳號已刪除', 'info');
   };
@@ -5927,7 +4062,7 @@ function AccountManagement() {
   };
 
   const toggleApproved = u => {
-    if (u.system) { toast('系統帳號不可停用', 'error'); return; }
+    if (u.username === 'Grace' || u.username === 'reyi') { toast('系統帳號不可停用', 'error'); return; }
     setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: !x.approved } : x));
     toast((u.approved ? '已停用：' : '已啟用：') + u.username, u.approved ? 'warn' : 'success');
   };
@@ -5960,51 +4095,17 @@ function AccountManagement() {
       : [...(p.allowedWarehouses ?? []), whId],
   }));
 
-  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部', worker: '委外人員' };
-  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
+  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部' };
+  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700' };
 
   const pendingUsers = users.filter(u => u.approved === false);
-  const staffUsers   = users.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role) && u.approved !== false);
-  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR && u.approved !== false);
+  const staffUsers   = users.filter(u => u.role !== ROLES.VENDOR && u.approved !== false);
+  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR  && u.approved !== false);
   const tabUsers     = activeTab === 'staff' ? staffUsers : vendorUsers;
-
-  // 委外人員 tab：從員工清冊取得，標示是否已升級為幹部帳號
-  const { employees } = useApp();
-  const workerEmpList = employees.filter(e => e.status !== '離職');
-  const upgradedEmpIds = new Set(
-    users.filter(u => u.role === ROLES.VENDOR && u.employeeId).map(u => u.employeeId)
-  );
-
-  const handleUpgradeToVendor = async (emp) => {
-    if (upgradedEmpIds.has(emp.id)) { toast('此員工已有委外幹部帳號', 'warn'); return; }
-    const hashed = await hashPwd(emp.empId);
-    const newUser = {
-      id: 'worker_upgraded_' + emp.id,
-      username: emp.empId,
-      password: hashed,
-      name: emp.name,
-      role: ROLES.VENDOR,
-      vendors: emp.vendor ? [emp.vendor] : [],
-      allowedWarehouses: [],
-      approved: true,
-      loginCount: 0,
-      employeeId: emp.id,
-      permissions: getDefaultPermissions(ROLES.VENDOR),
-      mustChangePassword: true,
-    };
-    setUsers(prev => [...prev, newUser]);
-    toast(`已升級 ${emp.name}（${emp.empId}）為委外幹部`, 'success');
-  };
-
-  const handleDowngradeToWorker = (emp) => {
-    setUsers(prev => prev.filter(u => !(u.role === ROLES.VENDOR && u.employeeId === emp.id)));
-    toast(`已撤銷 ${emp.name} 的委外幹部權限`, 'info');
-  };
 
   const TAB_CFG = [
     { key: 'staff',  label: '員工帳號', icon: '🏢', count: staffUsers.length },
     { key: 'vendor', label: '廠商帳號', icon: '🤝', count: vendorUsers.length },
-    { key: 'worker', label: '委外人員', icon: '👷', count: workerEmpList.length },
   ];
 
   return (
@@ -6045,73 +4146,27 @@ function AccountManagement() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-[#DDD9D0]">
+      <div className="flex gap-1 border-b border-slate-200">
         {TAB_CFG.map(t => (
           <button key={t.key}
             onClick={() => { setActiveTab(t.key); setExpandedId(null); }}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-t-lg border border-b-0 transition-colors
                         ${activeTab === t.key
-                          ? 'bg-white border-slate-200 text-teal-700 -mb-px z-10'
-                          : 'bg-[#F5F2EC] border-transparent text-slate-500 hover:text-slate-700'}`}>
+                          ? 'bg-white border-slate-200 text-blue-600 -mb-px z-10'
+                          : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}`}>
+            <span>{t.icon}</span>
             <span>{t.label}</span>
             <span className={`px-1.5 py-0.5 rounded-full text-xs
-                              ${activeTab === t.key ? 'bg-blue-100 text-teal-700' : 'bg-slate-200 text-slate-500'}`}>
+                              ${activeTab === t.key ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
               {t.count}
             </span>
           </button>
         ))}
       </div>
 
-      {/* ── 委外人員 Tab ── */}
-      {activeTab === 'worker' && (
-        <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
-          <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
-                          bg-slate-100 px-4 py-2.5 border-b border-[#DDD9D0]"
-               style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
-            <span>員工編號</span>
-            <span>姓名</span>
-            <span>廠商</span>
-            <span>班別</span>
-            <span>幹部權限</span>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {workerEmpList.length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-6">尚未匯入員工清冊</p>
-            )}
-            {workerEmpList.map(emp => {
-              const isUpgraded = upgradedEmpIds.has(emp.id);
-              return (
-                <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-[#F5F2EC]"
-                     style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
-                  <span className="font-mono text-sm text-slate-700">{emp.empId}</span>
-                  <span className="text-sm text-slate-700">{emp.name}</span>
-                  <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
-                  <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
-                  <div className="flex items-center gap-2">
-                    {isUpgraded ? (
-                      <>
-                        <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 font-medium">已升委外幹部</span>
-                        <button onClick={() => handleDowngradeToWorker(emp)}
-                          className="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded">撤銷</button>
-                      </>
-                    ) : (
-                      <button onClick={() => handleUpgradeToVendor(emp)}
-                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                        升級為委外幹部
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 清單表頭（員工 / 廠商 tab） */}
-      {activeTab !== 'worker' && (
+      {/* 清單表頭 */}
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
-                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-[#DDD9D0]"
+                      bg-slate-100 rounded-t-xl px-4 py-2.5 border border-slate-200"
            style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
         <span>帳號</span>
         <span>姓名</span>
@@ -6121,10 +4176,8 @@ function AccountManagement() {
         <span>審核狀態</span>
         <span>操作 / 權限</span>
       </div>
-      )}
 
-      {activeTab !== 'worker' && (
-      <div className="border border-[#DDD9D0] rounded-b-xl divide-y divide-slate-100 overflow-hidden">
+      <div className="border border-slate-200 rounded-b-xl divide-y divide-slate-100 overflow-hidden">
         {tabUsers.map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
           const isOpen = expandedId === u.id;
@@ -6133,7 +4186,7 @@ function AccountManagement() {
           return (
             <div key={u.id}>
               {/* ── 摘要列 ── */}
-              <div className="grid items-center gap-2 px-4 py-3 hover:bg-[#F5F2EC]"
+              <div className="grid items-center gap-2 px-4 py-3 hover:bg-slate-50"
                    style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
 
                 <span className="font-mono font-bold text-slate-800 text-sm truncate">{u.username}</span>
@@ -6143,7 +4196,7 @@ function AccountManagement() {
                   {roleLabel[u.role]}
                 </span>
 
-                <span className="text-teal-700 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
+                <span className="text-blue-600 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
 
                 <span className="text-slate-500 text-xs truncate">
                   {u.role === ROLES.ADMIN ? '全部廠商' : u.vendors?.join('、') || '—'}
@@ -6160,7 +4213,7 @@ function AccountManagement() {
                 {/* 操作按鈕 */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button onClick={() => openEdit(u)}
-                    className="px-2 py-1 text-xs text-teal-700 hover:text-blue-800 hover:bg-teal-50 rounded">
+                    className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded">
                     編輯
                   </button>
                   <button onClick={() => handleDelete(u.id)}
@@ -6177,14 +4230,14 @@ function AccountManagement() {
 
               {/* ── 展開：細部權限 ── */}
               {isOpen && (
-                <div className="bg-[#F5F2EC] border-t border-slate-200 px-6 py-4">
+                <div className="bg-slate-50 border-t border-slate-200 px-6 py-4">
                   {u.role === ROLES.ADMIN
                     ? <p className="text-xs text-slate-400 italic">超級管理員擁有全部權限，無法調整。</p>
                     : <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
                         {PAGE_PERMISSIONS.map(page => {
                           const pagePerm = perms[page.key] ?? { view: false };
                           return (
-                            <div key={page.key} className="bg-white rounded-xl border border-[#DDD9D0] p-3 space-y-2">
+                            <div key={page.key} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
                               <label className="flex items-center gap-2 cursor-pointer select-none">
                                 <input type="checkbox" checked={!!pagePerm.view}
                                   onChange={e => togglePerm(u.id, page.key, 'view', e.target.checked)}
@@ -6202,7 +4255,7 @@ function AccountManagement() {
                                       <span className={`text-xs px-1.5 py-0.5 rounded-full border
                                         ${pagePerm[f.key]
                                           ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                          : 'bg-[#F5F2EC] text-slate-400 border-slate-200'}`}>
+                                          : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
                                         {f.label}
                                       </span>
                                     </label>
@@ -6220,12 +4273,11 @@ function AccountManagement() {
           );
         })}
       </div>
-      )}
 
       {/* 帳號新增 / 編輯 Modal */}
       {showModal && (
         <Modal onClose={() => setShowModal(false)}>
-          <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">
               {editUser ? '編輯帳號' : '新增帳號'}
             </h3>
@@ -6238,13 +4290,13 @@ function AccountManagement() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
                 <input type={f.type ?? 'text'} value={form[f.key] ?? ''}
                   onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                  className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
               </div>
             ))}
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">角色</label>
               <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
                 <option value={ROLES.ADMIN}>管理員</option>
                 <option value={ROLES.AREA}>當區幹部</option>
                 <option value={ROLES.VENDOR}>委外幹部</option>
@@ -6286,7 +4338,7 @@ function AccountManagement() {
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowModal(false)}
-                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
               <button onClick={handleSave}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
             </div>
@@ -6307,24 +4359,18 @@ export default function App() {
   // ── Persistent state ──
   const [users,         setUsers]         = useState(() => {
     let saved = LS.get('sms_users', SEED_USERS);
-    // 密碼分離儲存：從 sms_user_pwds 合回密碼（若存在）
-    const pwds = LS.get('sms_user_pwds', {});
+    // 補齊新欄位（舊 localStorage 可能沒有）
     saved = saved.map(u => ({
       approved: true, loginCount: 0, allowedWarehouses: [],
       permissions: getDefaultPermissions(u.role),
       ...u,
-      password: pwds[u.id] ?? u.password ?? '',
     }));
-    const DEMO  = { ...mkUser('u0', 'reyi',  '8963', ROLES.ADMIN, 'Demo管理員', SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true };
-    const GRACE = { ...mkUser('ug', 'Grace', '0721', ROLES.ADMIN, 'Grace',      SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true };
+    const DEMO  = mkUser('u0', 'reyi',  '8963', ROLES.ADMIN, 'Demo管理員', SEED_VENDORS.map(v=>v.name));
+    const GRACE = mkUser('ug', 'Grace', '0721', ROLES.ADMIN, 'Grace',      SEED_VENDORS.map(v=>v.name));
     if (!saved.some(u => u.username === 'reyi'))  saved = [DEMO,  ...saved];
     if (!saved.some(u => u.username === 'Grace')) saved = [GRACE, ...saved];
     return saved;
   });
-  // 委外人員自訂密碼：{ [empId]: 'sha256:...' }
-  const [workerPwds, setWorkerPwds] = useState(() => LS.get('sms_worker_pwds', {}));
-  useEffect(() => { LS.set('sms_worker_pwds', workerPwds, storageWarn); }, [workerPwds]);
-
   const [employees,     setEmployees]     = useState(() => LS.get('sms_employees',  SEED_EMPLOYEES));
   const [vendors,           setVendors]           = useState(() => LS.get('sms_vendors',    SEED_VENDORS));
   const [warehouses,        setWarehouses]        = useState(() => {
@@ -6351,11 +4397,8 @@ export default function App() {
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
   const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
   const [vendorHolidayOpen,  setVendorHolidayOpen]  = useState(() => LS.get('sms_vendor_hol_open', false));
-  const [vendorCompanyNames, setVendorCompanyNames] = useState(() => LS.get('sms_vendor_company_names', VENDOR_COMPANY_NAMES));
   const [selectedYear,  setSelectedYear]  = useState(() => LS.get('sms_year',       today.getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(() => LS.get('sms_month',      today.getMonth() + 1));
-  const [attendData, setAttendData] = useState(() => LS.get('sms_attendance', {}));
-  const [extras,     setExtras]     = useState(() => LS.get('sms_attend_extras', {}));
 
   const [schedule, setSchedule] = useState(() => {
     const saved = LS.get('sms_schedule', null);
@@ -6395,13 +4438,7 @@ export default function App() {
       alert('⚠️ 瀏覽器儲存空間已滿，部分資料可能未儲存！\n請聯繫管理員或清除舊資料。');
     }
   }, []);
-  useEffect(() => {
-    // 密碼不存入 sms_users，改存 sms_user_pwds（獨立 key）
-    const sanitized = users.map(({ password, ...u }) => u);
-    const pwds = Object.fromEntries(users.filter(u => u.password).map(u => [u.id, u.password]));
-    LS.set('sms_users',     sanitized, storageWarn);
-    LS.set('sms_user_pwds', pwds,      storageWarn);
-  }, [users]);
+  useEffect(() => { LS.set('sms_users',      users,         storageWarn); }, [users]);
   useEffect(() => { LS.set('sms_employees',  employees,     storageWarn); }, [employees]);
   useEffect(() => { LS.set('sms_vendors',    vendors);            }, [vendors]);
   useEffect(() => { LS.set('sms_warehouses', warehouses);         }, [warehouses]);
@@ -6415,42 +4452,8 @@ export default function App() {
   useEffect(() => { LS.set('sms_vendor_hol_open',    vendorHolidayOpen); }, [vendorHolidayOpen]);
   useEffect(() => { LS.set('sms_year',      selectedYear);  }, [selectedYear]);
   useEffect(() => { LS.set('sms_month',     selectedMonth); }, [selectedMonth]);
-  useEffect(() => { LS.set('sms_attendance',    attendData); }, [attendData]);
-  useEffect(() => { LS.set('sms_attend_extras', extras);    }, [extras]);
 
-  const handleLogout = useCallback(() => { setCurrentUser(null); setCurrentPage('dashboard'); }, []);
-
-  // ── Idle timeout（30 分鐘無操作自動登出）──
-  const IDLE_MS = 30 * 60 * 1000;
-  const idleTimer = useRef(null);
-  const [idleWarning, setIdleWarning] = useState(false);
-
-  const resetIdle = useCallback(() => {
-    sessionStorage.setItem('_idle_last', String(Date.now()));
-    setIdleWarning(false);
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => {
-      handleLogout();
-    }, IDLE_MS);
-  }, [handleLogout]);
-
-  useEffect(() => {
-    if (!currentUser) { if (idleTimer.current) clearTimeout(idleTimer.current); return; }
-    const EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
-    EVENTS.forEach(ev => document.addEventListener(ev, resetIdle, { passive: true }));
-    resetIdle();
-    // 警告：剩 2 分鐘時提示
-    const warnTimer = setInterval(() => {
-      const key = '_idle_last';
-      const last = Number(sessionStorage.getItem(key) || Date.now());
-      if (Date.now() - last > IDLE_MS - 2 * 60 * 1000) setIdleWarning(true);
-    }, 30000);
-    return () => {
-      EVENTS.forEach(ev => document.removeEventListener(ev, resetIdle));
-      if (idleTimer.current) clearTimeout(idleTimer.current);
-      clearInterval(warnTimer);
-    };
-  }, [currentUser, resetIdle]);
+  const handleLogout = () => { setCurrentUser(null); setCurrentPage('dashboard'); };
 
   const handleLogin = useCallback((user) => {
     // user.password 此時已是 sha256:... (由 LoginScreen 升級後傳入)
@@ -6472,11 +4475,8 @@ export default function App() {
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
-    vendorCompanyNames, setVendorCompanyNames,
     selectedYear, setSelectedYear,
     selectedMonth, setSelectedMonth,
-    attendData, setAttendData,
-    extras, setExtras,
     currentUser,
   };
 
@@ -6489,31 +4489,12 @@ export default function App() {
     shiftcodes: <ShiftCodeTable />,
     settings:   <Settings />,
     accounts:   <AccountManagement />,
-    attendance: <Attendance />,
   };
 
   if (!currentUser) {
     return (
       <ToastProvider>
-        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} employees={employees} workerPwds={workerPwds} />
-      </ToastProvider>
-    );
-  }
-
-  // 首次登入強制改密碼
-  if (currentUser.mustChangePassword) {
-    const isWorker = currentUser.role === ROLES.WORKER;
-    return (
-      <ToastProvider>
-        <ForcePwdChange user={currentUser} onDone={updated => {
-          if (isWorker) {
-            // worker 密碼存入 sms_worker_pwds，不進 users
-            setWorkerPwds(prev => ({ ...prev, [updated.empId]: updated.password }));
-          } else {
-            setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
-          }
-          setCurrentUser({ ...updated, mustChangePassword: false });
-        }} />
+        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} />
       </ToastProvider>
     );
   }
@@ -6521,13 +4502,7 @@ export default function App() {
   return (
     <ToastProvider>
       <AppContext.Provider value={ctx}>
-        {idleWarning && (
-          <div className="fixed top-0 inset-x-0 z-[9999] text-sm text-center py-2 px-4 flex items-center justify-center gap-3" style={{background:'var(--sms-amber)',color:'#fff'}}>
-            <span>閒置逾時警告：即將自動登出，請繼續操作以維持登入狀態</span>
-            <button onClick={resetIdle} className="underline font-semibold hover:no-underline">繼續使用</button>
-          </div>
-        )}
-        <div className="flex h-screen overflow-hidden" style={{background:'var(--sms-bg)'}}>
+        <div className="flex h-screen bg-slate-50 overflow-hidden">
           {/* Desktop sidebar */}
           <div className="hidden md:flex">
             <Sidebar
@@ -6547,7 +4522,7 @@ export default function App() {
           {/* Main content */}
           <main className="flex-1 flex flex-col overflow-hidden">
             {/* Mobile header */}
-            <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-[#DDD9D0]" style={{fontFamily:'inherit'}}>
+            <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200">
               <button onClick={() => setMobileNavOpen(true)} className="text-slate-600 text-2xl">☰</button>
               <span className="font-semibold text-slate-800">委外人力排班作業平台</span>
               <span className="text-sm text-slate-500">{currentUser.name}</span>
@@ -6556,7 +4531,7 @@ export default function App() {
             {/* 全域倉別 / 課別選擇列 */}
             <WarehouseDeptBar />
 
-            <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
+            <div className="flex-1 overflow-y-auto">
               {(() => {
                 const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
                 const allowed = currentUser.role === ROLES.ADMIN || userPerms[currentPage]?.view !== false;
