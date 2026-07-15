@@ -8,7 +8,7 @@ import React, {
   useState, useEffect, useCallback, useRef, createContext, useContext, useMemo
 } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
 import html2pdf from 'html2pdf.js';
 
@@ -27,16 +27,17 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
-const ROLES = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor' };
+const ROLES = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker' };
 
 const SHIFT_CODES = {
-  V:  { label: 'V',  color: 'bg-green-100 text-green-800',  meaning: '上班' },
-  休: { label: '休', color: 'bg-yellow-100 text-yellow-800', meaning: '休假' },
-  國: { label: '國', color: 'bg-blue-100 text-blue-800',    meaning: '國定假日' },
-  '': { label: '',   color: 'bg-white text-gray-400',        meaning: '空白' },
+  V:  { label: 'V',  color: 'bg-green-100 text-green-800',   meaning: '上班' },
+  例: { label: '例', color: 'bg-yellow-100 text-yellow-800',  meaning: '例休' },
+  休: { label: '休', color: 'bg-orange-100 text-orange-800',  meaning: '休假' },
+  國: { label: '國', color: 'bg-blue-100 text-blue-800',     meaning: '國定假日' },
+  '': { label: '',   color: 'bg-white text-gray-400',         meaning: '空白' },
 };
 
-const SHIFT_CYCLE = ['V', '休', '國', ''];
+const SHIFT_CYCLE = ['V', '國', '例', '休'];
 
 /** 廠商代碼對照表 */
 const VENDOR_MAP = {
@@ -134,6 +135,10 @@ const PAGE_PERMISSIONS = [
     { key: 'editAccount',   label: '編輯帳號' },
     { key: 'deleteAccount', label: '刪除帳號' },
   ]},
+  { key: 'attendance', label: '點名表', features: [
+    { key: 'editAttendance',   label: '編輯點名' },
+    { key: 'exportAttendance', label: '匯出點名' },
+  ]},
 ];
 
 function getDefaultPermissions(role) {
@@ -141,9 +146,11 @@ function getDefaultPermissions(role) {
   const isArea   = role === ROLES.AREA;
   const perms = {};
   PAGE_PERMISSIONS.forEach(page => {
+    const isWorker = role === ROLES.WORKER;
     const pageVisible =
       isAdmin ? true :
       isArea  ? !['settings','accounts'].includes(page.key) :
+      isWorker ? page.key === 'schedule' :
       ['dashboard','schedule','employees','shiftcodes'].includes(page.key);
 
     perms[page.key] = { view: pageVisible };
@@ -151,6 +158,7 @@ function getDefaultPermissions(role) {
       const on = pageVisible && (
         isAdmin ? true :
         isArea  ? !['deleteEmployee','clearAll','lockSchedule','manageWarehouse','addAccount','editAccount','deleteAccount'].includes(f.key) :
+        role === ROLES.WORKER ? f.key === 'editSchedule' :
         ['editSchedule'].includes(f.key)
       );
       perms[page.key][f.key] = on;
@@ -228,17 +236,17 @@ const mkUser = (id, username, password, role, name, vendors, system = false) => 
   permissions: getDefaultPermissions(role),
 });
 const SEED_USERS = [
-  // ⚠️ 部署後請立即修改以下密碼，不要使用預設值
-  mkUser('u0', 'admin',  'Admin@2024!', ROLES.ADMIN,  '系統管理員',    SEED_VENDORS.map(v=>v.name), true),
-  mkUser('u2', 'area01', 'Area@2024!',  ROLES.AREA,   '當區幹部A',     SEED_VENDORS.map(v=>v.name)),
-  mkUser('u3', 'cs',     'Cs@2024!',    ROLES.VENDOR, 'CS 承杺幹部',   ['承杺']),
-  mkUser('u4', 'ct',     'Ct@2024!',    ROLES.VENDOR, 'CT 芊通幹部',   ['芊通']),
-  mkUser('u5', 'cy',     'Cy@2024!',    ROLES.VENDOR, 'CY 承奕幹部',   ['承奕']),
-  mkUser('u6', 'df',     'Df@2024!',    ROLES.VENDOR, 'DF 頂富幹部',   ['頂富']),
-  mkUser('u7', 'ht',     'Ht@2024!',    ROLES.VENDOR, 'HT 華煬通幹部', ['華煬通']),
-  mkUser('u8', 'sy',     'Sy@2024!',    ROLES.VENDOR, 'SY 三彥幹部',   ['三彥']),
-  mkUser('u9', 'wy',     'Wy@2024!',    ROLES.VENDOR, 'WY 萬宜幹部',   ['萬宜']),
-  mkUser('u10','xb',     'Xb@2024!',    ROLES.VENDOR, 'XB 信邦幹部',   ['信邦']),
+  // 預設密碼僅供首次登入；系統會強制要求立即修改
+  { ...mkUser('u0', 'admin',  'Admin@2024!', ROLES.ADMIN,  '系統管理員',    SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true },
+  { ...mkUser('u2', 'area01', 'Area@2024!',  ROLES.AREA,   '當區幹部A',     SEED_VENDORS.map(v=>v.name)),        mustChangePassword: true },
+  { ...mkUser('u3', 'cs',     'Cs@2024!',    ROLES.VENDOR, 'CS 承杺幹部',   ['承杺']),                           mustChangePassword: true },
+  { ...mkUser('u4', 'ct',     'Ct@2024!',    ROLES.VENDOR, 'CT 芊通幹部',   ['芊通']),                           mustChangePassword: true },
+  { ...mkUser('u5', 'cy',     'Cy@2024!',    ROLES.VENDOR, 'CY 承奕幹部',   ['承奕']),                           mustChangePassword: true },
+  { ...mkUser('u6', 'df',     'Df@2024!',    ROLES.VENDOR, 'DF 頂富幹部',   ['頂富']),                           mustChangePassword: true },
+  { ...mkUser('u7', 'ht',     'Ht@2024!',    ROLES.VENDOR, 'HT 華煬通幹部', ['華煬通']),                         mustChangePassword: true },
+  { ...mkUser('u8', 'sy',     'Sy@2024!',    ROLES.VENDOR, 'SY 三彥幹部',   ['三彥']),                           mustChangePassword: true },
+  { ...mkUser('u9', 'wy',     'Wy@2024!',    ROLES.VENDOR, 'WY 萬宜幹部',   ['萬宜']),                           mustChangePassword: true },
+  { ...mkUser('u10','xb',     'Xb@2024!',    ROLES.VENDOR, 'XB 信邦幹部',   ['信邦']),                           mustChangePassword: true },
 ];
 
 /** 初始員工種子資料 */
@@ -389,12 +397,138 @@ function filterByScope(list, warehouses, selectedWarehouse, selectedDept, select
 // AUTH SCREEN
 // ─────────────────────────────────────────────
 
-function LoginScreen({ users, onLogin, onRegister, vendors }) {
-  // portal: null = 選擇入口, 'staff' = 員工, 'vendor' = 廠商, 'register' = 申請廠商帳號
-  const [portal, setPortal] = useState(null);
+// ── 強制改密碼精靈（首次登入或管理員要求）──
+function ForcePwdChange({ user, onDone }) {
+  const [form, setForm] = useState({ pwd: '', confirm: '' });
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    setErr('');
+    if (form.pwd.length < 8)               { setErr('密碼至少需 8 個字元'); return; }
+    if (!/[A-Za-z]/.test(form.pwd))        { setErr('密碼需包含至少一個英文字母'); return; }
+    if (!/[0-9]/.test(form.pwd))           { setErr('密碼需包含至少一個數字'); return; }
+    if (form.pwd !== form.confirm)          { setErr('兩次密碼不一致'); return; }
+    setBusy(true);
+    const hashed = await hashPwd(form.pwd);
+    onDone({ ...user, password: hashed, mustChangePassword: false });
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-100 px-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-amber-100 rounded-2xl mb-3">
+            <svg className="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-slate-800">請設定新密碼</h2>
+          <p className="text-sm text-slate-500 mt-1">首次登入必須修改預設密碼後才能繼續使用</p>
+        </div>
+        {err && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{err}</div>}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {[
+            { label: '新密碼',    key: 'pwd',     ph: '至少 8 碼，含英文及數字' },
+            { label: '確認新密碼', key: 'confirm', ph: '再次輸入新密碼' },
+          ].map(f => (
+            <div key={f.key}>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">{f.label}</label>
+              <div className="relative">
+                <input type={show ? 'text' : 'password'} value={form[f.key]} placeholder={f.ph}
+                  onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm pr-10
+                             focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+                {f.key === 'pwd' && (
+                  <button type="button" onClick={() => setShow(p => !p)}
+                    className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      {show
+                        ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18"/>
+                        : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>
+                      }
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3">
+            密碼規則：至少 8 個字元，需包含英文字母與數字
+          </div>
+          <button type="submit" disabled={busy}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+            {busy ? '儲存中…' : '儲存新密碼並進入系統'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwds = {} }) {
+  // identity: null | 'riyi' | 'vendor_mgr' | 'worker' | 'register'
+  const [identity, setIdentity] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
+
+  // 驗證碼
+  const genCaptcha = () => {
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    return String(1000 + (arr[0] % 9000));
+  };
+  const [captcha, setCaptcha] = useState(genCaptcha);
+  const [captchaInput, setCaptchaInput] = useState('');
+  const captchaRef = useRef(null);
+
+  const refreshCaptcha = () => {
+    setCaptcha(genCaptcha());
+    setCaptchaInput('');
+  };
+
+  useEffect(() => {
+    const canvas = captchaRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    // 背景
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(0, 0, W, H);
+    // 干擾線
+    for (let i = 0; i < 4; i++) {
+      ctx.strokeStyle = `hsl(${Math.floor(Math.random()*360)},50%,70%)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.random()*W, Math.random()*H);
+      ctx.lineTo(Math.random()*W, Math.random()*H);
+      ctx.stroke();
+    }
+    // 干擾點
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = `hsl(${Math.floor(Math.random()*360)},40%,75%)`;
+      ctx.fillRect(Math.random()*W, Math.random()*H, 2, 2);
+    }
+    // 數字
+    const colors = ['#1d4ed8','#0f766e','#7c3aed','#b45309'];
+    captcha.split('').forEach((ch, i) => {
+      const x = 18 + i * 28;
+      const y = 28 + (Math.random() * 6 - 3);
+      const angle = (Math.random() * 20 - 10) * Math.PI / 180;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.font = `bold ${22 + Math.floor(Math.random()*4)}px monospace`;
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillText(ch, 0, 0);
+      ctx.restore();
+    });
+  }, [captcha, identity]);
 
   // 申請表單狀態
   const [regForm, setRegForm] = useState({ username: '', password: '', confirm: '', name: '', vendor: '' });
@@ -403,25 +537,110 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
 
   const vendorNames = vendors?.map(v => v.name) ?? [];
 
-  const portalConfig = {
-    staff:  { label: '員工入口',   icon: '🏢', color: 'bg-blue-600 hover:bg-blue-700',   roles: [ROLES.ADMIN, ROLES.AREA] },
-    vendor: { label: '廠商入口',   icon: '🤝', color: 'bg-emerald-600 hover:bg-emerald-700', roles: [ROLES.VENDOR] },
+  const IDENTITY_OPTIONS = [
+    { value: 'riyi',       label: '日翊' },
+    { value: 'vendor_mgr', label: '廠商幹部' },
+    { value: 'worker',     label: '委外人員' },
+  ];
+
+  const IDENTITY_INFO = {
+    riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-blue-50 border-blue-100 text-blue-700' },
+    vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
+    worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
   };
 
-  const handleBack = () => { setPortal(null); setUsername(''); setPassword(''); setError(''); };
+  const switchIdentity = v => { setIdentity(v); setUsername(''); setPassword(''); setError(''); setCaptchaInput(''); refreshCaptcha(); };
+
+  // 登入失敗鎖定：以 sessionStorage 記錄各帳號失敗次數
+  const getLockData  = (u) => JSON.parse(sessionStorage.getItem('_lock_' + u) || '{"count":0,"until":0}');
+  const setLockData  = (u, d) => sessionStorage.setItem('_lock_' + u, JSON.stringify(d));
+  const clearLock    = (u) => sessionStorage.removeItem('_lock_' + u);
+  const recordFail   = (u) => {
+    const d = getLockData(u);
+    const newCount = d.count + 1;
+    const until = newCount >= 5 ? Date.now() + 15 * 60 * 1000 : 0;
+    setLockData(u, { count: newCount, until });
+    return { count: newCount, locked: newCount >= 5 };
+  };
 
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
-    const allowedRoles = portalConfig[portal].roles;
-    const candidate = users.find(u =>
-      u.username === username && allowedRoles.includes(u.role)
-    );
-    if (!candidate) { setError('帳號或密碼錯誤，或無此入口的登入權限。'); return; }
+
+    // 驗證碼校驗
+    if (captchaInput.trim() !== captcha) {
+      setError('驗證碼錯誤，請重新輸入');
+      refreshCaptcha();
+      return;
+    }
+
+    const uKey = username.trim().toLowerCase();
+
+    // 鎖定檢查
+    const lockData = getLockData(uKey);
+    if (lockData.until > Date.now()) {
+      const mins = Math.ceil((lockData.until - Date.now()) / 60000);
+      setError(`登入失敗次數過多，帳號已鎖定，請 ${mins} 分鐘後再試`);
+      refreshCaptcha();
+      return;
+    }
+
+    // 委外人員：首次用員編登入，之後用自訂密碼
+    if (identity === 'worker') {
+      const emp = (employees ?? []).find(em => em.empId === username);
+      if (!emp) {
+        const r = recordFail(uKey);
+        setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
+        refreshCaptcha();
+        return;
+      }
+      const storedPwd = workerPwds[emp.empId];
+      let pwdOk = false;
+      if (storedPwd) {
+        pwdOk = await verifyPwd(password, storedPwd);
+      } else {
+        // 首次登入：密碼必須等於員編
+        pwdOk = (password === emp.empId);
+      }
+      if (!pwdOk) {
+        const r = recordFail(uKey);
+        setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
+        refreshCaptcha();
+        return;
+      }
+      clearLock(uKey);
+      onLogin({
+        id: 'worker_' + emp.id,
+        username: emp.empId,
+        password: storedPwd ?? emp.empId,
+        name: emp.name,
+        role: ROLES.WORKER,
+        vendors: emp.vendor ? [emp.vendor] : [],
+        empId: emp.empId,
+        employeeId: emp.id,
+        approved: true,
+        mustChangePassword: !storedPwd,  // 首次登入強制改密碼
+      });
+      return;
+    }
+
+    const allowedRoles = identity === 'riyi' ? [ROLES.ADMIN, ROLES.AREA] : [ROLES.VENDOR];
+    const candidate = users.find(u => u.username === username && allowedRoles.includes(u.role));
+    if (!candidate) {
+      const r = recordFail(uKey);
+      setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
+      refreshCaptcha();
+      return;
+    }
     const ok = await verifyPwd(password, candidate.password);
-    if (!ok) { setError('帳號或密碼錯誤，或無此入口的登入權限。'); return; }
-    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); return; }
-    // 自動將明文密碼升級為 SHA-256 雜湊
+    if (!ok) {
+      const r = recordFail(uKey);
+      setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
+      refreshCaptcha();
+      return;
+    }
+    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
+    clearLock(uKey);
     if (!candidate.password.startsWith('sha256:')) {
       const hashed = await hashPwd(password);
       onLogin({ ...candidate, password: hashed }, hashed);
@@ -444,9 +663,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
     if (regForm.password !== regForm.confirm) {
       setRegError('兩次密碼不一致'); return;
     }
-    if (regForm.password.length < 6) {
-      setRegError('密碼至少需 6 個字元'); return;
-    }
+    if (regForm.password.length < 8)         { setRegError('密碼至少需 8 個字元'); return; }
+    if (!/[A-Za-z]/.test(regForm.password)) { setRegError('密碼需包含至少一個英文字母'); return; }
+    if (!/[0-9]/.test(regForm.password))    { setRegError('密碼需包含至少一個數字'); return; }
     if (users.find(u => u.username === regForm.username)) {
       setRegError('此帳號名稱已被使用，請更換'); return;
     }
@@ -466,14 +685,14 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
   };
 
   // ── 申請廠商帳號畫面 ──
-  if (portal === 'register') {
+  if (identity === 'register') {
     if (regDone) return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
         <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
           <div className="text-5xl mb-4">✅</div>
           <h2 className="text-xl font-bold text-slate-800 mb-2">申請已送出</h2>
           <p className="text-sm text-slate-500 mb-6">請等候管理員審核後即可登入，謝謝。</p>
-          <button onClick={() => { setPortal(null); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
+          <button onClick={() => { setIdentity(''); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
             className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
             返回登入
           </button>
@@ -484,7 +703,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
         <form onSubmit={handleRegister} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
           <div className="flex items-center gap-3 mb-6">
-            <button type="button" onClick={() => setPortal(null)} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
+            <button type="button" onClick={() => setIdentity('')} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
             <div>
               <h1 className="text-xl font-bold text-slate-800">📝 申請廠商帳號</h1>
               <p className="text-xs text-slate-400">送出後等候管理員審核</p>
@@ -515,7 +734,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
           <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
             送出申請
           </button>
-          <button type="button" onClick={() => setPortal(null)} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
+          <button type="button" onClick={() => setIdentity('')} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
             ← 返回入口選擇
           </button>
         </form>
@@ -523,97 +742,152 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
     );
   }
 
-  // ── 入口選擇畫面 ──
-  if (!portal) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
-          <div className="text-4xl mb-3">🗓️</div>
-          <h1 className="text-2xl font-bold text-slate-800 mb-1">委外人力排班作業平台</h1>
-          <p className="text-sm text-slate-500 mb-8">Shift Management System</p>
+  // ── 主登入畫面（下拉身份選擇） ──
+  const info = identity ? IDENTITY_INFO[identity] : null;
 
-          <p className="text-sm text-slate-600 mb-4 font-medium">請選擇登入入口</p>
-
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={() => setPortal('staff')}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold
-                         rounded-xl transition-colors flex items-center justify-center gap-3 text-base">
-              <span className="text-2xl">🏢</span>
-              <span>員工入口</span>
-              <span className="text-xs text-blue-200 ml-auto">管理員 · 幹部</span>
-            </button>
-            <button
-              onClick={() => setPortal('vendor')}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold
-                         rounded-xl transition-colors flex items-center justify-center gap-3 text-base">
-              <span className="text-2xl">🤝</span>
-              <span>廠商入口</span>
-              <span className="text-xs text-emerald-200 ml-auto">委外幹部</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── 登入表單 ──
-  const cfg = portalConfig[portal];
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-600">
-      <form onSubmit={handleSubmit}
-        className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-100 px-4">
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <button type="button" onClick={handleBack}
-            className="text-slate-400 hover:text-slate-600 text-xl leading-none">‹</button>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">{cfg.icon} {cfg.label}</h1>
-            <p className="text-xs text-slate-400">委外人力排班作業平台</p>
-          </div>
+      {/* Logo + 標題 */}
+      <div className="text-center mb-7">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-md mb-4">
+          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-9 h-9">
+            <path d="M20 6L34 13.5V18L20 25.5L6 18V13.5L20 6Z" fill="#3B82F6" opacity="0.25"/>
+            <path d="M20 12L34 19.5V24L20 31.5L6 24V19.5L20 12Z" fill="#3B82F6" opacity="0.5"/>
+            <path d="M20 18L34 25.5V30L20 37.5L6 30V25.5L20 18Z" fill="#3B82F6"/>
+          </svg>
         </div>
+        <h1 className="text-2xl font-bold text-slate-800">委外人力排班作業平台</h1>
+        <p className="text-sm text-slate-500 mt-1">歡迎回來，請選擇身分後登入</p>
+      </div>
 
-        {error && (
-          <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-            {error}
+      {/* 卡片 */}
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+
+        <form onSubmit={handleSubmit}>
+
+          {/* 身份下拉 */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">登入身份</label>
+            <div className="relative">
+              <select
+                value={identity}
+                onChange={e => switchIdentity(e.target.value)}
+                className="w-full appearance-none px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                           focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition
+                           text-slate-700 cursor-pointer">
+                <option value="">請選擇登入身份</option>
+                {IDENTITY_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
           </div>
-        )}
 
-        <label className="block text-sm font-medium text-slate-700 mb-1">帳號</label>
-        <input
-          type="text" value={username} onChange={e => setUsername(e.target.value)}
-          required autoFocus placeholder="請輸入帳號"
-          className="w-full mb-4 px-3 py-2 border border-slate-300 rounded-lg text-sm
-                     focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+          {/* 說明橫幅 */}
+          {info && (
+            <div className={`flex items-center gap-2 border text-xs rounded-lg px-3 py-2 mb-4 ${info.color}`}>
+              <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM8.5 7a1.5 1.5 0 113 0v.5a1.5 1.5 0 01-3 0V7zm1.5 3a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"/>
+              </svg>
+              <span>{info.text}</span>
+            </div>
+          )}
 
-        <label className="block text-sm font-medium text-slate-700 mb-1">密碼</label>
-        <input
-          type="password" value={password} onChange={e => setPassword(e.target.value)}
-          required placeholder="請輸入密碼"
-          className="w-full mb-6 px-3 py-2 border border-slate-300 rounded-lg text-sm
-                     focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+          {error && (
+            <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
 
-        <button type="submit"
-          className={`w-full py-2.5 text-white font-semibold rounded-lg transition-colors ${cfg.color}`}>
-          登入
-        </button>
+          {/* 帳號 / 密碼（選擇身份後才顯示） */}
+          {identity && (
+            <>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">帳號</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                  </span>
+                  <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+                    required autoFocus
+                    placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? '公司 AD 帳號' : '帳號'}
+                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+                </div>
+              </div>
 
-        <button type="button" onClick={handleBack}
-          className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-          ← 返回入口選擇
-        </button>
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">密碼</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                  </span>
+                  <input type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                    required
+                    placeholder={identity === 'worker' ? '員工編號' : identity === 'riyi' ? 'AD 密碼' : '密碼'}
+                    className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm
+                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+                  <button type="button" onClick={() => setShowPwd(p => !p)}
+                    className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600">
+                    {showPwd
+                      ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 4.411m0 0L21 21"/></svg>
+                      : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                    }
+                  </button>
+                </div>
+              </div>
 
-        <div className="mt-4 pt-4 border-t border-slate-100 text-center">
-          <span className="text-sm text-slate-400">還沒有帳號？</span>
-          <button type="button" onClick={() => { setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); setPortal('register'); }}
-            className="ml-1 text-sm text-emerald-600 hover:text-emerald-700 font-medium underline">
-            {portal === 'vendor' ? '申請廠商帳號' : '申請帳號'}
-          </button>
-        </div>
-      </form>
+              {/* 驗證碼 */}
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
+                <div className="flex items-center gap-2">
+                  <canvas ref={captchaRef} width={130} height={44}
+                    className="rounded-lg border border-slate-200 cursor-pointer select-none"
+                    title="點擊刷新" onClick={refreshCaptcha} />
+                  <button type="button" onClick={refreshCaptcha}
+                    className="text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                  </button>
+                  <input type="text" value={captchaInput}
+                    onChange={e => setCaptchaInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    maxLength={4} placeholder="請輸入驗證碼"
+                    className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-center tracking-widest
+                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
+                </div>
+              </div>
+
+              <button type="submit"
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+                登入系統
+              </button>
+            </>
+          )}
+
+          {/* 廠商幹部：申請帳號連結 */}
+          {identity === 'vendor_mgr' && (
+            <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+              <span className="text-sm text-slate-400">還沒有帳號？</span>
+              <button type="button"
+                onClick={() => { setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); setIdentity('register'); }}
+                className="ml-1 text-sm text-blue-600 hover:text-blue-700 font-medium">
+                申請廠商幹部帳號
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
     </div>
   );
 }
@@ -624,7 +898,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors }) {
 
 const NAV_ITEMS = [
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
-  { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
+  { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -634,7 +909,11 @@ const NAV_ITEMS = [
 ];
 
 function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, onToggle }) {
-  const items = NAV_ITEMS.filter(n => n.roles.includes(currentUser.role));
+  const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+  const items = NAV_ITEMS.filter(n =>
+    n.roles.includes(currentUser.role) &&
+    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false)
+  );
 
   return (
     <aside className={`flex flex-col bg-slate-900 text-white transition-all duration-300
@@ -654,7 +933,6 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
                         ${currentPage === item.key
                           ? 'bg-blue-600 text-white'
                           : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}>
-            <span className="text-lg shrink-0">{item.icon}</span>
             {!collapsed && <span className="truncate">{item.label}</span>}
           </button>
         ))}
@@ -665,7 +943,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
         {!collapsed && (
           <div className="mb-2 text-xs text-slate-400 truncate">
             <div className="font-medium text-slate-200">{currentUser.name}</div>
-            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : '委外幹部'}</div>
+            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
           </div>
         )}
         <button onClick={onLogout}
@@ -698,11 +976,14 @@ function WarehouseDeptBar() {
     selectedGroup,     setSelectedGroup,
   } = useApp();
 
-  // 限制該帳號可見的倉別（[] = 全部）
+  // 倉別可見範圍：ADMIN 看全部；AREA 只看 allowedWarehouses（空陣列 = 尚未指派，不顯示）；其他角色維持原邏輯
+  const isAdmin = currentUser?.role === ROLES.ADMIN;
   const allowedWh = currentUser?.allowedWarehouses ?? [];
-  const visibleWarehouses = allowedWh.length > 0
-    ? warehouses.filter(w => allowedWh.includes(w.id))
-    : warehouses;
+  const visibleWarehouses = isAdmin
+    ? warehouses
+    : allowedWh.length > 0
+      ? warehouses.filter(w => allowedWh.includes(w.id))
+      : [];
 
   const whObj   = visibleWarehouses.find(w => w.id === selectedWarehouse) ?? null;
   const depts   = whObj?.departments ?? [];
@@ -832,7 +1113,11 @@ function WarehouseDeptBar() {
 
 function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClose }) {
   if (!open) return null;
-  const items = NAV_ITEMS.filter(n => n.roles.includes(currentUser.role));
+  const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+  const items = NAV_ITEMS.filter(n =>
+    n.roles.includes(currentUser.role) &&
+    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false)
+  );
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
@@ -847,7 +1132,7 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
               onClick={() => { onNavigate(item.key); onClose(); }}
               className={`w-full flex items-center gap-3 px-4 py-3 text-sm
                           ${currentPage === item.key ? 'bg-blue-600' : 'hover:bg-slate-700'}`}>
-              <span>{item.icon}</span><span>{item.label}</span>
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
@@ -868,6 +1153,7 @@ function Dashboard() {
   const {
     employees, schedule, currentUser, selectedYear, selectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    attendData, extras,
   } = useApp();
 
   const today = new Date();
@@ -889,20 +1175,80 @@ function Dashboard() {
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
-  // 所選日期出勤統計（各廠商）
+  // 前周同星期日期
+  const prevWeekDate = useMemo(() => {
+    const d = new Date(dashYear, dashMonth - 1, safeDay);
+    d.setDate(d.getDate() - 7);
+    return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+  }, [dashYear, dashMonth, safeDay]);
+
+  // 組別欄位定義（顯示用標籤 → 比對 emp.group 包含的關鍵字）
+  const GROUP_COLS = useMemo(() => [
+    { label: '日班理貨組', match: g => g.includes('日班') && (g.includes('理貨') || g.includes('理货')) },
+    { label: '中班理貨組', match: g => g.includes('中班') && (g.includes('理貨') || g.includes('理货')) },
+    { label: '日班出貨組', match: g => g.includes('出貨') || g.includes('出货') },
+    { label: '運務組',     match: g => g.includes('運務') || g.includes('运务') },
+  ], []);
+
+  // 所選日期出勤統計（各廠商）含前周差 + 組別細分
   const vendorStats = useMemo(() => {
-    const dk = dateKey(dashYear, dashMonth, safeDay);
+    const dk   = dateKey(dashYear, dashMonth, safeDay);
+    const dkPW = dateKey(prevWeekDate.year, prevWeekDate.month, prevWeekDate.day);
+    const attendDkPad = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
     const map = {};
     visibleEmployees.forEach(emp => {
-      if (!map[emp.vendor]) map[emp.vendor] = { working: 0, total: 0 };
-      map[emp.vendor].total++;
+      if (!map[emp.vendor]) {
+        map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
+        GROUP_COLS.forEach(gc => { map[emp.vendor].groups[gc.label] = 0; });
+      }
+      map[emp.vendor].roster++;
       const code = schedule[emp.id]?.[dk] ?? 'V';
-      if (code === 'V') map[emp.vendor].working++;
+      const isWorking = code === 'V';
+      if (isWorking) {
+        map[emp.vendor].working++;
+        const g = emp.group ?? '';
+        GROUP_COLS.forEach(gc => {
+          if (gc.match(g)) map[emp.vendor].groups[gc.label]++;
+        });
+      }
+      const codePW = schedule[emp.id]?.[dkPW] ?? 'V';
+      if (codePW === 'V') map[emp.vendor].prevWorking++;
+      // 長期到班：點名表勾選
+      if (attendData[attendDkPad]?.[emp.id]?.present) map[emp.vendor].longPresent++;
     });
-    return Object.entries(map).map(([vendor, s]) => ({ vendor, ...s }));
-  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay]);
+    // 臨時到班：extras 依廠商計算，依選擇的組別篩選
+    const dayExtras = (extras[attendDkPad] ?? []).filter(e =>
+      !selectedGroup || !e.group || e.group === selectedGroup
+    );
+    dayExtras.forEach(e => {
+      const v = e.vendor || '未分配';
+      if (!map[v]) {
+        map[v] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
+        GROUP_COLS.forEach(gc => { map[v].groups[gc.label] = 0; });
+      }
+      if (!map[v].tempPresent) map[v].tempPresent = 0;
+      if (e.present) map[v].tempPresent++;
+    });
+    return Object.entries(map).map(([vendor, s]) => ({
+      vendor,
+      roster:      s.roster,
+      working:     s.working,
+      prevWorking: s.prevWorking,
+      diff:        s.working - s.prevWorking,
+      groups:      s.groups,
+      longPresent: s.longPresent ?? 0,
+      tempPresent: s.tempPresent ?? 0,
+    }));
+  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
+
+  // 點名表實到人數（來源：attendData）
+  const attendDk = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
+  const actualPresent = useMemo(() => {
+    const dayData = attendData[attendDk] ?? {};
+    return Object.values(dayData).filter(r => r.present).length;
+  }, [attendData, attendDk]);
 
   return (
     <div className="p-6 space-y-6">
@@ -934,48 +1280,187 @@ function Dashboard() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: '人員總數',   value: visibleEmployees.length, icon: '👥', color: 'bg-blue-50 border-blue-200' },
           { label: '廠商數量',   value: new Set(visibleEmployees.map(e => e.vendor)).size, icon: '🏢', color: 'bg-purple-50 border-purple-200' },
           { label: `${dashMonth}/${safeDay} 出勤`, value: selectedDayWorking, icon: '✅', color: 'bg-green-50 border-green-200' },
           { label: `${dashMonth}/${safeDay} 休假`, value: visibleEmployees.length - selectedDayWorking, icon: '🌙', color: 'bg-orange-50 border-orange-200' },
+          { label: `${dashMonth}/${safeDay} 實到`, value: actualPresent, icon: '📋', color: 'bg-teal-50 border-teal-200',
+            sub: actualPresent === 0 ? '點名表未填寫' : null },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
             <div className="text-2xl mb-1">{c.icon}</div>
             <div className="text-3xl font-bold text-slate-800">{c.value}</div>
             <div className="text-xs text-slate-500 mt-1">{c.label}</div>
+            {c.sub && <div className="text-xs text-slate-400 mt-0.5">{c.sub}</div>}
           </div>
         ))}
       </div>
 
-      {/* Vendor Stats */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <h3 className="font-semibold text-slate-700 mb-4">
-          各廠商人力
-          <span className="ml-2 text-sm font-normal text-slate-400">
-            {dashYear}/{dashMonth}/{safeDay}{isToday ? '（今日）' : ''}
-          </span>
-        </h3>
-        <div className="space-y-3">
-          {vendorStats.map(s => (
-            <div key={s.vendor}>
-              <div className="flex justify-between text-sm text-slate-600 mb-1">
-                <span>{s.vendor}</span>
-                <span className="font-medium">
-                  出勤 {s.working} 人
-                  {s.total - s.working > 0 && <span className="text-amber-500 ml-2">休 {s.total - s.working} 人</span>}
-                  <span className="text-slate-400 ml-2">/ {s.total} 人</span>
-                </span>
-              </div>
-              <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 rounded-full transition-all"
-                  style={{ width: `${s.total ? (s.working / s.total * 100) : 0}%` }} />
-              </div>
-            </div>
-          ))}
+      {/* Vendor Stats + Donut Chart */}
+      <div className="flex gap-4 items-start">
+      {/* Vendor Stats Table */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-700">
+            各廠商人力
+            <span className="ml-2 text-sm font-normal text-slate-400">
+              {dashYear}/{dashMonth}/{safeDay}{isToday ? '（今日）' : ''}
+            </span>
+          </h3>
+          <span className="text-xs text-slate-400">前周同日：{prevWeekDate.month}/{prevWeekDate.day}</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse" style={{ minWidth: 580, fontVariantNumeric: 'tabular-nums' }}>
+            <colgroup>
+              <col style={{ width: 80 }} />
+              <col style={{ width: 56 }} />
+              <col style={{ width: 56 }} />
+              {GROUP_COLS.map(gc => <col key={gc.label} style={{ width: 88 }} />)}
+              <col style={{ width: 60 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 60 }} />
+            </colgroup>
+            <thead>
+              <tr className="border-b-2 border-slate-200">
+                <th className="text-left pb-2 text-xs font-semibold text-slate-500">廠商</th>
+                <th className="text-right pb-2 text-xs font-semibold text-slate-500">在職</th>
+                <th className="text-right pb-2 text-xs font-semibold text-blue-500">排班</th>
+                {GROUP_COLS.map(gc => (
+                  <th key={gc.label} className="text-right pb-2 text-xs font-semibold text-slate-400 pl-2">{gc.label}</th>
+                ))}
+                <th className="text-right pb-2 text-xs font-semibold text-teal-600 pl-2">到班(長)</th>
+                <th className="text-right pb-2 text-xs font-semibold text-amber-600 pl-2">到班(臨)</th>
+                <th className="text-right pb-2 text-xs font-semibold text-slate-500">前周差</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vendorStats.map((s, i) => {
+                const diffColor = s.diff > 0 ? 'text-emerald-600' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const diffLabel = s.diff > 0 ? `+${s.diff}` : s.diff < 0 ? `${s.diff}` : '–';
+                return (
+                  <tr key={s.vendor}
+                    className={`hover:bg-slate-50 transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                    <td className="py-2.5 text-sm font-medium text-slate-700">{s.vendor}</td>
+                    <td className="py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{s.working}</td>
+                    {GROUP_COLS.map(gc => {
+                      const cnt = s.groups[gc.label] ?? 0;
+                      return (
+                        <td key={gc.label} className="py-2.5 text-right text-sm pl-2">
+                          {cnt > 0 ? <span className="text-slate-700">{cnt}</span> : <span className="text-slate-300">–</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="py-2.5 text-right text-sm pl-2">
+                      {s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">–</span>}
+                    </td>
+                    <td className="py-2.5 text-right text-sm pl-2">
+                      {s.tempPresent > 0 ? <span className="font-semibold text-amber-600">{s.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                    </td>
+                    <td className={`py-2.5 text-right text-sm font-bold ${diffColor}`}>{diffLabel}</td>
+                  </tr>
+                );
+              })}
+              {/* 合計列 */}
+              {vendorStats.length > 0 && (() => {
+                const total = {
+                  roster:      vendorStats.reduce((a, s) => a + s.roster,      0),
+                  working:     vendorStats.reduce((a, s) => a + s.working,     0),
+                  diff:        vendorStats.reduce((a, s) => a + s.diff,        0),
+                  longPresent: vendorStats.reduce((a, s) => a + s.longPresent, 0),
+                  tempPresent: vendorStats.reduce((a, s) => a + s.tempPresent, 0),
+                };
+                const totalDiffColor = total.diff > 0 ? 'text-emerald-600' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const totalDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '–';
+                return (
+                  <tr className="border-t-2 border-slate-300 bg-slate-50">
+                    <td className="py-2.5 text-xs font-bold text-slate-500 tracking-wide">合計</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
+                    <td className="py-2.5 text-right text-sm font-bold text-blue-600">{total.working}</td>
+                    {GROUP_COLS.map(gc => {
+                      const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
+                      return (
+                        <td key={gc.label} className="py-2.5 text-right text-sm font-bold pl-2">
+                          {cnt > 0 ? <span className="text-slate-600">{cnt}</span> : <span className="text-slate-300">–</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="py-2.5 text-right text-sm font-bold pl-2">
+                      {total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">–</span>}
+                    </td>
+                    <td className="py-2.5 text-right text-sm font-bold pl-2">
+                      {total.tempPresent > 0 ? <span className="text-amber-600">{total.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                    </td>
+                    <td className={`py-2.5 text-right text-sm font-bold ${totalDiffColor}`}>{totalDiffLabel}</td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
         </div>
       </div>
+
+      {/* Donut Chart */}
+      {(() => {
+        const COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
+        const total = vendorStats.reduce((a, s) => a + s.working, 0);
+        if (total === 0) return null;
+        const R = 70, cx = 96, cy = 96, stroke = 26;
+        const circ = 2 * Math.PI * R;
+        let offset = 0;
+        const slices = vendorStats.filter(s => s.working > 0).map((s, i) => {
+          const pct = s.working / total;
+          const dash = pct * circ;
+          const gap  = circ - dash;
+          const seg  = { vendor: s.vendor, working: s.working, pct, dash, gap, offset, color: COLORS[i % COLORS.length] };
+          offset += dash;
+          return seg;
+        });
+        return (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col" style={{ width: 220, flexShrink: 0 }}>
+            <h3 className="font-semibold text-slate-700 text-sm mb-3">
+              排班比例
+              <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
+            </h3>
+            <div className="flex justify-center">
+              <svg width={192} height={192} viewBox="0 0 192 192">
+                {/* 底圈 */}
+                <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f1f5f9" strokeWidth={stroke} />
+                {slices.map(seg => (
+                  <circle key={seg.vendor} cx={cx} cy={cy} r={R} fill="none"
+                    stroke={seg.color} strokeWidth={stroke}
+                    strokeDasharray={`${seg.dash} ${seg.gap}`}
+                    strokeDashoffset={-seg.offset}
+                    style={{ transform: 'rotate(-90deg)', transformOrigin: `${cx}px ${cy}px` }} />
+                ))}
+                {/* 中心文字 */}
+                <text x={cx} y={cy - 6} textAnchor="middle" fontSize="22" fontWeight="700" fill="#1e293b">{total}</text>
+                <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#94a3b8">今日排班</text>
+              </svg>
+            </div>
+            {/* 圖例 */}
+            <div className="mt-2 space-y-1.5">
+              {slices.map(seg => (
+                <div key={seg.vendor} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: seg.color }} />
+                    <span className="text-slate-600 truncate">{seg.vendor}</span>
+                  </div>
+                  <span className="ml-2 font-semibold text-slate-700 flex-shrink-0">
+                    {seg.working}
+                    <span className="font-normal text-slate-400 ml-0.5">({Math.round(seg.pct * 100)}%)</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      </div>{/* end flex wrapper */}
 
     </div>
   );
@@ -989,15 +1474,16 @@ function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    systemLocked, scheduleRange, openHolidays,
+    systemLocked, scheduleRange, openHolidays, vendorHolidayOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
   } = useApp();
   const toast = useToast();
 
-  // 讀取班別設定與代號表
+  // 讀取班別設定與代號表（依所選倉別）
   const shiftTypes = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem('sms_shift_types') ?? '[]'); } catch { return []; }
-  }, []);
+    const key = selectedWarehouse ? `sms_shift_types_${selectedWarehouse}` : 'sms_shift_types';
+    try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; }
+  }, [selectedWarehouse]);
   const shiftCodeRows = useMemo(() => {
     try {
       const saved = localStorage.getItem('sms_shiftcode_rows');
@@ -1041,7 +1527,8 @@ function ScheduleTable() {
   }, []);
 
   // 依員工班別、班表代號、日期 → 代號表實際代號
-  const getDisplayCode = useCallback((emp, rawCode, day) => {
+  // month/year 明確傳入，避免 range mode 跨月時用錯 selectedMonth
+  const getDisplayCode = useCallback((emp, rawCode, day, month = selectedMonth, year = selectedYear) => {
     if (!emp.shiftTypeId) return rawCode;
     const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
     if (!st) return rawCode;
@@ -1052,19 +1539,32 @@ function ScheduleTable() {
     if (rawCode === 'V' || rawCode === '') {
       return row[1] ? String(row[1]) : rawCode;
     }
-    if (rawCode === '休') {
+    if (rawCode === '例' || rawCode === '休') {
       return row[2] ? String(row[2]) : rawCode;
     }
     if (rawCode === '國' && day != null) {
-      const colName = getHolidayColName(selectedYear, selectedMonth, day);
+      // 精確比對當天是否為假日
+      const colName = getHolidayColName(year, month, day);
       if (colName) {
         const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === colName);
         if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
       }
+      // Fallback：找 NATIONAL_HOLIDAYS 同年月中距此日最近的假日代碼
+      const sameMonthHols = NATIONAL_HOLIDAYS.filter(h => h.year === year && h.month === month);
+      if (sameMonthHols.length > 0) {
+        const nearest = sameMonthHols.reduce((best, h) =>
+          Math.abs(h.day - day) < Math.abs(best.day - day) ? h : best
+        );
+        const fallbackCol = getHolidayColName(year, month, nearest.day);
+        if (fallbackCol) {
+          const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === fallbackCol);
+          if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
+        }
+      }
       return rawCode;
     }
     return rawCode;
-  }, [shiftTypes, shiftCodeRows, shiftCodeHeaders, getHolidayColName, selectedYear, selectedMonth]);
+  }, [shiftTypes, shiftCodeRows, shiftCodeHeaders, getHolidayColName, openHolidays, selectedYear, selectedMonth]);
 
   // 「國」→ 假日短名（不依班別，只依日期與 openHolidays）
   const getHolidayLabel = useCallback((day, month = selectedMonth, year = selectedYear) => {
@@ -1132,6 +1632,10 @@ function ScheduleTable() {
   };
 
   const visibleEmployees = useMemo(() => {
+    // 委外人員只能看自己
+    if (currentUser.role === ROLES.WORKER) {
+      return employees.filter(e => e.id === currentUser.employeeId);
+    }
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees;
@@ -1146,19 +1650,26 @@ function ScheduleTable() {
     return list;
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, nameSearch]);
 
-  /** 委外幹部：計算當週休假數（以 dk 為基準） */
-  const getWeeklyLeaves = useCallback((empId, dk) => {
+  /** 計算當週某代碼出現次數（週一～週日） */
+  const getWeeklyCode = useCallback((empId, dk, code) => {
     const [y, m, d] = dk.split('-').map(Number);
     const base = new Date(y, m - 1, d);
-    const dow  = base.getDay();
+    // getDay(): 0=日,1=一,...,6=六 → 轉為週一=0,...,週日=6
+    const dowMon = (base.getDay() + 6) % 7;
     let count = 0;
-    for (let offset = -dow; offset <= 6 - dow; offset++) {
+    for (let offset = -dowMon; offset <= 6 - dowMon; offset++) {
       const cur = new Date(y, m - 1, d + offset);
       const k = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
-      if (schedule[empId]?.[k] === '休') count++;
+      if (schedule[empId]?.[k] === code) count++;
     }
     return count;
   }, [schedule]);
+
+  /** 委外幹部：計算當週例假數 */
+  const getWeeklyLeaves = useCallback((empId, dk) => getWeeklyCode(empId, dk, '例'), [getWeeklyCode]);
+
+  /** 計算當週休假日數（'休'） */
+  const getWeeklyRest = useCallback((empId, dk) => getWeeklyCode(empId, dk, '休'), [getWeeklyCode]);
 
   const isEditable = useCallback((dk) => {
     if (systemLocked) return false;
@@ -1188,21 +1699,56 @@ function ScheduleTable() {
       }
     }
 
+    // WORKER 嚴格限制在 scheduleRange 內（不隨 viewRange 放寬）
+    if (currentUser.role === ROLES.WORKER && scheduleRange.start && scheduleRange.end) {
+      const [y, m, d] = dk.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+      const rs = parseLocal(scheduleRange.start);
+      const re = parseLocal(scheduleRange.end);
+      if (date < rs || date > re) {
+        toast('此日期超出開放排班區間，無法修改。', 'warn');
+        return;
+      }
+    }
+
+    // M3：WORKER 只能修改自己那一列
+    if (currentUser.role === ROLES.WORKER) {
+      if (empId !== currentUser.employeeId) {
+        toast('您只能修改自己的班表。', 'error');
+        return;
+      }
+    }
+
     const current = schedule[empId]?.[dk] ?? '';
     const idx = SHIFT_CYCLE.indexOf(current);
     let next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
 
-    // 委外幹部不可排國定假日，跳過「國」
-    if (currentUser.role === ROLES.VENDOR && next === '國') {
+    // 委外幹部排「國」：依系統設定開放鍵決定
+    if (currentUser.role === ROLES.VENDOR && next === '國' && !vendorHolidayOpen) {
       next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
     }
 
-    // 防呆：委外幹部每週限排一天休假
-    if (currentUser.role === ROLES.VENDOR && next === '休') {
+    // WORKER：只能在 V ↔ 休 之間切換
+    if (currentUser.role === ROLES.WORKER) {
+      next = current === '休' ? 'V' : '休';
+    }
+
+    // 防呆：委外幹部每週限排一天例休
+    if (currentUser.role === ROLES.VENDOR && next === '例') {
       const existingLeaves = getWeeklyLeaves(empId, dk);
-      const alreadyLeave = schedule[empId]?.[dk] === '休';
+      const alreadyLeave = schedule[empId]?.[dk] === '例';
       if (!alreadyLeave && existingLeaves >= 1) {
-        toast('委外幹部每週限排一天休假，本週已達上限。', 'error');
+        toast('委外幹部每週限排一天例休，本週已達上限。', 'error');
+        return;
+      }
+    }
+
+    // 防呆：WORKER / VENDOR 每週限排一天休假
+    if ((currentUser.role === ROLES.WORKER || currentUser.role === ROLES.VENDOR) && next === '休') {
+      const weeklyRest = getWeeklyRest(empId, dk);
+      const alreadyRest = schedule[empId]?.[dk] === '休';
+      if (!alreadyRest && weeklyRest >= 1) {
+        toast('每週只能選一天休假日，本週已達上限。', 'error');
         return;
       }
     }
@@ -1211,7 +1757,7 @@ function ScheduleTable() {
       ...prev,
       [empId]: { ...prev[empId], [dk]: next },
     }));
-  }, [schedule, employees, isEditable, currentUser, getWeeklyLeaves, setSchedule, toast]);
+  }, [schedule, employees, isEditable, currentUser, getWeeklyLeaves, getWeeklyRest, setSchedule, toast]);
 
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years  = [2024, 2025, 2026, 2027];
@@ -1225,7 +1771,8 @@ function ScheduleTable() {
         const dayCells = dayHeaders.map(({ dk, day, month, year }) => {
           const raw = schedule[emp.id]?.[dk] ?? 'V';
           const holidayLabel = raw === '國' ? getHolidayLabel(day, month, year) : null;
-          const display = holidayLabel ?? getDisplayCode(emp, raw, day);
+          const sc = getDisplayCode(emp, raw, day, month, year);
+          const display = (sc !== raw ? sc : null) ?? holidayLabel ?? raw;
           if (raw === 'V') workDays++;
           return display;
         });
@@ -1273,7 +1820,8 @@ function ScheduleTable() {
         const mapVal = (v) => {
           const s = String(v ?? '').trim();
           if (s === 'V') return 'V';
-          if (s === '休' || s === '(休)') return '休';
+          if (s === '例' || s === '(例)') return '例';
+          if (s === '休' || s === '(休)') return '例'; // 舊格式向下相容
           if (s === '國') return '國';
           if (s === '' || s === '-') return null;
           if (/^\d+$/.test(s)) return 'V';
@@ -1518,7 +2066,7 @@ function ScheduleTable() {
       <div className="flex gap-3 text-xs flex-wrap">
         {Object.entries(SHIFT_CODES).filter(([k]) => k).map(([code, info]) => (
           <span key={code} className={`px-2 py-0.5 rounded ${info.color}`}>
-            {code} = {info.meaning}
+            {info.label || code} = {info.meaning}
           </span>
         ))}
         <span className="text-slate-400">（點擊格子切換班別）</span>
@@ -1608,8 +2156,12 @@ function ScheduleTable() {
                       if (code === 'V') workDays++;
                       const holidayLabel = code === '國' ? getHolidayLabel(day, month, year) : null;
                       const displayCode = showConverted
-                        ? (holidayLabel ?? getDisplayCode(emp, code, day))
-                        : (holidayLabel ?? code);
+                        ? (() => {
+                            const sc = getDisplayCode(emp, code, day, month, year);
+                            // 代號表有查到特定代碼時優先顯示，否則顯示假日短名
+                            return (sc !== code ? sc : null) ?? holidayLabel ?? code;
+                          })()
+                        : (holidayLabel ?? (SHIFT_CODES[code]?.label || code));
                       const info = SHIFT_CODES[code] ?? SHIFT_CODES[''];
                       const locked = !isEditable(dk);
                       const weekBand = Math.floor(colIdx / 7) % 2 === 1;
@@ -2061,7 +2613,8 @@ const esc = s => String(s ?? '')
 
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup } = useApp();
+    warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    vendorCompanyNames } = useApp();
   const toast = useToast();
   const days = getDaysInMonth(selectedYear, selectedMonth);
 
@@ -2117,7 +2670,7 @@ function Reports() {
       return r;
     };
 
-    const companyName = VENDOR_COMPANY_NAMES[vendor] ?? vendor;
+    const companyName = vendorCompanyNames[vendor] ?? vendor;
     const dateRange = `確認排班區間：${rocYear}年${selectedMonth}月1日~${rocYear}年${selectedMonth}月${daysInMonth}日`;
 
     // Month row: position 1=月份, 2=empty, 3..3+days-1=month numbers, 3+days=各假別計算, 3+days+4=員工簽名, 3+days+5=確認日期, 3+days+6=備註
@@ -2174,11 +2727,13 @@ function Reports() {
     const noteRow3 = new Array(totalCols).fill(null);
     noteRow3[1] = '2. 當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。';
 
-    // Title row: B2=廠商名(red), I2=當月排班確認表, Q2=確認排班區間
+    // Title row: B2=廠商名(red), center=當月排班確認表, right-of-days=確認排班區間
+    const midCol  = Math.floor((3 + dc) / 2);
+    const rgtCol  = dc - 3;
     const titleRow = new Array(totalCols).fill(null);
-    titleRow[1] = companyName;           // B2 — styled red in exportVendor
-    titleRow[8] = '當月排班確認表';      // I2
-    titleRow[16] = dateRange;            // Q2
+    titleRow[1]       = companyName;
+    titleRow[midCol]  = '當月排班確認表';
+    titleRow[rgtCol]  = dateRange;
 
     return [
       new Array(totalCols).fill(null),
@@ -2196,21 +2751,179 @@ function Reports() {
     ];
   };
 
-  const applySheetStyles = (ws) => {
-    // B2: 廠商名稱 — 紅色粗體
-    if (ws['B2']) ws['B2'].s = { font: { bold: true, sz: 13, color: { rgb: 'CC0000' } } };
-    // I2: 當月排班確認表 — 粗體
-    if (ws['I2']) ws['I2'].s = { font: { bold: true, sz: 13 } };
-    // Q2: 確認排班區間 — 粗體
-    if (ws['Q2']) ws['Q2'].s = { font: { bold: true, sz: 12 } };
+  const applySheetStyles = (ws, daysInMonth, empsCount) => {
+    const dc        = 3 + daysInMonth;   // first count-col index (0-based)
+    const totalCols = dc + 7;
+    const midCol    = Math.floor((3 + dc) / 2);
+    const rgtCol    = dc - 3;
+
+    // ── helpers ──────────────────────────────────────────────────────────
+    const colLetter = (idx) => {
+      let s = '', i = idx + 1;
+      while (i > 0) { const m = (i-1)%26; s = String.fromCharCode(65+m)+s; i = Math.floor((i-1)/26); }
+      return s;
+    };
+    const cr  = (r, c) => colLetter(c) + (r + 1);
+    const ec  = (r, c) => { const k = cr(r,c); if (!ws[k]) ws[k] = {t:'z',v:null}; return ws[k]; };
+    const sty = (r, c, s) => { ec(r,c).s = s; };
+
+    const F    = '微軟正黑體';
+    const thin = { style:'thin', color:{rgb:'000000'} };
+    const bdr  = { top:thin, bottom:thin, left:thin, right:thin };
+    const bdrM = bdr;
+
+    // colour palette matching reference
+    const ODD  = 'BDD7EE';  // light blue  (odd  7-day block)
+    const EVEN = 'F2F2F2';  // light grey  (even 7-day block)
+    const CBLUE= '0070C0';  // solid blue  count-col headers
+    const CGRN = 'E2EFDA';  // light green count-col data
+    const SALM = 'FCE4D6';  // light salmon sig / date cols
+    const WHITE= 'FFFFFF';
+
+    const weekBg = (d) => Math.floor((d-1)/7) % 2 === 0 ? ODD : EVEN;
+
+    const mkS = (bg, rgb, sz, bold, halign, wrap) => ({
+      font:      { name:F, sz:sz||12, bold:!!bold, color:{rgb: rgb||'000000'} },
+      fill:      bg ? { patternType:'solid', fgColor:{rgb:bg} } : {},
+      alignment: { horizontal:halign||'center', vertical:'center', wrapText:!!wrap },
+      border:    bdr,
+    });
+
+    // ── row heights (hpt = height in points) ─────────────────────────────
+    ws['!rows'] = [
+      {hpt:8},   // r0  row1 spacer
+      {hpt:30},  // r1  row2 title
+      {hpt:8},   // r2  row3 spacer
+      {hpt:25},  // r3  row4 note1
+      {hpt:25},  // r4  row5 note2
+      {hpt:25},  // r5  row6 note3
+      {hpt:8},   // r6  row7 spacer
+      {hpt:20},  // r7  row8  月份
+      {hpt:20},  // r8  row9  日期
+      {hpt:20},  // r9  row10 星期
+      {hpt:20},  // r10 row11 員工編號
+      ...Array.from({length:empsCount}, ()=>({hpt:30})),
+    ];
+
+    // ── column widths ─────────────────────────────────────────────────────
+    ws['!cols'] = [
+      {wch:1.5},  // A spacer
+      {wch:16},   // B empId
+      {wch:11},   // C empName
+      ...Array.from({length:daysInMonth}, ()=>({wch:4.5})),
+      {wch:5.5},{wch:5.5},{wch:5.5},{wch:5.5},  // 4 count cols
+      {wch:21},   // sig
+      {wch:11},   // confirm date
+      {wch:30},   // remarks
+      {wch:1.5},  // trailing spacer
+    ];
+
+    // ── merges ────────────────────────────────────────────────────────────
+    ws['!merges'] = [
+      // note rows B:count_end
+      {s:{r:3,c:1}, e:{r:3,c:dc+3}},
+      {s:{r:4,c:1}, e:{r:4,c:dc+3}},
+      {s:{r:5,c:1}, e:{r:5,c:dc+3}},
+      // 人力廠商 box spans note rows + sig cols
+      {s:{r:3,c:dc+4}, e:{r:5,c:dc+6}},
+      // header label cells B:C merged per row
+      {s:{r:7,c:1}, e:{r:7,c:2}},   // 月份
+      {s:{r:8,c:1}, e:{r:8,c:2}},   // 日期
+      {s:{r:9,c:1}, e:{r:9,c:2}},   // 星期
+      // 各假別計算 spans 4 count cols in month row
+      {s:{r:7,c:dc}, e:{r:7,c:dc+3}},
+      // sig / date / remarks span all 4 header rows (r7–r10)
+      {s:{r:7,c:dc+4}, e:{r:10,c:dc+4}},
+      {s:{r:7,c:dc+5}, e:{r:10,c:dc+5}},
+      {s:{r:7,c:dc+6}, e:{r:10,c:dc+6}},
+      // count headers span rows 日期→員工編號 (r8–r10)
+      {s:{r:8,c:dc},   e:{r:10,c:dc}},
+      {s:{r:8,c:dc+1}, e:{r:10,c:dc+1}},
+      {s:{r:8,c:dc+2}, e:{r:10,c:dc+2}},
+      {s:{r:8,c:dc+3}, e:{r:10,c:dc+3}},
+      // each date col: 星期 row merged down into 員工編號 row (r9–r10)
+      ...Array.from({length:daysInMonth}, (_,i) => ({s:{r:9,c:3+i}, e:{r:10,c:3+i}})),
+    ];
+
+    // ── title row (r=1) ───────────────────────────────────────────────────
+    sty(1, 1,      { font:{name:F,sz:16,bold:true,color:{rgb:'CC0000'}}, alignment:{horizontal:'left',  vertical:'center'} });
+    sty(1, midCol, { font:{name:F,sz:16,bold:true,color:{rgb:'000000'}}, alignment:{horizontal:'center',vertical:'center'} });
+    sty(1, rgtCol, { font:{name:F,sz:11,bold:true,color:{rgb:'000000'}}, alignment:{horizontal:'right', vertical:'center'} });
+
+    // ── note rows (r=3,4,5) ───────────────────────────────────────────────
+    const noteS = mkS(WHITE,'333333',10,false,'left',true);
+    for (let r=3;r<=5;r++) sty(r, 1, noteS);
+    // 人力廠商 box — medium border, salmon bg
+    sty(3, dc+4, { font:{name:F,sz:11,bold:true,color:{rgb:'000000'}},
+                   fill:{patternType:'solid',fgColor:{rgb:SALM}},
+                   alignment:{horizontal:'center',vertical:'center',wrapText:true},
+                   border:bdrM });
+
+    // ── header rows ───────────────────────────────────────────────────────
+    const hLbl = mkS(EVEN,'000000',12,false,'center',false);  // light gray — not blank
+    const hCnt = mkS(CBLUE,'FFFFFF',10,true,'center',true);
+    const hSig = mkS(SALM,'000000',12,false,'center',true);
+    const hRmk = mkS(EVEN,'000000',12,false,'left',false);
+
+    // row 7 (月份): label B:C, month-number cells, 各假別計算, sig/date/remarks
+    sty(7,1,hLbl); sty(7,2,hLbl);
+    for (let i=0;i<daysInMonth;i++) sty(7,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
+    for (let i=0;i<4;i++) sty(7,dc+i,hCnt);
+    sty(7,dc+4,hSig); sty(7,dc+5,hSig); sty(7,dc+6,hRmk);
+
+    // row 8 (日期): label, day numbers, count headers (rowspan covers r8-r10)
+    sty(8,1,hLbl); sty(8,2,hLbl);
+    for (let i=0;i<daysInMonth;i++) sty(8,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
+    for (let i=0;i<4;i++) sty(8,dc+i,hCnt);
+
+    // row 9 (星期): label, weekday chars (each merges down into r10)
+    sty(9,1,hLbl); sty(9,2,hLbl);
+    for (let i=0;i<daysInMonth;i++) sty(9,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
+
+    // row 10 (員工編號 / 員工姓名): only B and C visible (date cols merged from r9)
+    sty(10,1,hLbl); sty(10,2,hLbl);
+
+    // ── data rows ─────────────────────────────────────────────────────────
+    for (let row=0; row<empsCount; row++) {
+      const r = 11 + row;
+      sty(r,1, mkS(WHITE,'000000',12,false,'center',false));
+      sty(r,2, mkS(WHITE,'000000',12,false,'center',false));
+      for (let i=0;i<daysInMonth;i++) sty(r,3+i, mkS(weekBg(i+1),'000000',12,false,'center',false));
+      for (let i=0;i<4;i++) sty(r,dc+i,  mkS(CGRN,'000000',12,false,'center',false));
+      sty(r,dc+4, mkS(SALM,'000000',12,false,'center',false));
+      sty(r,dc+5, mkS(SALM,'000000',12,false,'center',false));
+      sty(r,dc+6, mkS(EVEN,'000000',12,false,'left',true));
+    }
+
+    // ── border sweep: ensure every cell in the table area has borders ──────
+    // Merged cells whose non-top-left members have no style need borders set
+    // so Excel renders the outer boundary of each merge correctly.
+    for (let r = 7; r <= 10 + empsCount; r++) {
+      for (let c = 1; c <= dc + 6; c++) {
+        const cell = ec(r, c);
+        if (!cell.s) cell.s = { border: bdr, alignment: { horizontal: 'center', vertical: 'center' } };
+        else cell.s.border = bdr;
+      }
+    }
+    // Note rows: vendor box cells
+    for (let r = 3; r <= 5; r++) {
+      for (let c = 1; c <= dc + 6; c++) {
+        const cell = ec(r, c);
+        if (!cell.s) cell.s = { border: bdr };
+        else cell.s.border = bdr;
+      }
+    }
+    // Restore medium border on vendor box top-left
+    ec(3, dc+4).s.border = bdrM;
   };
 
   const exportVendor = (vendor) => {
     try {
       const wb = XLSX.utils.book_new();
+      const emps = scopedEmployees.filter(e => e.vendor === vendor);
       const wsData = buildVendorSheet(vendor);
       const ws = XLSX.utils.aoa_to_sheet(wsData);
-      applySheetStyles(ws);
+      applySheetStyles(ws, days, emps.length);
       XLSX.utils.book_append_sheet(wb, ws, vendor.substring(0, 30));
       const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
       saveAs(new Blob([buf], { type: 'application/octet-stream' }),
@@ -2225,7 +2938,7 @@ function Reports() {
     const rocYear = selectedYear - 1911;
     const emps = scopedEmployees.filter(e => e.vendor === vendor);
     const daysInMonth = days;
-    const companyName = VENDOR_COMPANY_NAMES[vendor] ?? vendor;
+    const companyName = vendorCompanyNames[vendor] ?? vendor;
     const WD = ['日','一','二','三','四','五','六'];
     const getCode = (emp, d) => schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V';
     const countCode = (emp, code) => { let c = 0; for (let d = 1; d <= daysInMonth; d++) if (getCode(emp,d)===code) c++; return c; };
@@ -2248,24 +2961,40 @@ function Reports() {
     });
 
     // Inline style constants — avoid class-based styles which html2canvas may not honour
-    const F  = "font-family:'微軟正黑體','Microsoft JhengHei',Arial,sans-serif;";
-    const CS = `border:1px solid #AAA;padding:1px 2px;text-align:center;vertical-align:middle;font-size:7pt;${F}`;
+    const F   = "font-family:'微軟正黑體','Microsoft JhengHei',Arial,sans-serif;";
+    // C = wrapper div forces center alignment in html2canvas
+    const C   = (t) => `<div style="text-align:center;width:100%;display:block;">${t}</div>`;
+    // Base cell 8pt — enough room in 13px day cols for single CJK/Latin chars
+    const CS  = `border:1px solid #888;padding:1px 1px;text-align:center;vertical-align:middle;font-size:8pt;${F}`;
     const HS  = CS + 'background:#4472C4;color:#fff;font-weight:bold;';
     const HDS = CS + 'background:#2F5496;color:#fff;font-weight:bold;';
     const HSG = CS + 'background:#F4B8A0;color:#333;font-weight:bold;';
-    const HCN = CS + 'background:#4472C4;color:#fff;font-weight:bold;font-size:6pt;width:28px;';
-    const HWK = CS + 'background:#2F5496;color:#fff;font-weight:bold;';  // weekend header
+    const HCN = CS + 'background:#4472C4;color:#fff;font-weight:bold;font-size:6.5pt;line-height:1.3;';
+    const HWK = CS + 'background:#2F5496;color:#fff;font-weight:bold;';   // weekend header
     const CNT = CS + 'background:#DEEAF1;';
     const SIG = CS + 'background:#FDE9D9;';
-    const RMK = `border:1px solid #AAA;padding:1px 3px;text-align:left;white-space:normal;word-break:break-all;font-size:6.5pt;background:#FDE9D9;${F}`;
+    const RMK = `border:1px solid #888;padding:1px 3px;text-align:left;vertical-align:middle;white-space:normal;word-break:break-all;font-size:7pt;background:#FDE9D9;${F}`;
 
-    const mCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.month}</th>`;
-    const dCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.d}</th>`;
-    const wCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:14px;">${di.weekday}</th>`;
-    const eDay  = ()  => `<th style="${HS}width:14px;"></th>`;
+    const dCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.d)}</th>`;
+    const wCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.weekday)}</th>`;
+    const eDay  = ()  => `<th style="${HS}width:13px;"></th>`;
     const eCnt  = ()  => `<th style="${HS}width:28px;"></th>`;
 
-    const monthCells = dayInfos.map(mCell).join('');
+    // Merge consecutive same-month day columns into one colspan cell
+    const monthGroupCells = (() => {
+      const groups = [];
+      dayInfos.forEach(di => {
+        if (!groups.length || groups[groups.length-1].month !== di.month) {
+          groups.push({ month: di.month, count: 1 });
+        } else {
+          groups[groups.length-1].count++;
+        }
+      });
+      return groups.map(g =>
+        `<th style="${HS}" colspan="${g.count}">${C(g.month)}</th>`
+      ).join('');
+    })();
+
     const dateCells  = dayInfos.map(dCell).join('');
     const weekCells  = dayInfos.map(wCell).join('');
     const emptyDays  = dayInfos.map(eDay).join('');
@@ -2275,70 +3004,69 @@ function Reports() {
       const rowBg = idx%2===1 ? 'background:#FFF5F5;' : '';
       const dayCells = dayInfos.map(di=>{
         const code = getCode(emp,di.d);
-        const bg = di.isSat||di.isSun ? 'background:#E8EDF7;' : rowBg;
-        return `<td style="${CS}${bg}${codeStyle(code)}">${code}</td>`;
+        const wkBg = di.isSat||di.isSun ? 'background:#DAE3F3;' : rowBg;
+        return `<td style="${CS}${wkBg}${codeStyle(code)}">${C(code)}</td>`;
       }).join('');
       const leave=countCode(emp,'事')+countCode(emp,'病'), rest=countCode(emp,'休'),
             hol=countCode(emp,'例'), nat=countCode(emp,'國'), rmk=getRemarks(emp);
-      return `<tr style="height:22px;">
-        <td style="${CS}${rowBg}white-space:normal;word-break:break-all;">${esc(emp.empId)}</td>
-        <td style="${CS}${rowBg}white-space:normal;word-break:break-word;">${esc(emp.name)}</td>
+      return `<tr style="height:21px;">
+        <td style="${CS}${rowBg}font-size:7.5pt;">${C(esc(emp.empId))}</td>
+        <td style="${CS}${rowBg}font-size:8pt;">${C(esc(emp.name))}</td>
         ${dayCells}
-        <td style="${CNT}">${leave}</td><td style="${CNT}">${rest}</td>
-        <td style="${CNT}">${hol}</td><td style="${CNT}">${nat}</td>
+        <td style="${CNT}">${C(leave)}</td><td style="${CNT}">${C(rest)}</td>
+        <td style="${CNT}">${C(hol)}</td><td style="${CNT}">${C(nat)}</td>
         <td style="${SIG}"></td><td style="${SIG}"></td>
         <td style="${RMK}">${esc(rmk)}</td>
       </tr>`;
     }).join('');
 
     const html = `<div style="font-size:8pt;background:#fff;padding:0;margin:0;${F}">
-<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:3px;">
+<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:2px;">
   <tr>
-    <td style="border:none;color:#CC0000;font-weight:bold;font-size:12pt;white-space:nowrap;padding:0 10px 0 0;${F}">${companyName}</td>
+    <td style="border:none;color:#CC0000;font-weight:bold;font-size:12pt;white-space:nowrap;padding:0 8px 0 0;${F}">${companyName}</td>
     <td style="border:none;font-weight:bold;font-size:12pt;text-align:center;${F}">當月排班確認表</td>
-    <td style="border:none;font-weight:bold;font-size:10pt;text-align:right;white-space:nowrap;${F}">確認排班區間：${rocYear}年${selectedMonth}月1日~${rocYear}年${selectedMonth}月${daysInMonth}日</td>
+    <td style="border:none;font-weight:bold;font-size:9pt;text-align:right;white-space:nowrap;${F}">確認排班區間：${rocYear}年${selectedMonth}月1日&nbsp;~&nbsp;${rocYear}年${selectedMonth}月${daysInMonth}日</td>
   </tr>
 </table>
-<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:4px;">
+<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:3px;">
   <tr>
-    <td style="border:none;font-size:8pt;line-height:1.7;vertical-align:top;padding-right:8px;${F}">
-      <div>1. 本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。</div>
-      <div style="margin-left:12px">※班別／狀態說明：V＝出勤日&emsp;例＝例假日&emsp;休＝休假日&emsp;事＝事假&emsp;病＝病假&emsp;國＝國定假日</div>
-      <div>2. 當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。</div>
+    <td style="border:none;font-size:8pt;line-height:1.65;vertical-align:top;padding-right:6px;${F}">
+      <div>1.&nbsp;本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。</div>
+      <div style="margin-left:14px;">※班別／狀態說明：V＝出勤日　例＝例假日　休＝休假日　事＝事假　病＝病假　國＝國定假日</div>
+      <div>2.&nbsp;當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。</div>
     </td>
-    <td style="border:1.5px solid #999;width:165px;min-height:68px;text-align:center;vertical-align:middle;font-weight:bold;font-size:9pt;padding:5px;${F}">人力廠商 假別確認簽章</td>
+    <td style="border:2px solid #888;width:160px;text-align:center;vertical-align:middle;font-weight:bold;font-size:9pt;padding:6px 4px;${F}">人力廠商&nbsp;假別確認簽章</td>
   </tr>
 </table>
 <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
   <colgroup>
-    <col style="width:75px"><col style="width:90px">
-    ${dayInfos.map(()=>`<col style="width:14px">`).join('')}
+    <col style="width:86px"><col style="width:72px">
+    ${dayInfos.map(()=>`<col style="width:13px">`).join('')}
     <col style="width:28px"><col style="width:28px"><col style="width:28px"><col style="width:28px">
-    <col style="width:60px"><col style="width:60px"><col style="width:120px">
+    <col style="width:52px"><col style="width:52px"><col>
   </colgroup>
   <thead>
     <tr>
-      <th style="${HS}">月份</th><th style="${HS}"></th>
-      ${monthCells}
+      <th style="${HS}" colspan="2">月份</th>
+      ${monthGroupCells}
       <th style="${HDS}" colspan="4">各假別計算</th>
       <th style="${HSG}" rowspan="4">員工簽名</th>
       <th style="${HSG}" rowspan="4">確認日期</th>
       <th style="${HSG}" rowspan="4">備註</th>
     </tr>
     <tr>
-      <th style="${HS}">日期</th><th style="${HS}"></th>
+      <th style="${HS}" colspan="2">日期</th>
       ${dateCells}
-      <th style="${HCN}">請假<br>天數</th><th style="${HCN}">休假<br>天數</th>
-      <th style="${HCN}">例假日<br>天數</th><th style="${HCN}">國定<br>假日<br>天數</th>
+      <th style="${HCN}" rowspan="3">請假<br>天數</th><th style="${HCN}" rowspan="3">休假<br>天數</th>
+      <th style="${HCN}" rowspan="3">例假日<br>天數</th><th style="${HCN}" rowspan="3">國定<br>假日<br>天數</th>
     </tr>
     <tr>
-      <th style="${HS}">星期</th><th style="${HS}"></th>
+      <th style="${HS}" colspan="2">星期</th>
       ${weekCells}
-      ${emptyCount}
     </tr>
     <tr>
       <th style="${HS}">員工編號</th><th style="${HS}">員工姓名</th>
-      ${emptyDays}${emptyCount}
+      ${emptyDays}
     </tr>
   </thead>
   <tbody>${empRows}</tbody>
@@ -2433,11 +3161,1088 @@ const getHolidayShort = (h, springIdx) => {
 // key 格式: "year-month-day"
 const holidayKey = (h) => `${h.year}-${h.month}-${h.day}`;
 
+// ─────────────────────────────────────────────
+// ATTENDANCE (點名表)
+// ─────────────────────────────────────────────
+
+const DEFAULT_ATTEND_SETTINGS = {
+  leaveTypes: ['事假', '病假', '特休假', '公假', '喪假', '婚假', '其他'],
+  lateEarlyStatus: ['正常到班（無遲到早退）', '遲到', '早退', '遲到且早退'],
+  groups: [],
+};
+
+function AttendSubBtn({ active, onClick, icon, label }) {
+  return (
+    <button onClick={onClick}
+      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap
+        ${active
+          ? 'border-blue-600 text-blue-700 bg-white'
+          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
+      {label}
+    </button>
+  );
+}
+
+function Attendance() {
+  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras } = useApp();
+  const toast = useToast();
+
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  })();
+
+  const [subTab, setSubTab] = useState('attend');
+  const [attendDate, setAttendDate] = useState(todayStr);
+  const [groupFilter, setGroupFilter] = useState('');
+  const [attendSettings, setAttendSettings] = useState(() => LS.get('sms_attend_settings', DEFAULT_ATTEND_SETTINGS));
+  const [addModal, setAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
+
+  useEffect(() => { LS.set('sms_attend_settings', attendSettings); }, [attendSettings]);
+
+  const groupOptions = useMemo(() => {
+    const fromEmps = new Set(employees.map(e => e.shiftType).filter(Boolean));
+    const custom = attendSettings.groups ?? [];
+    return [...new Set([...fromEmps, ...custom])].sort();
+  }, [employees, attendSettings.groups]);
+
+  const ABSENT_CODES = new Set(['休', '例', '國']);
+
+  const scopedEmps = useMemo(() => {
+    let list = currentUser.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees;
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
+    // 班表當日排休/例/國 → 不出現在點名名單
+    // dateKey 格式無補零 (2026-7-16)，attendDate 有補零 (2026-07-16)，需轉換
+    const [ay, am, ad] = attendDate.split('-').map(Number);
+    const attendDk = dateKey(ay, am, ad);
+    list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk]));
+    return list;
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, groupFilter, attendDate, schedule]);
+
+  const dateExtras = (extras[attendDate] ?? []).filter(e =>
+    !selectedGroup || !e.group || e.group === selectedGroup
+  );
+
+  const vendorGroups = useMemo(() => {
+    const map = {};
+    scopedEmps.forEach(e => {
+      const v = e.vendor || '未分配';
+      if (!map[v]) map[v] = [];
+      map[v].push(e);
+    });
+    return map;
+  }, [scopedEmps]);
+
+  // 臨時人員依廠商分組（含匯入 + 手動新增）
+  const extrasVendorGroups = useMemo(() => {
+    const map = {};
+    (extras[attendDate] ?? []).forEach(e => {
+      // 依目前選擇的組別篩選，無組別限制時全部顯示
+      if (selectedGroup && e.group && e.group !== selectedGroup) return;
+      const v = e.vendor || '未分配';
+      if (!map[v]) map[v] = [];
+      map[v].push(e);
+    });
+    return map;
+  }, [extras, attendDate, selectedGroup]);
+
+  const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
+
+  const getRecord = (empId) => {
+    if (attendData[attendDate]?.[empId]) return attendData[attendDate][empId];
+    const shiftCode = schedule[empId]?.[attendDate];
+    // 班表 V → 預設未勾選（點名時再確認）
+    if (shiftCode === 'V') {
+      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '' };
+    }
+    // 班表休/例/國定 → 預設缺勤並帶入假別
+    const SHIFT_LEAVE_MAP = { '休': '休假', '例': '例假', '國': '國定假日' };
+    if (SHIFT_LEAVE_MAP[shiftCode]) {
+      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: SHIFT_LEAVE_MAP[shiftCode], note: '' };
+    }
+    // 無班表記錄 → 預設未到班
+    return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '' };
+  };
+
+  const setRecord = (empId, patch) => {
+    setAttendData(prev => ({
+      ...prev,
+      [attendDate]: { ...(prev[attendDate] ?? {}), [empId]: { ...getRecord(empId), ...patch } },
+    }));
+  };
+
+  const toggleAll = (vendorName, val) => {
+    const emps = vendorGroups[vendorName] ?? [];
+    setAttendData(prev => {
+      const day = { ...(prev[attendDate] ?? {}) };
+      emps.forEach(e => { day[e.id] = { ...getRecord(e.id), present: val }; });
+      return { ...prev, [attendDate]: day };
+    });
+  };
+
+  const handleAddExtra = () => {
+    if (!addForm.name.trim()) { toast('姓名為必填', 'error'); return; }
+    const e = { id: 'extra_' + Date.now(), ...addForm, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
+    setExtras(prev => ({ ...prev, [attendDate]: [...(prev[attendDate] ?? []), e] }));
+    setAddModal(false);
+    setAddForm({ name: '', vendor: '', group: '', note: '' });
+    toast('已新增：' + addForm.name, 'success');
+  };
+
+  const removeExtra = (id) =>
+    setExtras(prev => ({ ...prev, [attendDate]: (prev[attendDate] ?? []).filter(e => e.id !== id) }));
+
+  const setExtraRecord = (id, patch) =>
+    setExtras(prev => ({
+      ...prev,
+      [attendDate]: (prev[attendDate] ?? []).map(e => e.id === id ? { ...e, ...patch } : e),
+    }));
+
+  const totalCount = scopedEmps.length + dateExtras.length;
+  const presentCount = scopedEmps.filter(e => getRecord(e.id).present).length + dateExtras.filter(e => e.present).length;
+  const absentCount = totalCount - presentCount;
+  const attendRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+
+  // ── 統計 Excel
+  const exportStats = (reportDate, reportGroup) => {
+    try {
+      let emps = reportGroup
+        ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
+        : scopedEmps;
+      const exExtras = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
+      const getData = id => attendData[reportDate]?.[id] ?? { present: true };
+
+      const s1 = [['廠商', '應到', '實到', '缺勤', '到班率']];
+      const vm = {};
+      emps.forEach(e => {
+        const v = e.vendor || '未分配';
+        if (!vm[v]) vm[v] = { t: 0, p: 0 };
+        vm[v].t++; if (getData(e.id).present) vm[v].p++;
+      });
+      exExtras.forEach(e => {
+        const v = e.vendor || '手動新增';
+        if (!vm[v]) vm[v] = { t: 0, p: 0 };
+        vm[v].t++; if (e.present) vm[v].p++;
+      });
+      let tt = 0, tp = 0;
+      Object.entries(vm).forEach(([v, d]) => {
+        tt += d.t; tp += d.p;
+        s1.push([v, d.t, d.p, d.t - d.p, d.t > 0 ? `${Math.round((d.p/d.t)*100)}%` : '—']);
+      });
+      s1.push(['合計', tt, tp, tt - tp, tt > 0 ? `${Math.round((tp/tt)*100)}%` : '—']);
+
+      const s2 = [['日期', '廠商', '員工編號', '姓名', '出勤狀況', '假別/遲到狀態', '備註']];
+      emps.forEach(emp => {
+        const rec = getData(emp.id);
+        if (!rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus)) {
+          s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
+            rec.present ? '出勤' : '缺勤',
+            rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
+            rec.note || '']);
+        }
+      });
+      exExtras.forEach(e => {
+        if (!e.present || (e.lateEarly && e.lateEarly !== defaultStatus)) {
+          s2.push([reportDate, e.vendor || '', '', e.name,
+            e.present ? '出勤' : '缺勤',
+            e.present ? (e.lateEarly || '') : (e.absType || ''),
+            e.note || '']);
+        }
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws1 = XLSX.utils.aoa_to_sheet(s1);
+      ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }];
+      const ws2 = XLSX.utils.aoa_to_sheet(s2);
+      ws2['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 20 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(wb, ws1, '出勤人數統計');
+      XLSX.utils.book_append_sheet(wb, ws2, '請假與異常名單');
+      XLSX.writeFile(wb, `點名統計_${reportDate}${reportGroup ? '_' + reportGroup : ''}.xlsx`);
+      toast('匯出成功', 'success');
+    } catch (err) { toast('匯出失敗：' + err.message, 'error'); }
+  };
+
+  // ── 回報文字
+  const generateReport = (reportDate, reportGroup) => {
+    // 長期 = 清冊人員；臨時 = 手動新增
+    const longEmps = (reportGroup
+      ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
+      : scopedEmps
+    ).filter(e => {
+      let list = currentUser.role === ROLES.VENDOR
+        ? employees.filter(x => currentUser.vendors.includes(x.vendor)) : employees;
+      list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+      return list.some(x => x.id === e.id);
+    });
+    const tempEmps = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
+    const getData = id => attendData[reportDate]?.[id] ?? { present: true };
+
+    // 星期對照
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    const [y, m, d] = reportDate.split('-').map(Number);
+    const dow = weekdays[new Date(y, m - 1, d).getDay()];
+    const dateLabel = `${m}/${d}（${dow}）`;
+
+    // 課別標頭
+    const deptLabel = selectedDept || selectedWarehouse || '';
+    const groupLabel = reportGroup || groupFilter || '';
+    const header = deptLabel ? `${deptLabel}${groupLabel ? `（${groupLabel}）` : ''}` : groupLabel;
+
+    // 統計輔助
+    const countAbsTypes = (list, getRecFn) => {
+      const map = {};
+      list.forEach(e => {
+        const rec = getRecFn(e);
+        if (!rec.present) {
+          const t = rec.absType || '缺勤';
+          map[t] = (map[t] || 0) + 1;
+        }
+      });
+      return map;
+    };
+
+    const longPresent = longEmps.filter(e => getData(e.id).present).length;
+    const longAbsent  = longEmps.length - longPresent;
+    const longAbsMap  = countAbsTypes(longEmps, e => getData(e.id));
+
+    const tempPresent = tempEmps.filter(e => e.present).length;
+    const tempAbsent  = tempEmps.length - tempPresent;
+    const tempAbsMap  = countAbsTypes(tempEmps, e => e);
+
+    const fmtAbsMap = (map) => {
+      const parts = Object.entries(map).map(([t, n]) => `${t}*${n}`);
+      return parts.length ? `（${parts.join('、')}）` : '（無缺勤）';
+    };
+
+    // 廠商分組
+    const buildVm = (list, getRecFn) => {
+      const vm = {};
+      list.forEach(e => {
+        const v = e.vendor || '未分配';
+        if (!vm[v]) vm[v] = { long: { t: 0, p: 0 }, temp: { t: 0, p: 0 }, absent: [] };
+        const rec = getRecFn(e);
+        if (e._isTemp) {
+          vm[v].temp.t++;
+          if (rec.present) vm[v].temp.p++;
+          else vm[v].absent.push({ name: e.name, type: rec.absType || '缺勤' });
+        } else {
+          vm[v].long.t++;
+          if (rec.present) vm[v].long.p++;
+          else vm[v].absent.push({ name: e.name, type: rec.absType || '缺勤' });
+        }
+      });
+      return vm;
+    };
+
+    const allList = [
+      ...longEmps.map(e => ({ ...e, _isTemp: false })),
+      ...tempEmps.map(e => ({ ...e, _isTemp: true })),
+    ];
+    const vm = buildVm(allList, e => e._isTemp ? e : getData(e.id));
+
+    let text = '';
+    if (header) text += `${header}\n\n`;
+    text += `總出勤人力回報\n\n`;
+    text += `出勤日期：${dateLabel}\n\n`;
+    text += `應到人數（長期）：${longEmps.length}人\n`;
+    text += `實到人數（長期）：${longPresent}人\n`;
+    text += `缺勤人數（長期）：${longAbsent}人\n`;
+    text += `${fmtAbsMap(longAbsMap)}\n\n`;
+    text += `應到人數（臨時）：${tempEmps.length}人\n`;
+    text += `實到人數（臨時）：${tempPresent}人\n`;
+    text += `缺勤人數（臨時）：${tempAbsent}人\n`;
+    text += `${fmtAbsMap(tempAbsMap)}\n\n`;
+
+    Object.entries(vm).forEach(([v, d]) => {
+      text += `\n《${v}》\n`;
+      text += `應到（長期）:${d.long.t} 實到（長期）:${d.long.p}\n`;
+      text += `應到（臨時）:${d.temp.t} 實到（臨時）:${d.temp.p}\n`;
+      // 缺勤按假別分組列出
+      const absByType = {};
+      d.absent.forEach(a => { if (!absByType[a.type]) absByType[a.type] = []; absByType[a.type].push(a.name); });
+      Object.entries(absByType).forEach(([t, names]) => {
+        text += `${t}：${names.join('、')}\n`;
+      });
+    });
+
+    return text;
+  };
+
+  // ── 點名分頁
+  const AttendPane = () => (
+    <div className="space-y-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-4 items-end">
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">點名出勤日期</label>
+          <input type="date" value={attendDate} onChange={e => setAttendDate(e.target.value)}
+            className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-sm text-slate-500">實到 <span className="font-bold text-blue-600">{presentCount}</span>/{totalCount}人</span>
+          <button onClick={() => setAddModal(true)}
+            className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
+            👤 手動新增
+          </button>
+        </div>
+      </div>
+
+      {Object.keys(vendorGroups).length === 0 && dateExtras.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
+      ) : (() => {
+        // 合併所有廠商名稱，維持出現順序
+        const allVendors = [...new Set([
+          ...Object.keys(vendorGroups),
+          ...Object.keys(extrasVendorGroups),
+        ])];
+        return (
+          <div className="space-y-2">
+            {allVendors.map(vName => {
+              const longEmps = vendorGroups[vName] ?? [];
+              const tempEmps = extrasVendorGroups[vName] ?? [];
+              return (
+                <div key={vName} className="space-y-1">
+                  {/* 長期人員卡 */}
+                  {longEmps.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="flex items-center justify-between bg-blue-700 text-white px-4 py-2.5">
+                        <span className="font-semibold flex items-center gap-2">
+                          👥 {vName}
+                          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{longEmps.filter(e => getRecord(e.id).present).length}/{longEmps.length}人</span>
+                          <span className="text-xs opacity-70">長期</span>
+                        </span>
+                        <div className="flex gap-2">
+                          <button onClick={() => toggleAll(vName, true)}
+                            className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded-full">全選到班</button>
+                          <button onClick={() => toggleAll(vName, false)}
+                            className="text-xs bg-blue-900 hover:bg-blue-800 px-3 py-1 rounded-full">取消全選</button>
+                        </div>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {longEmps.map(emp => {
+                          const rec = getRecord(emp.id);
+                          return (
+                            <div key={emp.id} className={`px-4 py-3 ${rec.present ? '' : 'bg-rose-50'}`}>
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <input type="checkbox" checked={rec.present}
+                                  onChange={ev => setRecord(emp.id, { present: ev.target.checked })}
+                                  className="w-5 h-5 accent-blue-600 cursor-pointer flex-shrink-0" />
+                                <div className="min-w-[90px]">
+                                  <div className="font-medium text-slate-800 text-sm">{emp.name}</div>
+                                  <div className="text-xs text-slate-400">{emp.empId}</div>
+                                </div>
+                                {rec.present ? (
+                                  <>
+                                    <select value={rec.lateEarly || defaultStatus}
+                                      onChange={ev => setRecord(emp.id, { lateEarly: ev.target.value })}
+                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 min-w-[180px]">
+                                      {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                    <input type="text" value={rec.timeNote || ''} placeholder="時間備註"
+                                      onChange={ev => setRecord(emp.id, { timeNote: ev.target.value })}
+                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-24" />
+                                  </>
+                                ) : (
+                                  <>
+                                    <select value={rec.absType || ''}
+                                      onChange={ev => setRecord(emp.id, { absType: ev.target.value })}
+                                      className="border border-rose-200 bg-white rounded-lg px-2 py-1 text-xs text-slate-700 min-w-[110px]">
+                                      <option value="">請選假別</option>
+                                      {(attendSettings.leaveTypes ?? []).map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                    <input type="text" value={rec.note || ''} placeholder="備註原因"
+                                      onChange={ev => setRecord(emp.id, { note: ev.target.value })}
+                                      className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-28" />
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* 臨時人員卡 */}
+                  {tempEmps.length > 0 && (
+                    <div className="border border-amber-200 rounded-xl overflow-hidden">
+                      <div className="flex items-center justify-between bg-amber-500 text-white px-4 py-2.5">
+                        <span className="font-semibold flex items-center gap-2">
+                          👥 {vName}
+                          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{tempEmps.filter(e => e.present).length}/{tempEmps.length}人</span>
+                          <span className="text-xs opacity-70">臨時</span>
+                        </span>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {tempEmps.map(e => (
+                          <div key={e.id} className={`px-4 py-3 ${e.present ? '' : 'bg-rose-50'}`}>
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <input type="checkbox" checked={e.present}
+                                onChange={ev => setExtraRecord(e.id, { present: ev.target.checked })}
+                                className="w-5 h-5 accent-amber-500 cursor-pointer flex-shrink-0" />
+                              <div className="min-w-[90px]">
+                                <div className="font-medium text-slate-800 text-sm">{e.name}</div>
+                                <div className="text-xs text-slate-400">{e._isImport ? '派工匯入' : '手動新增'}</div>
+                              </div>
+                              {e.present ? (
+                                <>
+                                  <select value={e.lateEarly || defaultStatus}
+                                    onChange={ev => setExtraRecord(e.id, { lateEarly: ev.target.value })}
+                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs min-w-[180px]">
+                                    {(attendSettings.lateEarlyStatus ?? []).map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                  <input type="text" value={e.timeNote || ''} placeholder="時間備註"
+                                    onChange={ev => setExtraRecord(e.id, { timeNote: ev.target.value })}
+                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-24" />
+                                </>
+                              ) : (
+                                <>
+                                  <select value={e.absType || ''}
+                                    onChange={ev => setExtraRecord(e.id, { absType: ev.target.value })}
+                                    className="border border-rose-200 bg-white rounded-lg px-2 py-1 text-xs min-w-[110px]">
+                                    <option value="">請選假別</option>
+                                    {(attendSettings.leaveTypes ?? []).map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <input type="text" value={e.note || ''} placeholder="備註原因"
+                                    onChange={ev => setExtraRecord(e.id, { note: ev.target.value })}
+                                    className="border border-slate-200 rounded-lg px-2 py-1 text-xs w-28" />
+                                </>
+                              )}
+                              <button onClick={() => removeExtra(e.id)}
+                                className="text-slate-300 hover:text-red-400 ml-auto">🗑</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+    </div>
+  );
+
+  // ── 統計分頁
+  const StatsPane = () => {
+    const [rDate, setRDate] = useState(attendDate);
+    const [rGroup, setRGroup] = useState(groupFilter);
+    return (
+      <div className="space-y-5">
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
+          <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="text-center p-3 bg-slate-50 rounded-xl">
+              <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
+              <div className="text-xs text-slate-500 mt-1">應到總計</div>
+            </div>
+            <div className="text-center p-3 bg-blue-50 rounded-xl">
+              <div className="text-2xl font-bold text-blue-600">{presentCount}</div>
+              <div className="text-xs text-slate-500 mt-1">實到人數</div>
+            </div>
+            <div className="text-center p-3 bg-rose-50 rounded-xl">
+              <div className="text-2xl font-bold text-rose-500">{absentCount}</div>
+              <div className="text-xs text-slate-500 mt-1">缺勤人數</div>
+            </div>
+          </div>
+          <div>
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+              <span>到班率</span>
+              <span className="font-semibold text-blue-600">{attendRate}%</span>
+            </div>
+            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">報表日期</label>
+              <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">報表組別</label>
+              <select value={rGroup} onChange={e => setRGroup(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]">
+                <option value="">全選</option>
+                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <button onClick={() => exportStats(rDate, rGroup)}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium">
+              📥 下載 Excel
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」與「請假與異常名單」兩個分頁</p>
+        </div>
+      </div>
+    );
+  };
+
+  // ── 回報分頁
+  const ReportPane = () => {
+    const [rDate, setRDate] = useState(attendDate);
+    const [rGroup, setRGroup] = useState(groupFilter);
+    const [text, setText] = useState('');
+    const textRef = React.useRef(null);
+
+    const handleCopy = () => {
+      navigator.clipboard.writeText(text).then(
+        () => toast('已複製至剪貼簿', 'success'),
+        () => { textRef.current?.select(); document.execCommand('copy'); toast('已複製', 'success'); }
+      );
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">出勤日期</label>
+            <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">作業組別</label>
+            <select value={rGroup} onChange={e => setRGroup(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]">
+              <option value="">全部</option>
+              {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <button onClick={() => setText(generateReport(rDate, rGroup))}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
+            📋 產生回報文字
+          </button>
+        </div>
+
+        {text ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
+              <button onClick={handleCopy}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium">
+                📋 一鍵複製文字
+              </button>
+            </div>
+            <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
+              rows={12}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono resize-y" />
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400 text-center py-8">選擇日期與組別後，點擊「產生回報文字」</p>
+        )}
+      </div>
+    );
+  };
+
+  // ── 維護分頁
+  const MaintPane = () => {
+    const [newLeave, setNewLeave] = useState('');
+    const [newGroup, setNewGroup] = useState('');
+    const [newStatus, setNewStatus] = useState('');
+    const [cleanStart, setCleanStart] = useState('');
+    const [cleanEnd, setCleanEnd] = useState('');
+    const [cleanGroup, setCleanGroup] = useState('');
+    const [cleanPreview, setCleanPreview] = useState(null);
+    const [cleanConfirm, setCleanConfirm] = useState(false);
+
+    const addItem = (key, val, setter) => {
+      if (!val.trim()) return;
+      if ((attendSettings[key] ?? []).includes(val.trim())) { toast('已存在', 'warn'); return; }
+      setAttendSettings(prev => ({ ...prev, [key]: [...(prev[key] ?? []), val.trim()] }));
+      setter('');
+    };
+    const removeItem = (key, val) =>
+      setAttendSettings(prev => ({ ...prev, [key]: (prev[key] ?? []).filter(x => x !== val) }));
+
+    const previewClean = () => {
+      if (!cleanStart || !cleanEnd) { toast('請設定起迄日期', 'error'); return; }
+      let count = 0;
+      Object.keys(attendData).forEach(dk => {
+        if (dk >= cleanStart && dk <= cleanEnd) {
+          if (!cleanGroup) count += Object.keys(attendData[dk]).length;
+          else {
+            const g = cleanGroup;
+            count += employees.filter(e => (e.shiftType === g || e.group === g) && attendData[dk][e.id]).length;
+          }
+        }
+      });
+      setCleanPreview(count);
+      setCleanConfirm(false);
+    };
+
+    const executeClean = () => {
+      setAttendData(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(dk => {
+          if (dk >= cleanStart && dk <= cleanEnd) {
+            if (!cleanGroup) { delete next[dk]; }
+            else {
+              const day = { ...next[dk] };
+              const g = cleanGroup;
+              employees.filter(e => e.shiftType === g || e.group === g).forEach(e => delete day[e.id]);
+              next[dk] = day;
+            }
+          }
+        });
+        return next;
+      });
+      toast('已清除完成', 'success');
+      setCleanPreview(null); setCleanConfirm(false);
+    };
+
+    const TagList = ({ items, onRemove }) => (
+      <div className="flex flex-wrap gap-2 mt-2">
+        {(items ?? []).map(item => (
+          <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
+            {item}
+            <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
+          </span>
+        ))}
+      </div>
+    );
+
+    const AddRow = ({ value, onChange, onAdd, placeholder }) => (
+      <div className="flex gap-2 mt-2">
+        <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
+          className="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+        <button onClick={onAdd}
+          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
+      </div>
+    );
+
+    return (
+      <div className="space-y-5">
+        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
+          <h3 className="font-semibold text-slate-700">系統參數維護</h3>
+          <div>
+            <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
+            <TagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
+            <AddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
+              onAdd={() => addItem('leaveTypes', newLeave, setNewLeave)} />
+          </div>
+          <div className="border-t border-slate-100 pt-4">
+            <div className="text-sm font-medium text-slate-600">🏭 作業組別</div>
+            <TagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
+            <AddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
+              onAdd={() => addItem('groups', newGroup, setNewGroup)} />
+          </div>
+          <div className="border-t border-slate-100 pt-4">
+            <div className="text-sm font-medium text-slate-600">📊 出勤狀況</div>
+            <TagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
+            <AddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
+              onAdd={() => addItem('lateEarlyStatus', newStatus, setNewStatus)} />
+          </div>
+        </div>
+
+        <div className="bg-white border border-rose-100 rounded-xl p-5">
+          <h3 className="font-semibold text-slate-700 mb-1">🗑 異常資料清理</h3>
+          <p className="text-xs text-slate-400 mb-4">清除特定日期範圍的點名記錄，此操作不可逆。</p>
+          <div className="flex flex-wrap gap-3 items-end mb-4">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">起始日期</label>
+              <input type="date" value={cleanStart} onChange={e => setCleanStart(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">迄止日期</label>
+              <input type="date" value={cleanEnd} onChange={e => setCleanEnd(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">清除組別</label>
+              <select value={cleanGroup} onChange={e => setCleanGroup(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
+                <option value="">全部</option>
+                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <button onClick={previewClean}
+              className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm">
+              預覽影響筆數
+            </button>
+          </div>
+          {cleanPreview !== null && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+              <p className="text-sm text-rose-700">
+                將清除 <strong>{cleanStart}</strong> 至 <strong>{cleanEnd}</strong>
+                {cleanGroup ? `（${cleanGroup}）` : '（全部組別）'} 共 <strong>{cleanPreview}</strong> 筆資料。
+              </p>
+              {!cleanConfirm ? (
+                <button onClick={() => setCleanConfirm(true)}
+                  className="mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm">
+                  確認清除
+                </button>
+              ) : (
+                <div className="mt-3 flex gap-2 items-center">
+                  <span className="text-sm text-rose-600 font-medium">確定要永久清除？</span>
+                  <button onClick={executeClean}
+                    className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-sm">確認</button>
+                  <button onClick={() => setCleanConfirm(false)}
+                    className="px-4 py-1.5 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ── 匯入分頁
+  const ImportPane = () => {
+    const [importStart, setImportStart] = useState(todayStr);
+    const [importEnd, setImportEnd] = useState(todayStr);
+    const [parsedRows, setParsedRows] = useState(null); // null = not yet parsed
+    const [fileName, setFileName] = useState('');
+    const [importing, setImporting] = useState(false);
+
+    const parseRocDate = (raw) => {
+      if (raw == null) return null;
+      const s = String(raw).trim();
+      if (!s) return null;
+      if (s.includes('/')) {
+        const parts = s.split('/');
+        if (parts.length === 3) {
+          const [y, m, d] = parts.map(Number);
+          const wy = y < 1000 ? y + 1911 : y;
+          return `${wy}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        }
+      }
+      // Excel serial date number
+      if (!isNaN(Number(s))) {
+        const serial = Number(s);
+        const epoch = new Date(1899, 11, 30);
+        const dt = new Date(epoch.getTime() + serial * 86400000);
+        return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      }
+      return null;
+    };
+
+    const findColIdx = (headers, keywords) =>
+      headers.findIndex(h => keywords.some(k => String(h ?? '').includes(k)));
+
+    // 使用頂部已選的組別（selectedGroup 優先，其次 groupFilter）
+    const activeGroup = selectedGroup || groupFilter;
+
+    const handleFile = (e) => {
+      if (!activeGroup) {
+        toast('請先在上方選擇組別後再上傳', 'error');
+        e.target.value = '';
+        return;
+      }
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setFileName(file.name);
+      setParsedRows(null);
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const wb = XLSX.read(ev.target.result, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          if (rows.length < 2) { toast('檔案無資料', 'error'); return; }
+
+          // 尋找標題列（第一列含關鍵字的）
+          let headerIdx = 0;
+          for (let i = 0; i < Math.min(5, rows.length); i++) {
+            const r = rows[i].map(String);
+            if (r.some(c => ['報到日期','報名狀態','姓名','名字','廠商','公司'].some(k => c.includes(k)))) {
+              headerIdx = i; break;
+            }
+          }
+          const headers = rows[headerIdx].map(String);
+          const dateCol   = findColIdx(headers, ['報到日期']);
+          const statusCol = findColIdx(headers, ['報名狀態']);
+          const nameCol   = findColIdx(headers, ['姓名', '名字']);
+          const vendorCol = findColIdx(headers, ['廠商', '公司']);
+
+          if (dateCol < 0 || nameCol < 0) {
+            toast('找不到必要欄位（報到日期、姓名）', 'error'); return;
+          }
+
+          const result = [];
+          for (let i = headerIdx + 1; i < rows.length; i++) {
+            const row = rows[i];
+            const dateStr = parseRocDate(row[dateCol]);
+            if (!dateStr) continue;
+            if (dateStr < importStart || dateStr > importEnd) continue;
+            const status = statusCol >= 0 ? String(row[statusCol] ?? '').trim() : '成功';
+            if (status !== '成功') continue;
+            const name = String(row[nameCol] ?? '').trim();
+            const vendor = vendorCol >= 0 ? String(row[vendorCol] ?? '').trim() : '';
+            if (!name) continue;
+            result.push({ date: dateStr, name, vendor });
+          }
+
+          setParsedRows(result);
+          if (result.length === 0) toast('符合條件的資料為 0 筆，請確認狀態欄位是否標示「成功」', 'error');
+          else toast(`成功解析 ${result.length} 筆資料`, 'success');
+        } catch (err) {
+          toast('解析失敗：' + err.message, 'error');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      e.target.value = '';
+    };
+
+    const handleImport = () => {
+      if (!activeGroup) { toast('請先在上方選擇組別', 'error'); return; }
+      if (!parsedRows || parsedRows.length === 0) { toast('無可匯入資料', 'error'); return; }
+      setImporting(true);
+
+      setExtras(prev => {
+        const next = { ...prev };
+        // 清除日期區間內舊的匯入臨時資料
+        for (let dk = importStart; dk <= importEnd; ) {
+          if (next[dk]) {
+            next[dk] = next[dk].filter(e => !e._isImport);
+          }
+          const d = new Date(dk);
+          d.setDate(d.getDate() + 1);
+          dk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+        // 寫入新資料
+        parsedRows.forEach(r => {
+          if (!next[r.date]) next[r.date] = [];
+          next[r.date].push({
+            id: 'imp_' + r.date + '_' + r.name + '_' + Math.random().toString(36).slice(2,6),
+            name: r.name,
+            vendor: r.vendor,
+            group: activeGroup,
+            note: '臨時人員',
+            present: false,
+            lateEarly: defaultStatus,
+            timeNote: '', absType: '',
+            _isImport: true,
+          });
+        });
+        return next;
+      });
+
+      toast(`已匯入 ${parsedRows.length} 筆臨時人員`, 'success');
+      setParsedRows(null);
+      setFileName('');
+      setImporting(false);
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h3 className="font-semibold text-slate-700 mb-1">匯入派工表</h3>
+          <p className="text-xs text-slate-400 mb-5">
+            支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。
+          </p>
+
+          <div className="flex gap-3 flex-wrap items-end">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">匯入起日</label>
+              <input type="date" value={importStart} onChange={e => setImportStart(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">匯入迄日</label>
+              <input type="date" value={importEnd} onChange={e => setImportEnd(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          {/* 目前選擇的組別提示 */}
+          <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+            <span>{activeGroup ? '✅' : '⚠️'}</span>
+            <span>{activeGroup ? `匯入組別：${activeGroup}` : '請先在上方篩選列選擇組別'}</span>
+          </div>
+
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-slate-600 mb-2">上傳派工表檔案</label>
+            <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-4 transition-colors
+              ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-blue-50 cursor-pointer' : 'border-slate-200 bg-slate-50 cursor-not-allowed opacity-60'}`}>
+              <span className="text-2xl">📂</span>
+              <div>
+                <div className="text-sm font-medium text-slate-700">
+                  {fileName ? fileName : '點擊選擇 Excel 檔案'}
+                </div>
+                <div className="text-xs text-slate-400 mt-0.5">支援 .xlsx</div>
+              </div>
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+            </label>
+          </div>
+        </div>
+
+        {/* 解析結果預覽 */}
+        {parsedRows !== null && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-slate-700">解析結果預覽</h3>
+              <span className={`text-sm font-semibold px-3 py-1 rounded-full ${parsedRows.length > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                共 {parsedRows.length} 筆
+              </span>
+            </div>
+
+            {parsedRows.length > 0 && (
+              <>
+                <div className="overflow-x-auto rounded-lg border border-slate-100 mb-4 max-h-60">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-slate-500 font-medium">報到日期</th>
+                        <th className="px-3 py-2 text-left text-slate-500 font-medium">姓名</th>
+                        <th className="px-3 py-2 text-left text-slate-500 font-medium">廠商</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {parsedRows.slice(0, 50).map((r, i) => (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 text-slate-600">{r.date}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
+                          <td className="px-3 py-2 text-slate-500">{r.vendor || '—'}</td>
+                        </tr>
+                      ))}
+                      {parsedRows.length > 50 && (
+                        <tr><td colSpan={3} className="px-3 py-2 text-center text-slate-400">... 僅顯示前 50 筆</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
+                  ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
+                </div>
+                <button onClick={handleImport} disabled={importing}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm">
+                  ✅ 確認匯入 {parsedRows.length} 筆臨時人員
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* 說明 */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500 space-y-1">
+          <div className="font-medium text-slate-600 mb-2">📋 必備欄位說明</div>
+          <div>• <span className="font-medium">報到日期</span>：民國年格式（113/07/15）自動轉換西元年</div>
+          <div>• <span className="font-medium">報名狀態</span>：只匯入標示「成功」的資料</div>
+          <div>• <span className="font-medium">姓名／名字</span>：人員名稱（必填）</div>
+          <div>• <span className="font-medium">廠商／公司</span>：派工單位</div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-6 space-y-4 max-w-4xl">
+      <h2 className="text-xl font-bold text-slate-800">點名表</h2>
+
+      <div className="flex border-b border-slate-200 bg-slate-50 rounded-t-xl overflow-x-auto">
+        <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
+        <AttendSubBtn active={subTab==='stats'}  onClick={() => setSubTab('stats')}  icon="📊" label="統計" />
+        <AttendSubBtn active={subTab==='report'} onClick={() => setSubTab('report')} icon="📋" label="回報" />
+        <AttendSubBtn active={subTab==='maint'}  onClick={() => setSubTab('maint')}  icon="⚙️" label="維護" />
+        <AttendSubBtn active={subTab==='import'} onClick={() => setSubTab('import')} icon="📂" label="匯入" />
+      </div>
+
+      <div>
+        {subTab === 'attend' && <AttendPane />}
+        {subTab === 'stats'  && <StatsPane />}
+        {subTab === 'report' && <ReportPane />}
+        {subTab === 'maint'  && <MaintPane />}
+        {subTab === 'import' && <ImportPane />}
+      </div>
+
+      {addModal && (
+        <Modal onClose={() => setAddModal(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="font-bold text-lg text-slate-800 mb-4">手動新增人員</h3>
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1">姓名 <span className="text-red-400">*</span></label>
+              <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="請輸入姓名" />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1">廠商</label>
+              <input value={addForm.vendor} onChange={e => setAddForm(p => ({ ...p, vendor: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
+              <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+                <option value="">選填</option>
+                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-slate-700 mb-1">備註</label>
+              <input value={addForm.note} onChange={e => setAddForm(p => ({ ...p, note: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAddModal(false)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</button>
+              <button onClick={handleAddExtra}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(companyTitle);
+
+  React.useEffect(() => { setDraft(companyTitle); }, [companyTitle]);
+
+  return (
+    <div className="flex items-center gap-3 py-2.5 px-1">
+      <span className="w-20 shrink-0 text-sm font-medium text-slate-700">{vendorName}</span>
+      {editing ? (
+        <>
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { onSave(vendorName, draft.trim()); setEditing(false); }
+              if (e.key === 'Escape') { setDraft(companyTitle); setEditing(false); }
+            }}
+            className="flex-1 border border-blue-400 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+          <button onClick={() => { onSave(vendorName, draft.trim()); setEditing(false); }}
+            className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700">儲存</button>
+          <button onClick={() => { setDraft(companyTitle); setEditing(false); }}
+            className="px-3 py-1 border border-slate-300 rounded-lg text-xs hover:bg-slate-50">取消</button>
+        </>
+      ) : (
+        <>
+          <span className="flex-1 text-sm text-slate-500">{companyTitle || <span className="italic text-slate-300">（未設定）</span>}</span>
+          <button onClick={() => setEditing(true)}
+            className="px-3 py-1 border border-slate-300 rounded-lg text-xs hover:bg-slate-50 text-slate-600">編輯</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Settings() {
   const {
     systemLocked, setSystemLocked,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
+    vendorHolidayOpen, setVendorHolidayOpen,
+    vendorCompanyNames, setVendorCompanyNames,
     vendors, setVendors,
     warehouses, setWarehouses,
     selectedYear,
@@ -2687,6 +4492,31 @@ function Settings() {
         })()}
       </div>
 
+      {/* ── 委外幹部排「國」開放鍵 ── */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-slate-700">委外幹部國定假日排班權限</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              開啟後，委外幹部可在班表中自行安排「國」定假日；關閉時點擊格子將自動跳過「國」。
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setVendorHolidayOpen(v => !v);
+              toast(vendorHolidayOpen ? '已關閉：委外幹部無法自行排國定' : '已開啟：委外幹部可排國定假日', 'info');
+            }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
+              ${vendorHolidayOpen ? 'bg-blue-600' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+              ${vendorHolidayOpen ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-blue-600' : 'text-slate-400'}`}>
+          {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
+        </p>
+      </div>
+
       {/* ── 廠商別維護 ── */}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
@@ -2840,6 +4670,44 @@ function Settings() {
           ))}
         </div>
       </div>
+
+      {/* ── 廠商公司抬頭維護 ── */}
+      {(() => {
+        const allVendors = [...new Set([
+          ...Object.keys(VENDOR_COMPANY_NAMES),
+          ...vendors.map(v => v.name),
+        ])].filter(Boolean).sort();
+
+        const saveCompanyName = (vendorName, newTitle) => {
+          const updated = { ...vendorCompanyNames, [vendorName]: newTitle };
+          setVendorCompanyNames(updated);
+          LS.set('sms_vendor_company_names', updated);
+          toast('已儲存：' + vendorName, 'success');
+        };
+
+        return (
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
+            <div className="mb-3">
+              <h3 className="font-semibold text-slate-700">廠商公司抬頭</h3>
+              <p className="text-xs text-slate-400 mt-0.5">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
+            </div>
+            {allVendors.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">尚未有廠商資料</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {allVendors.map(vName => (
+                  <VendorCompanyRow
+                    key={vName}
+                    vendorName={vName}
+                    companyTitle={vendorCompanyNames[vName] ?? ''}
+                    onSave={saveCompanyName}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── 廠商別新增/編輯 Modal ── */}
       {vdModal && (
@@ -3108,6 +4976,12 @@ const CODE_COL_LEAVE_COLOR = 'bg-yellow-50 text-yellow-800';
 // SHIFT SETUP (人員班別設定)
 // ─────────────────────────────────────────────
 
+const SHIFT_TYPE_DEFAULTS = [
+  { id: 'st1', name: '日班', startTime: '0800', endTime: '1700', color: 'bg-blue-100 text-blue-800' },
+  { id: 'st2', name: '晚班', startTime: '1900', endTime: '0300', color: 'bg-purple-100 text-purple-800' },
+  { id: 'st3', name: '夜班', startTime: '2300', endTime: '0700', color: 'bg-slate-100 text-slate-800' },
+];
+
 const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
   const h = String(Math.floor(i / 2)).padStart(2, '0');
   const m = i % 2 === 0 ? '00' : '30';
@@ -3118,16 +4992,18 @@ function ShiftSetup() {
   const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser } = useApp();
   const toast = useToast();
 
-  // 班別定義 list: { id, name, startTime, endTime, color }
-  const [shiftTypes, setShiftTypes] = useState(() => {
-    const saved = localStorage.getItem('sms_shift_types');
-    return saved ? JSON.parse(saved) : [
-      { id: 'st1', name: '日班', startTime: '0800', endTime: '1700', color: 'bg-blue-100 text-blue-800' },
-      { id: 'st2', name: '晚班', startTime: '1900', endTime: '0300', color: 'bg-purple-100 text-purple-800' },
-      { id: 'st3', name: '夜班', startTime: '2300', endTime: '0700', color: 'bg-slate-100 text-slate-800' },
-    ];
-  });
-  useEffect(() => { localStorage.setItem('sms_shift_types', JSON.stringify(shiftTypes)); }, [shiftTypes]);
+  // 班別定義 list: { id, name, startTime, endTime, color } — 每倉獨立存放
+  const getWhKey = (whId) => whId ? `sms_shift_types_${whId}` : 'sms_shift_types';
+  const loadTypes = (whId) => {
+    try { return JSON.parse(localStorage.getItem(getWhKey(whId)) ?? 'null') ?? SHIFT_TYPE_DEFAULTS; }
+    catch { return SHIFT_TYPE_DEFAULTS; }
+  };
+  const saveTypes = (types, whId) => {
+    localStorage.setItem(getWhKey(whId), JSON.stringify(types));
+  };
+  const [shiftTypes, setShiftTypes] = useState(() => loadTypes(selectedWarehouse));
+  // 切換倉別時重新載入，不觸發 save
+  useEffect(() => { setShiftTypes(loadTypes(selectedWarehouse)); }, [selectedWarehouse]);
 
   const [showTypeModal, setShowTypeModal] = useState(false);
   const emptyType = { id: '', name: '', startTime: '0900', endTime: '1800', color: 'bg-blue-100 text-blue-800' };
@@ -3152,18 +5028,19 @@ function ShiftSetup() {
     if (!typeForm.name || !typeForm.startTime || !typeForm.endTime) {
       toast('班別名稱與時間為必填', 'error'); return;
     }
-    if (editTypeId) {
-      setShiftTypes(p => p.map(t => t.id === editTypeId ? { ...typeForm, id: editTypeId } : t));
-      toast('班別已更新', 'success');
-    } else {
-      setShiftTypes(p => [...p, { ...typeForm, id: 'st' + Date.now() }]);
-      toast('班別已新增', 'success');
-    }
+    const newTypes = editTypeId
+      ? shiftTypes.map(t => t.id === editTypeId ? { ...typeForm, id: editTypeId } : t)
+      : [...shiftTypes, { ...typeForm, id: 'st' + Date.now() }];
+    setShiftTypes(newTypes);
+    saveTypes(newTypes, selectedWarehouse);
+    toast(editTypeId ? '班別已更新' : '班別已新增', 'success');
     setShowTypeModal(false);
   };
 
   const deleteType = id => {
-    setShiftTypes(p => p.filter(t => t.id !== id));
+    const newTypes = shiftTypes.filter(t => t.id !== id);
+    setShiftTypes(newTypes);
+    saveTypes(newTypes, selectedWarehouse);
     setEmployees(p => p.map(e => e.shiftTypeId === id ? { ...e, shiftTypeId: '' } : e));
     toast('班別已刪除', 'info');
   };
@@ -3227,6 +5104,7 @@ function ShiftSetup() {
         });
 
         setShiftTypes(newTypes);
+        saveTypes(newTypes, selectedWarehouse);
         setEmployees(newEmps);
         toast(`匯入完成：新增 ${added} 筆，更新班別 ${updated} 筆`, 'success');
       } catch (err) {
@@ -3253,12 +5131,32 @@ function ShiftSetup() {
   const [filterVendor, setFilterVendor] = useState('');
   const [filterShift,  setFilterShift]  = useState('');
   const [nameSearchSetup, setNameSearchSetup] = useState('');
+
+  // 拖曳排序
+  const dragSrcIdx = useRef(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const onDragStart = (e, idx) => { dragSrcIdx.current = idx; e.dataTransfer.effectAllowed = 'move'; };
+  const onDragOver  = (e, idx) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIdx(idx); };
+  const onDrop      = (e, idx) => {
+    e.preventDefault();
+    const src = dragSrcIdx.current;
+    if (src == null || src === idx) { setDragOverIdx(null); return; }
+    const reordered = [...shiftTypes];
+    const [moved] = reordered.splice(src, 1);
+    reordered.splice(idx, 0, moved);
+    setShiftTypes(reordered);
+    saveTypes(reordered, selectedWarehouse);
+    dragSrcIdx.current = null;
+    setDragOverIdx(null);
+  };
+  const onDragEnd = () => { dragSrcIdx.current = null; setDragOverIdx(null); };
+
   const visibleEmps = (() => {
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees;
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-    return list.filter(e => {
+    const filtered = list.filter(e => {
       if (filterVendor && e.vendor !== filterVendor) return false;
       if (filterShift  && e.shiftTypeId !== filterShift) return false;
       if (nameSearchSetup.trim()) {
@@ -3266,12 +5164,13 @@ function ShiftSetup() {
         if (!(e.name ?? '').toLowerCase().includes(q) && !(e.empId ?? '').toLowerCase().includes(q)) return false;
       }
       return true;
-    }).sort((a, b) => {
-      // 未指派班別的員工排最上方
-      const aSet = !!a.shiftTypeId, bSet = !!b.shiftTypeId;
-      if (aSet !== bSet) return aSet ? 1 : -1;
-      return 0;
     });
+    // 未指派排最上方（shiftTypeId 空值或找不到對應班別皆視為未指派）
+    const isAssigned = e => !!e.shiftTypeId && shiftTypes.some(t => t.id === e.shiftTypeId);
+    return [
+      ...filtered.filter(e => !isAssigned(e)),
+      ...filtered.filter(e =>  isAssigned(e)),
+    ];
   })();
 
   return (
@@ -3280,16 +5179,31 @@ function ShiftSetup() {
 
       {/* ── 班別時段管理 ── */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-slate-700">班別時段管理</h3>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 className="font-semibold text-slate-700">班別時段管理</h3>
+            {selectedWarehouse
+              ? <p className="text-xs text-blue-600 mt-0.5">目前倉別：{warehouses.find(w => w.id === selectedWarehouse)?.name ?? selectedWarehouse}</p>
+              : <p className="text-xs text-amber-500 mt-0.5">請先從頂欄選擇倉別，各倉可獨立設定班別時段</p>
+            }
+          </div>
           <button onClick={openAddType}
             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
             ➕ 新增班別
           </button>
         </div>
         <div className="flex flex-wrap gap-3">
-          {shiftTypes.map(t => (
-            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${t.color} border-opacity-40`}>
+          {shiftTypes.map((t, idx) => (
+            <div key={t.id}
+              draggable
+              onDragStart={e => onDragStart(e, idx)}
+              onDragOver={e => onDragOver(e, idx)}
+              onDrop={e => onDrop(e, idx)}
+              onDragEnd={onDragEnd}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${t.color} border-opacity-40 cursor-grab active:cursor-grabbing select-none transition-opacity
+                ${dragOverIdx === idx && dragSrcIdx.current !== idx ? 'ring-2 ring-blue-400 opacity-80' : ''}
+                ${dragSrcIdx.current === idx ? 'opacity-40' : ''}`}>
+              <span className="text-slate-400 text-xs mr-0.5">⠿</span>
               <span className="font-semibold text-sm">{t.name}</span>
               <span className="text-xs opacity-70">{t.startTime.slice(0,2)}:{t.startTime.slice(2)} ~ {t.endTime.slice(0,2)}:{t.endTime.slice(2)}</span>
               <button onClick={() => openEditType(t)} className="text-xs opacity-60 hover:opacity-100 ml-1">✏️</button>
@@ -3822,22 +5736,33 @@ function AccountManagement() {
   const openAdd  = () => { setForm(emptyForm); setEditUser(null); setShowModal(true); };
   const openEdit = u  => { setForm({ ...u });  setEditUser(u);   setShowModal(true); };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.username || !form.password || !form.name) {
       toast('帳號、密碼、姓名為必填', 'error'); return;
     }
+    // 密碼強度驗證（明文時才檢查）
+    if (!form.password.startsWith('sha256:')) {
+      if (form.password.length < 8)          { toast('密碼至少需 8 個字元', 'error'); return; }
+      if (!/[A-Za-z]/.test(form.password))   { toast('密碼需包含至少一個英文字母', 'error'); return; }
+      if (!/[0-9]/.test(form.password))      { toast('密碼需包含至少一個數字', 'error'); return; }
+    }
+    const pwd = form.password.startsWith('sha256:')
+      ? form.password
+      : await hashPwd(form.password);
+    const saved = { ...form, password: pwd };
     if (editUser) {
-      setUsers(prev => prev.map(u => u.id === form.id ? form : u));
-      toast('帳號已更新：' + form.username, 'success');
+      setUsers(prev => prev.map(u => u.id === saved.id ? saved : u));
+      toast('帳號已更新：' + saved.username, 'success');
     } else {
-      setUsers(prev => [...prev, { ...form, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(form.role) }]);
-      toast('帳號已新增：' + form.username, 'success');
+      setUsers(prev => [...prev, { ...saved, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(saved.role) }]);
+      toast('帳號已新增：' + saved.username, 'success');
     }
     setShowModal(false);
   };
 
   const handleDelete = id => {
-    if (id === 'u1') { toast('無法刪除系統管理員帳號', 'error'); return; }
+    const target = users.find(u => u.id === id);
+    if (target?.system) { toast('系統帳號不可刪除', 'error'); return; }
     setUsers(prev => prev.filter(u => u.id !== id));
     toast('帳號已刪除', 'info');
   };
@@ -3853,7 +5778,7 @@ function AccountManagement() {
   };
 
   const toggleApproved = u => {
-    if (u.username === 'Grace' || u.username === 'reyi') { toast('系統帳號不可停用', 'error'); return; }
+    if (u.system) { toast('系統帳號不可停用', 'error'); return; }
     setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: !x.approved } : x));
     toast((u.approved ? '已停用：' : '已啟用：') + u.username, u.approved ? 'warn' : 'success');
   };
@@ -3886,17 +5811,51 @@ function AccountManagement() {
       : [...(p.allowedWarehouses ?? []), whId],
   }));
 
-  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部' };
-  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700' };
+  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部', worker: '委外人員' };
+  const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
 
   const pendingUsers = users.filter(u => u.approved === false);
-  const staffUsers   = users.filter(u => u.role !== ROLES.VENDOR && u.approved !== false);
-  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR  && u.approved !== false);
+  const staffUsers   = users.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role) && u.approved !== false);
+  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR && u.approved !== false);
   const tabUsers     = activeTab === 'staff' ? staffUsers : vendorUsers;
+
+  // 委外人員 tab：從員工清冊取得，標示是否已升級為幹部帳號
+  const { employees } = useApp();
+  const workerEmpList = employees.filter(e => e.status !== '離職');
+  const upgradedEmpIds = new Set(
+    users.filter(u => u.role === ROLES.VENDOR && u.employeeId).map(u => u.employeeId)
+  );
+
+  const handleUpgradeToVendor = async (emp) => {
+    if (upgradedEmpIds.has(emp.id)) { toast('此員工已有委外幹部帳號', 'warn'); return; }
+    const hashed = await hashPwd(emp.empId);
+    const newUser = {
+      id: 'worker_upgraded_' + emp.id,
+      username: emp.empId,
+      password: hashed,
+      name: emp.name,
+      role: ROLES.VENDOR,
+      vendors: emp.vendor ? [emp.vendor] : [],
+      allowedWarehouses: [],
+      approved: true,
+      loginCount: 0,
+      employeeId: emp.id,
+      permissions: getDefaultPermissions(ROLES.VENDOR),
+      mustChangePassword: true,
+    };
+    setUsers(prev => [...prev, newUser]);
+    toast(`已升級 ${emp.name}（${emp.empId}）為委外幹部`, 'success');
+  };
+
+  const handleDowngradeToWorker = (emp) => {
+    setUsers(prev => prev.filter(u => !(u.role === ROLES.VENDOR && u.employeeId === emp.id)));
+    toast(`已撤銷 ${emp.name} 的委外幹部權限`, 'info');
+  };
 
   const TAB_CFG = [
     { key: 'staff',  label: '員工帳號', icon: '🏢', count: staffUsers.length },
     { key: 'vendor', label: '廠商帳號', icon: '🤝', count: vendorUsers.length },
+    { key: 'worker', label: '委外人員', icon: '👷', count: workerEmpList.length },
   ];
 
   return (
@@ -3945,7 +5904,6 @@ function AccountManagement() {
                         ${activeTab === t.key
                           ? 'bg-white border-slate-200 text-blue-600 -mb-px z-10'
                           : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}`}>
-            <span>{t.icon}</span>
             <span>{t.label}</span>
             <span className={`px-1.5 py-0.5 rounded-full text-xs
                               ${activeTab === t.key ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
@@ -3955,7 +5913,54 @@ function AccountManagement() {
         ))}
       </div>
 
-      {/* 清單表頭 */}
+      {/* ── 委外人員 Tab ── */}
+      {activeTab === 'worker' && (
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
+          <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
+                          bg-slate-100 px-4 py-2.5 border-b border-slate-200"
+               style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
+            <span>員工編號</span>
+            <span>姓名</span>
+            <span>廠商</span>
+            <span>班別</span>
+            <span>幹部權限</span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {workerEmpList.length === 0 && (
+              <p className="text-sm text-slate-400 text-center py-6">尚未匯入員工清冊</p>
+            )}
+            {workerEmpList.map(emp => {
+              const isUpgraded = upgradedEmpIds.has(emp.id);
+              return (
+                <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-slate-50"
+                     style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
+                  <span className="font-mono text-sm text-slate-700">{emp.empId}</span>
+                  <span className="text-sm text-slate-700">{emp.name}</span>
+                  <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
+                  <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
+                  <div className="flex items-center gap-2">
+                    {isUpgraded ? (
+                      <>
+                        <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 font-medium">已升委外幹部</span>
+                        <button onClick={() => handleDowngradeToWorker(emp)}
+                          className="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded">撤銷</button>
+                      </>
+                    ) : (
+                      <button onClick={() => handleUpgradeToVendor(emp)}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        升級為委外幹部
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 清單表頭（員工 / 廠商 tab） */}
+      {activeTab !== 'worker' && (
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                       bg-slate-100 rounded-t-xl px-4 py-2.5 border border-slate-200"
            style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
@@ -3967,7 +5972,9 @@ function AccountManagement() {
         <span>審核狀態</span>
         <span>操作 / 權限</span>
       </div>
+      )}
 
+      {activeTab !== 'worker' && (
       <div className="border border-slate-200 rounded-b-xl divide-y divide-slate-100 overflow-hidden">
         {tabUsers.map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
@@ -4064,6 +6071,7 @@ function AccountManagement() {
           );
         })}
       </div>
+      )}
 
       {/* 帳號新增 / 編輯 Modal */}
       {showModal && (
@@ -4150,18 +6158,24 @@ export default function App() {
   // ── Persistent state ──
   const [users,         setUsers]         = useState(() => {
     let saved = LS.get('sms_users', SEED_USERS);
-    // 補齊新欄位（舊 localStorage 可能沒有）
+    // 密碼分離儲存：從 sms_user_pwds 合回密碼（若存在）
+    const pwds = LS.get('sms_user_pwds', {});
     saved = saved.map(u => ({
       approved: true, loginCount: 0, allowedWarehouses: [],
       permissions: getDefaultPermissions(u.role),
       ...u,
+      password: pwds[u.id] ?? u.password ?? '',
     }));
-    const DEMO  = mkUser('u0', 'reyi',  '8963', ROLES.ADMIN, 'Demo管理員', SEED_VENDORS.map(v=>v.name));
-    const GRACE = mkUser('ug', 'Grace', '0721', ROLES.ADMIN, 'Grace',      SEED_VENDORS.map(v=>v.name));
+    const DEMO  = { ...mkUser('u0', 'reyi',  '8963', ROLES.ADMIN, 'Demo管理員', SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true };
+    const GRACE = { ...mkUser('ug', 'Grace', '0721', ROLES.ADMIN, 'Grace',      SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true };
     if (!saved.some(u => u.username === 'reyi'))  saved = [DEMO,  ...saved];
     if (!saved.some(u => u.username === 'Grace')) saved = [GRACE, ...saved];
     return saved;
   });
+  // 委外人員自訂密碼：{ [empId]: 'sha256:...' }
+  const [workerPwds, setWorkerPwds] = useState(() => LS.get('sms_worker_pwds', {}));
+  useEffect(() => { LS.set('sms_worker_pwds', workerPwds, storageWarn); }, [workerPwds]);
+
   const [employees,     setEmployees]     = useState(() => LS.get('sms_employees',  SEED_EMPLOYEES));
   const [vendors,           setVendors]           = useState(() => LS.get('sms_vendors',    SEED_VENDORS));
   const [warehouses,        setWarehouses]        = useState(() => {
@@ -4186,9 +6200,13 @@ export default function App() {
   const [selectedGroup,     setSelectedGroup]     = useState(() => LS.get('sms_sel_grp',   null));
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
-  const [openHolidays,  setOpenHolidays]  = useState(() => LS.get('sms_open_holidays', []));
+  const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
+  const [vendorHolidayOpen,  setVendorHolidayOpen]  = useState(() => LS.get('sms_vendor_hol_open', false));
+  const [vendorCompanyNames, setVendorCompanyNames] = useState(() => LS.get('sms_vendor_company_names', VENDOR_COMPANY_NAMES));
   const [selectedYear,  setSelectedYear]  = useState(() => LS.get('sms_year',       today.getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(() => LS.get('sms_month',      today.getMonth() + 1));
+  const [attendData, setAttendData] = useState(() => LS.get('sms_attendance', {}));
+  const [extras,     setExtras]     = useState(() => LS.get('sms_attend_extras', {}));
 
   const [schedule, setSchedule] = useState(() => {
     const saved = LS.get('sms_schedule', null);
@@ -4228,7 +6246,13 @@ export default function App() {
       alert('⚠️ 瀏覽器儲存空間已滿，部分資料可能未儲存！\n請聯繫管理員或清除舊資料。');
     }
   }, []);
-  useEffect(() => { LS.set('sms_users',      users,         storageWarn); }, [users]);
+  useEffect(() => {
+    // 密碼不存入 sms_users，改存 sms_user_pwds（獨立 key）
+    const sanitized = users.map(({ password, ...u }) => u);
+    const pwds = Object.fromEntries(users.filter(u => u.password).map(u => [u.id, u.password]));
+    LS.set('sms_users',     sanitized, storageWarn);
+    LS.set('sms_user_pwds', pwds,      storageWarn);
+  }, [users]);
   useEffect(() => { LS.set('sms_employees',  employees,     storageWarn); }, [employees]);
   useEffect(() => { LS.set('sms_vendors',    vendors);            }, [vendors]);
   useEffect(() => { LS.set('sms_warehouses', warehouses);         }, [warehouses]);
@@ -4238,11 +6262,46 @@ export default function App() {
   useEffect(() => { LS.set('sms_schedule',   schedule,      storageWarn); }, [schedule]);
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
-  useEffect(() => { LS.set('sms_open_holidays',  openHolidays);  }, [openHolidays]);
+  useEffect(() => { LS.set('sms_open_holidays',       openHolidays);      }, [openHolidays]);
+  useEffect(() => { LS.set('sms_vendor_hol_open',    vendorHolidayOpen); }, [vendorHolidayOpen]);
   useEffect(() => { LS.set('sms_year',      selectedYear);  }, [selectedYear]);
   useEffect(() => { LS.set('sms_month',     selectedMonth); }, [selectedMonth]);
+  useEffect(() => { LS.set('sms_attendance',    attendData); }, [attendData]);
+  useEffect(() => { LS.set('sms_attend_extras', extras);    }, [extras]);
 
-  const handleLogout = () => { setCurrentUser(null); setCurrentPage('dashboard'); };
+  const handleLogout = useCallback(() => { setCurrentUser(null); setCurrentPage('dashboard'); }, []);
+
+  // ── Idle timeout（30 分鐘無操作自動登出）──
+  const IDLE_MS = 30 * 60 * 1000;
+  const idleTimer = useRef(null);
+  const [idleWarning, setIdleWarning] = useState(false);
+
+  const resetIdle = useCallback(() => {
+    sessionStorage.setItem('_idle_last', String(Date.now()));
+    setIdleWarning(false);
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => {
+      handleLogout();
+    }, IDLE_MS);
+  }, [handleLogout]);
+
+  useEffect(() => {
+    if (!currentUser) { if (idleTimer.current) clearTimeout(idleTimer.current); return; }
+    const EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    EVENTS.forEach(ev => document.addEventListener(ev, resetIdle, { passive: true }));
+    resetIdle();
+    // 警告：剩 2 分鐘時提示
+    const warnTimer = setInterval(() => {
+      const key = '_idle_last';
+      const last = Number(sessionStorage.getItem(key) || Date.now());
+      if (Date.now() - last > IDLE_MS - 2 * 60 * 1000) setIdleWarning(true);
+    }, 30000);
+    return () => {
+      EVENTS.forEach(ev => document.removeEventListener(ev, resetIdle));
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      clearInterval(warnTimer);
+    };
+  }, [currentUser, resetIdle]);
 
   const handleLogin = useCallback((user) => {
     // user.password 此時已是 sha256:... (由 LoginScreen 升級後傳入)
@@ -4263,8 +6322,12 @@ export default function App() {
     systemLocked, setSystemLocked,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
+    vendorHolidayOpen, setVendorHolidayOpen,
+    vendorCompanyNames, setVendorCompanyNames,
     selectedYear, setSelectedYear,
     selectedMonth, setSelectedMonth,
+    attendData, setAttendData,
+    extras, setExtras,
     currentUser,
   };
 
@@ -4277,12 +6340,31 @@ export default function App() {
     shiftcodes: <ShiftCodeTable />,
     settings:   <Settings />,
     accounts:   <AccountManagement />,
+    attendance: <Attendance />,
   };
 
   if (!currentUser) {
     return (
       <ToastProvider>
-        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} />
+        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} employees={employees} workerPwds={workerPwds} />
+      </ToastProvider>
+    );
+  }
+
+  // 首次登入強制改密碼
+  if (currentUser.mustChangePassword) {
+    const isWorker = currentUser.role === ROLES.WORKER;
+    return (
+      <ToastProvider>
+        <ForcePwdChange user={currentUser} onDone={updated => {
+          if (isWorker) {
+            // worker 密碼存入 sms_worker_pwds，不進 users
+            setWorkerPwds(prev => ({ ...prev, [updated.empId]: updated.password }));
+          } else {
+            setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+          }
+          setCurrentUser({ ...updated, mustChangePassword: false });
+        }} />
       </ToastProvider>
     );
   }
@@ -4290,6 +6372,12 @@ export default function App() {
   return (
     <ToastProvider>
       <AppContext.Provider value={ctx}>
+        {idleWarning && (
+          <div className="fixed top-0 inset-x-0 z-[9999] bg-amber-500 text-white text-sm text-center py-2 px-4 flex items-center justify-center gap-3">
+            <span>閒置逾時警告：即將自動登出，請繼續操作以維持登入狀態</span>
+            <button onClick={resetIdle} className="underline font-semibold hover:no-underline">繼續使用</button>
+          </div>
+        )}
         <div className="flex h-screen bg-slate-50 overflow-hidden">
           {/* Desktop sidebar */}
           <div className="hidden md:flex">
@@ -4320,7 +6408,18 @@ export default function App() {
             <WarehouseDeptBar />
 
             <div className="flex-1 overflow-y-auto">
-              {PAGE_MAP[currentPage] ?? <Dashboard />}
+              {(() => {
+                const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+                const allowed = currentUser.role === ROLES.ADMIN || userPerms[currentPage]?.view !== false;
+                if (!allowed) return (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
+                    <span className="text-5xl">🔒</span>
+                    <p className="text-lg font-medium">無此頁面的存取權限</p>
+                    <p className="text-sm">請聯絡管理員開啟權限</p>
+                  </div>
+                );
+                return PAGE_MAP[currentPage] ?? <Dashboard />;
+              })()}
             </div>
           </main>
         </div>
