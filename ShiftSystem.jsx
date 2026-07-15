@@ -36,7 +36,7 @@ import React, {
       --sms-border-dark:  #C8C4BA;
       --sms-sidebar:      #14302D;
       --sms-sidebar-hover:#1C4A46;
-      --sms-sidebar-active:#0F766E;
+      --sms-sidebar-active:#1E7A4A;
       --sms-text:         #1C2B3A;
       --sms-text-muted:   #6B7280;
       --sms-radius-sm:    6px;
