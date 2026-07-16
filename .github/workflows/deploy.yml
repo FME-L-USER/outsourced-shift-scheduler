@@ -78,7 +78,6 @@ jobs:
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           source: .
-          no_traffic: true
           flags: --no-invoker-iam-check
 
       - name: Get deployed image digest
