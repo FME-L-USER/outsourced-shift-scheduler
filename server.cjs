@@ -117,13 +117,13 @@ function requireAdmin(req, res, next) {
 
 // ── POST /api/auth/login ──────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body ?? {};
-  if (!username || !password) return res.status(400).json({ error: '請輸入帳號與密碼' });
+  const { USER_ID, PSW } = req.body ?? {};
+  if (!USER_ID || !PSW) return res.status(400).json({ error: '請輸入帳號及密碼' });
 
-  const uname = username.trim().toLowerCase();
+  const uname = USER_ID.trim().toLowerCase();
 
   // 1. AD 驗證（主要）
-  const adResult = await verifyAD(uname, password);
+  const adResult = await verifyAD(uname, PSW);
 
   if (adResult.ok) {
     const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [uname]);
@@ -162,7 +162,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [uname]);
   const user = rows[0];
 
-  if (!user?.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+  if (!user?.password_hash || !(await bcrypt.compare(PSW, user.password_hash))) {
     return res.status(401).json({ error: '帳號或密碼錯誤' });
   }
   if (!user.approved) {

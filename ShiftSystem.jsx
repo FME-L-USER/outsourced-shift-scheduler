@@ -755,7 +755,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         const r = await fetch('/api/auth/login', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ username: username.trim(), password }),
+          body:    JSON.stringify({ USER_ID: username.trim(), PSW: password }),
         });
         const data = await r.json().catch(() => ({}));
         if (r.ok && data.token) {
