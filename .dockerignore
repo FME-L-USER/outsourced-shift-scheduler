@@ -1,0 +1,17 @@
+openspec/
+*.docx
+*.md
+*.txt
+*.sql
+node_modules/
+.env
+.env.*
+.git
+.gitignore
+.DS_Store
+__pycache__/
+*.pyc
+*.log
+build/
+.venv/
+security-report-*.docx

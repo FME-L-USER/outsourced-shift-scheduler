@@ -5,3 +5,8 @@ dist/
 *.local
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+build/
+.venv/
+*.log
