@@ -49,54 +49,31 @@ async function initDB() {
 }
 
 // ── EIP AD 驗證 ───────────────────────────────────────────
-// ⚠️ 若回應格式不符，請調整 parseAdResult 函式後重新部署
+// API 規格：POST { USER_ID, PSW } → { MSG: "000 登入成功" }
+// 代碼：000=成功 / 100=帳密錯誤 / 200=AD錯誤 / 998=DB異常 / 999=其他錯誤
+const AD_ERROR_MSG = {
+  '100': '帳號或密碼錯誤',
+  '200': 'AD 認證錯誤',
+  '998': '系統暫時無法使用，請稍後再試',
+  '999': '系統發生錯誤，請聯絡管理員',
+};
+
 async function verifyAD(username, password) {
   try {
     const res = await fetch('https://eip.fme.com.tw/FMEIP/AasApi/CheckUserId', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ UserId: username, Password: password }),
+      body:    JSON.stringify({ USER_ID: username, PSW: password }),
       signal:  AbortSignal.timeout(8000),
     });
-
-    // 若純 HTTP 狀態碼代表結果
-    if (res.status === 401 || res.status === 403) return false;
-    if (!res.ok) {
-      console.warn(`EIP API 回應非預期狀態碼: ${res.status}`);
-      return false;
-    }
-
-    const text = await res.text();
-    console.log(`EIP API 原始回應 [${username}]:`, text.slice(0, 200)); // 首次部署時確認格式
-
-    // 嘗試 JSON 解析
-    try {
-      const data = JSON.parse(text);
-      // 相容多種 .NET / 自訂 API 回應格式
-      if (typeof data === 'boolean') return data;
-      if (data === 'true' || data === '1')  return true;
-      if (data === 'false' || data === '0') return false;
-      if (data.IsSuccess   !== undefined) return Boolean(data.IsSuccess);
-      if (data.isSuccess   !== undefined) return Boolean(data.isSuccess);
-      if (data.Result      !== undefined) return Boolean(data.Result);
-      if (data.result      !== undefined) return Boolean(data.result);
-      if (data.Success     !== undefined) return Boolean(data.Success);
-      if (data.success     !== undefined) return Boolean(data.success);
-      if (data.IsValid     !== undefined) return Boolean(data.IsValid);
-      if (data.status === 'ok' || data.status === 'success') return true;
-      if (data.code === 0 || data.code === 200) return true;
-      // 若都沒有，視 HTTP 200 為成功
-      return res.ok;
-    } catch {
-      // 非 JSON：純文字
-      const t = text.trim().toLowerCase();
-      if (t === 'true' || t === '1' || t === 'ok' || t === 'success') return true;
-      if (t === 'false' || t === '0') return false;
-      return res.ok; // HTTP 200 視為成功
-    }
+    if (!res.ok) { console.warn(`EIP 非預期狀態碼: ${res.status}`); return { ok: false, msg: '系統發生錯誤，請聯絡管理員' }; }
+    const data = await res.json();
+    const code = String(data.MSG ?? '').split(' ')[0];
+    if (code === '000') return { ok: true };
+    return { ok: false, msg: AD_ERROR_MSG[code] ?? '系統發生錯誤，請聯絡管理員' };
   } catch (err) {
     console.error('EIP API 呼叫失敗:', err.message);
-    return false;
+    return { ok: false, msg: '無法連線至 AD 驗證伺服器，請稍後再試' };
   }
 }
 
@@ -146,9 +123,9 @@ app.post('/api/auth/login', async (req, res) => {
   const uname = username.trim().toLowerCase();
 
   // 1. AD 驗證（主要）
-  const adOk = await verifyAD(uname, password);
+  const adResult = await verifyAD(uname, password);
 
-  if (adOk) {
+  if (adResult.ok) {
     const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [uname]);
     let user = rows[0];
 
@@ -178,6 +155,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   // 2. 本地帳號驗證（備用：reyi 及管理員建立的本地帳號）
+  // AD 回傳明確錯誤（帳密錯 / AD錯）時不再嘗試本地帳號，直接回報
+  if (adResult.msg && adResult.msg !== '無法連線至 AD 驗證伺服器，請稍後再試') {
+    return res.status(401).json({ error: adResult.msg });
+  }
   const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [uname]);
   const user = rows[0];
 
