@@ -126,7 +126,8 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
-const ROLES = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker' };
+const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker' };
+const JWT_KEY = 'sms_jwt';
 
 const SHIFT_CODES = {
   V:  { label: 'V',  color: 'bg-green-100 text-green-800',   meaning: '上班' },
@@ -748,8 +749,42 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       return;
     }
 
-    const allowedRoles = identity === 'riyi' ? [ROLES.ADMIN, ROLES.AREA] : [ROLES.VENDOR];
-    const candidate = users.find(u => u.username === username && allowedRoles.includes(u.role));
+    if (identity === 'riyi') {
+      // 日翊：透過後端 API 驗證（AD 優先，本地帳號備用）
+      try {
+        const r = await fetch('/api/auth/login', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ username: username.trim(), password }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.token) {
+          clearLock(uKey);
+          const apiRole = data.user.role === 'admin' ? ROLES.ADMIN : ROLES.AREA;
+          onLogin({
+            id: `api_${data.user.id}`, username: data.user.username, name: data.user.username,
+            role: apiRole, vendors: vendors.map(v => v.name),
+            permissions: getDefaultPermissions(apiRole),
+            approved: true, _apiAuth: true,
+          }, data.token);
+          return;
+        }
+        if (r.status === 403) { setError(data.error ?? '此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
+        const rf = recordFail(uKey);
+        setError(rf.locked
+          ? '登入失敗次數過多，帳號已鎖定 15 分鐘'
+          : (data.error ?? `帳號或密碼錯誤（已失敗 ${rf.count}/5 次）`));
+        refreshCaptcha();
+        return;
+      } catch {
+        setError('伺服器連線失敗，請稍後再試');
+        refreshCaptcha();
+        return;
+      }
+    }
+
+    // 廠商幹部：本地帳號驗證
+    const candidate = users.find(u => u.username === username && u.role === ROLES.VENDOR);
     if (!candidate) {
       const r = recordFail(uKey);
       setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
@@ -765,9 +800,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     }
     if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
     clearLock(uKey);
-    if (!candidate.password.startsWith('sha256:')) {
+    if (!candidate.password.startsWith('pbkdf2:')) {
       const hashed = await hashPwd(password);
-      onLogin({ ...candidate, password: hashed }, hashed);
+      onLogin({ ...candidate, password: hashed });
     } else {
       onLogin(candidate);
     }
@@ -6425,7 +6460,11 @@ export default function App() {
   useEffect(() => { LS.set('sms_attendance',    attendData); }, [attendData]);
   useEffect(() => { LS.set('sms_attend_extras', extras);    }, [extras]);
 
-  const handleLogout = useCallback(() => { setCurrentUser(null); setCurrentPage('dashboard'); }, []);
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem(JWT_KEY);
+    setCurrentUser(null);
+    setCurrentPage('dashboard');
+  }, []);
 
   // ── Idle timeout（30 分鐘無操作自動登出）──
   const IDLE_MS = 30 * 60 * 1000;
@@ -6459,8 +6498,32 @@ export default function App() {
     };
   }, [currentUser, resetIdle]);
 
-  const handleLogin = useCallback((user) => {
-    // user.password 此時已是 sha256:... (由 LoginScreen 升級後傳入)
+  // JWT 工作階段還原：頁面載入時檢查本機儲存的 token
+  useEffect(() => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(apiUser => {
+        if (!apiUser) { localStorage.removeItem(JWT_KEY); return; }
+        const role = apiUser.role === 'admin' ? ROLES.ADMIN : ROLES.AREA;
+        setCurrentUser({
+          id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.username,
+          role, vendors: vendors.map(v => v.name),
+          permissions: getDefaultPermissions(role),
+          approved: true, _apiAuth: true,
+        });
+      })
+      .catch(() => localStorage.removeItem(JWT_KEY));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLogin = useCallback((user, jwtToken) => {
+    if (jwtToken) localStorage.setItem(JWT_KEY, jwtToken);
+    if (user._apiAuth) {
+      setCurrentUser(user);
+      return;
+    }
     const updated = { ...user, loginCount: (user.loginCount ?? 0) + 1 };
     setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
     setCurrentUser(updated);

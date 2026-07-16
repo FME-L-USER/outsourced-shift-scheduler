@@ -5,9 +5,12 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-FROM nginx:stable-alpine
+FROM node:18-alpine
+WORKDIR /app
 RUN apk update && apk upgrade --no-cache
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY package*.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY --from=builder /app/dist ./dist
+COPY server.cjs ./
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.cjs"]
