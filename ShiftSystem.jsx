@@ -6318,7 +6318,14 @@ export default function App() {
     const DEMO  = { ...mkUser('u0', 'reyi',  '8963', ROLES.ADMIN, 'Demo管理員', SEED_VENDORS.map(v=>v.name), true),  mustChangePassword: true };
     const GRACE = { ...mkUser('ug', 'Grace', 'AAAaaa323390', ROLES.ADMIN, 'Grace', SEED_VENDORS.map(v=>v.name), true), mustChangePassword: false };
     if (!saved.some(u => u.username === 'reyi'))  saved = [DEMO,  ...saved];
-    if (!saved.some(u => u.username === 'Grace')) saved = [GRACE, ...saved];
+    const graceIdx = saved.findIndex(u => u.username === 'Grace');
+    if (graceIdx === -1) {
+      saved = [GRACE, ...saved];
+    } else {
+      const existingPwd = saved[graceIdx].password;
+      const isHashed = existingPwd?.startsWith('pbkdf2:') || existingPwd?.startsWith('sha256:');
+      if (!isHashed) saved[graceIdx] = { ...saved[graceIdx], ...GRACE };
+    }
     return saved;
   });
   // 委外人員自訂密碼：{ [empId]: 'sha256:...' }
