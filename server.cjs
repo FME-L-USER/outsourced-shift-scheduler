@@ -9,6 +9,31 @@ const path       = require('path');
 const app  = express();
 app.use(express.json());
 
+// ── HTTP 安全標頭 ─────────────────────────────────────────
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+// ── 登入速率限制（每 IP，15 分鐘內最多 20 次）────────────
+const loginRateMap = new Map();
+function checkLoginRate(ip) {
+  const now = Date.now();
+  const entry = loginRateMap.get(ip) ?? { count: 0, resetAt: now + 15 * 60 * 1000 };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 15 * 60 * 1000; }
+  entry.count++;
+  loginRateMap.set(ip, entry);
+  return entry.count <= 20;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of loginRateMap) { if (now > e.resetAt) loginRateMap.delete(ip); }
+}, 5 * 60 * 1000);
+
 // ── 環境變數 ──────────────────────────────────────────────
 const DATABASE_URL           = process.env.DATABASE_URL;
 const JWT_SECRET             = process.env.JWT_SECRET;
@@ -18,7 +43,9 @@ const PORT                   = process.env.PORT || 8080;
 if (!JWT_SECRET)   { console.error('FATAL: JWT_SECRET env var is required'); process.exit(1); }
 if (!DATABASE_URL) { console.error('FATAL: DATABASE_URL env var is required'); process.exit(1); }
 
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+// Cloud SQL Unix socket 不需要 SSL；TCP 連線則啟用憑證驗證
+const sslConfig = DATABASE_URL.includes('/cloudsql/') ? false : { rejectUnauthorized: true };
+const pool = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
 
 // ── DB init ───────────────────────────────────────────────
 async function initDB() {
@@ -117,8 +144,13 @@ function requireAdmin(req, res, next) {
 
 // ── POST /api/auth/login ──────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
+
   const { USER_ID, PSW } = req.body ?? {};
   if (!USER_ID || !PSW) return res.status(400).json({ error: '請輸入帳號及密碼' });
+  if (USER_ID.length > 15) return res.status(400).json({ error: '帳號長度不可超過 15 字元' });
+  if (PSW.length > 30)     return res.status(400).json({ error: '密碼長度不可超過 30 字元' });
 
   const uname = USER_ID.trim().toLowerCase();
 
