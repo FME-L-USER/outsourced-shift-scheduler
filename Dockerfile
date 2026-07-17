@@ -7,9 +7,9 @@ RUN npm run build
 
 FROM node:20-alpine
 WORKDIR /app
-RUN apk update && apk upgrade --no-cache && npm install -g npm@latest
+RUN apk update && apk upgrade --no-cache
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts && npm uninstall -g npm corepack
 COPY --from=builder /app/dist ./dist
 COPY server.cjs ./
 EXPOSE 8080
