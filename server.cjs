@@ -45,10 +45,12 @@ if (!DATABASE_URL) { console.error('FATAL: DATABASE_URL env var is required'); p
 
 // Cloud SQL Unix socket 不需要 SSL；TCP 連線則啟用憑證驗證
 const sslConfig = DATABASE_URL.includes('/cloudsql/') ? false : { rejectUnauthorized: true };
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
+const pool = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, options: '-c search_path=sms,public' });
 
 // ── DB init ───────────────────────────────────────────────
 async function initDB() {
+  await pool.query('CREATE SCHEMA IF NOT EXISTS sms');
+  await pool.query('SET search_path TO sms');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id            SERIAL PRIMARY KEY,
