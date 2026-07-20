@@ -64,6 +64,14 @@ async function initDB() {
       last_login    TIMESTAMPTZ
     )
   `);
+  // migration：若表已存在但缺欄位則補上（ADD COLUMN IF NOT EXISTS 為冪等操作）
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20)  NOT NULL DEFAULT 'member'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS page_perms    TEXT[]       NOT NULL DEFAULT '{}'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS fn_perms      TEXT[]       NOT NULL DEFAULT '{}'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved      BOOLEAN      NOT NULL DEFAULT false`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login    TIMESTAMPTZ`);
 
   // 確保 reyi 帳號存在（本地帳號，密碼由 ADMIN_INITIAL_PASSWORD 控制）
   const { rowCount } = await pool.query('SELECT id FROM users WHERE username = $1', ['reyi']);
