@@ -37,11 +37,12 @@ setInterval(() => {
 // ── 環境變數 ──────────────────────────────────────────────
 const DATABASE_URL           = process.env.DATABASE_URL;
 const JWT_SECRET             = process.env.JWT_SECRET;
-const ADMIN_INITIAL_PASSWORD = process.env.ADMIN_INITIAL_PASSWORD || 'Admin@2024!';
+const ADMIN_INITIAL_PASSWORD = process.env.ADMIN_INITIAL_PASSWORD;
 const PORT                   = process.env.PORT || 8080;
 
-if (!JWT_SECRET)   { console.error('FATAL: JWT_SECRET env var is required'); process.exit(1); }
-if (!DATABASE_URL) { console.error('FATAL: DATABASE_URL env var is required'); process.exit(1); }
+if (!JWT_SECRET)            { console.error('FATAL: JWT_SECRET env var is required'); process.exit(1); }
+if (!DATABASE_URL)          { console.error('FATAL: DATABASE_URL env var is required'); process.exit(1); }
+if (!ADMIN_INITIAL_PASSWORD){ console.error('FATAL: ADMIN_INITIAL_PASSWORD env var is required'); process.exit(1); }
 
 // Cloud SQL Unix socket 不需要 SSL；TCP 連線則啟用憑證驗證
 const sslConfig = DATABASE_URL.includes('/cloudsql/') ? false : { rejectUnauthorized: true };
@@ -286,11 +287,13 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
 
 // ── DELETE /api/users/:id (admin) ─────────────────────────
 app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
-  const { rows } = await pool.query('SELECT username FROM users WHERE id=$1', [req.params.id]);
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '無效的使用者 ID' });
+  const { rows } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (rows[0]?.username === 'grace') {
     return res.status(400).json({ error: 'grace 帳號不可刪除' });
   }
-  await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
+  await pool.query('DELETE FROM users WHERE id=$1', [id]);
   res.json({ ok: true });
 });
 
