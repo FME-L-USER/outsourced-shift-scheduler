@@ -73,6 +73,36 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login    TIMESTAMPTZ`);
 
+  // migration：修正 id 欄位的 sequence／default（SERIAL 可能因既有表而未建立）
+  await pool.query(`
+    DO $$
+    BEGIN
+      -- 若 id 已有 DEFAULT 則跳過，避免重複建立
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'sms'
+          AND table_name   = 'users'
+          AND column_name  = 'id'
+          AND column_default IS NOT NULL
+      ) THEN
+        -- 建立 sequence（冪等）
+        EXECUTE 'CREATE SEQUENCE IF NOT EXISTS sms.users_id_seq';
+        -- 從現有最大 id + 1 開始，避免重複
+        PERFORM setval(
+          'sms.users_id_seq',
+          COALESCE((SELECT MAX(id) FROM sms.users), 0) + 1,
+          false
+        );
+        -- 掛上 DEFAULT
+        EXECUTE 'ALTER TABLE sms.users ALTER COLUMN id SET DEFAULT nextval(''sms.users_id_seq'')';
+        -- Sequence 跟著 column 生命週期走
+        EXECUTE 'ALTER SEQUENCE sms.users_id_seq OWNED BY sms.users.id';
+        RAISE NOTICE 'users.id sequence 已建立並掛載';
+      END IF;
+    END
+    $$
+  `);
+
   // 確保 reyi 帳號存在（本地帳號，密碼由 ADMIN_INITIAL_PASSWORD 控制）
   const { rowCount } = await pool.query('SELECT id FROM users WHERE username = $1', ['reyi']);
   if (rowCount === 0) {
