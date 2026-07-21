@@ -183,8 +183,8 @@ app.post('/api/auth/login', async (req, res) => {
       const isGrace = uname === 'grace';
       const { rows: created } = await pool.query(
         `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
-         VALUES ($1, $2, 'ad_auth_only', $3, $4, $5, '{}', '{}') RETURNING *`,
-        [uname, uname, isGrace ? 'admin' : 'worker', isGrace, uname]
+         VALUES ($1, $2, 'ad_auth_only', $3, true, $4, '{}', '{}') RETURNING *`,
+        [uname, uname, isGrace ? 'admin' : 'worker', uname]
       );
       user = created[0];
       console.log(`自動建立帳號: ${uname}，角色: ${user.role}，已核准: ${user.approved}`);
