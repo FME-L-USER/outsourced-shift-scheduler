@@ -56,8 +56,9 @@ async function initDB() {
     CREATE TABLE IF NOT EXISTS users (
       id            VARCHAR(20)  PRIMARY KEY,
       username      VARCHAR(100) UNIQUE NOT NULL,
-      password_hash VARCHAR(255),
-      role          VARCHAR(20)  NOT NULL DEFAULT 'member',
+      password_hash VARCHAR(255) NOT NULL DEFAULT '',
+      role          VARCHAR(20)  NOT NULL DEFAULT 'worker',
+      display_name  VARCHAR(50)  NOT NULL DEFAULT '',
       page_perms    TEXT[]       NOT NULL DEFAULT '{}',
       fn_perms      TEXT[]       NOT NULL DEFAULT '{}',
       approved      BOOLEAN      NOT NULL DEFAULT false,
@@ -66,8 +67,9 @@ async function initDB() {
     )
   `);
   // migration：若表已存在但缺欄位則補上（ADD COLUMN IF NOT EXISTS 為冪等操作）
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20)  NOT NULL DEFAULT 'member'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20)  NOT NULL DEFAULT 'worker'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name  VARCHAR(50)  NOT NULL DEFAULT ''`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS page_perms    TEXT[]       NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS fn_perms      TEXT[]       NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved      BOOLEAN      NOT NULL DEFAULT false`);
@@ -79,8 +81,9 @@ async function initDB() {
   if (rowCount === 0) {
     const hash = await bcrypt.hash(ADMIN_INITIAL_PASSWORD, 12);
     await pool.query(
-      `INSERT INTO users (id, username, password_hash, role, approved) VALUES ($1, $2, $3, 'admin', true)`,
-      ['reyi', 'reyi', hash]
+      `INSERT INTO users (id, username, password_hash, role, approved, display_name)
+       VALUES ($1, $2, $3, 'admin', true, $4)`,
+      ['reyi', 'reyi', hash, 'reyi']
     );
     console.log('建立初始管理員帳號：reyi');
   }
@@ -174,11 +177,14 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!user) {
       // 首次 AD 登入：自動建立帳號
+      // role 預設 worker（CHECK constraint 允許的最低權限），由管理員審核後調整
+      // password_hash 使用 sentinel 'ad_auth_only'，AD 使用者不走本地密碼驗證
+      // display_name 使用 username 作為 fallback（AD API 無回傳顯示名稱）
       const isGrace = uname === 'grace';
       const { rows: created } = await pool.query(
-        `INSERT INTO users (id, username, role, approved, page_perms, fn_perms)
-         VALUES ($1, $2, $3, $4, '{}', '{}') RETURNING *`,
-        [uname, uname, isGrace ? 'admin' : 'member', isGrace]
+        `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
+         VALUES ($1, $2, 'ad_auth_only', $3, $4, $5, '{}', '{}') RETURNING *`,
+        [uname, uname, isGrace ? 'admin' : 'worker', isGrace, uname]
       );
       user = created[0];
       console.log(`自動建立帳號: ${uname}，角色: ${user.role}，已核准: ${user.approved}`);
@@ -205,7 +211,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [uname]);
   const user = rows[0];
 
-  if (!user?.password_hash || !(await bcrypt.compare(PSW, user.password_hash))) {
+  if (!user?.password_hash || user.password_hash === 'ad_auth_only' || !(await bcrypt.compare(PSW, user.password_hash))) {
     return res.status(401).json({ error: '帳號或密碼錯誤' });
   }
   if (!user.approved) {
@@ -232,7 +238,8 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 
 // ── PUT /api/users/:id (admin) ────────────────────────────
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
+  const id = String(req.params.id).trim();
+  if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
   const { role, approved, page_perms, fn_perms } = req.body ?? {};
 
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
@@ -257,8 +264,8 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
 
 // ── DELETE /api/users/:id (admin) ─────────────────────────
 app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '無效的使用者 ID' });
+  const id = String(req.params.id).trim();
+  if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
   const { rows } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (rows[0]?.username === 'grace') {
     return res.status(400).json({ error: 'grace 帳號不可刪除' });
