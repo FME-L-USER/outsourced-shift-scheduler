@@ -1009,12 +1009,12 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               {/* 驗證碼 */}
               <div className="mb-5">
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
-                <div className="flex items-center gap-2">
-                  <canvas ref={captchaRef} width={130} height={44}
-                    className="rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
+                <div className="flex items-center gap-2 w-full overflow-hidden">
+                  <canvas ref={captchaRef} width={110} height={40}
+                    className="shrink-0 rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
                     title="點擊刷新" onClick={refreshCaptcha} />
                   <button type="button" onClick={refreshCaptcha}
-                    className="text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
+                    className="shrink-0 text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
@@ -1022,7 +1022,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                   <input type="text" value={captchaInput}
                     onChange={e => setCaptchaInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
                     maxLength={4} placeholder="請輸入驗證碼"
-                    className="flex-1 px-3 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm text-center tracking-widest
+                    className="flex-1 min-w-0 px-3 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm text-center tracking-widest
                                focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                 </div>
               </div>
