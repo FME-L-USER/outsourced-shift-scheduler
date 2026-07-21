@@ -188,11 +188,12 @@ app.post('/api/auth/login', async (req, res) => {
       );
       user = created[0];
       console.log(`自動建立帳號: ${uname}，角色: ${user.role}，已核准: ${user.approved}`);
-    } else if (uname === 'grace' && (user.role !== 'admin' || !user.approved)) {
-      // grace 永遠確保 admin + approved
-      await pool.query(`UPDATE users SET role='admin', approved=true WHERE id=$1`, [user.id]);
-      user.role    = 'admin';
-      user.approved = true;
+    } else {
+      // 既有帳號：AD 驗證成功即視為核准，補正 approved=true
+      const sets = [];
+      if (uname === 'grace' && user.role !== 'admin') { sets.push(`role='admin'`); user.role = 'admin'; }
+      if (!user.approved) { sets.push(`approved=true`); user.approved = true; }
+      if (sets.length) await pool.query(`UPDATE users SET ${sets.join(',')} WHERE id=$1`, [user.id]);
     }
 
     if (!user.approved) {
