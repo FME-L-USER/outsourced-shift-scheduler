@@ -1663,23 +1663,9 @@ function ScheduleTable() {
   } = useApp();
   const toast = useToast();
 
-  // 讀取班別設定與代號表（依所選倉別）
-  const shiftTypes = useMemo(() => {
-    const key = selectedWarehouse ? `sms_shift_types_${selectedWarehouse}` : 'sms_shift_types';
-    try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; }
-  }, [selectedWarehouse]);
-  const shiftCodeRows = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('sms_shiftcode_rows');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  }, []);
-  const shiftCodeHeaders = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('sms_shiftcode_headers');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  }, []);
+  // 班別設定與代號表從 context 取得（跨裝置同步）
+  const { shiftTypesByWh, shiftCodeRows, shiftCodeHeaders } = useApp();
+  const shiftTypes = shiftTypesByWh[selectedWarehouse ?? 'default'] ?? [];
 
   // 假日名稱 → 代號表欄位名稱對照
   const HOLIDAY_COL_MAP = {
@@ -5173,21 +5159,15 @@ const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
 });
 
 function ShiftSetup() {
-  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser } = useApp();
+  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser,
+          shiftTypesByWh, setShiftTypesByWh } = useApp();
   const toast = useToast();
 
-  // 班別定義 list: { id, name, startTime, endTime, color } — 每倉獨立存放
-  const getWhKey = (whId) => whId ? `sms_shift_types_${whId}` : 'sms_shift_types';
-  const loadTypes = (whId) => {
-    try { return JSON.parse(localStorage.getItem(getWhKey(whId)) ?? 'null') ?? SHIFT_TYPE_DEFAULTS; }
-    catch { return SHIFT_TYPE_DEFAULTS; }
+  const whKey = selectedWarehouse ?? 'default';
+  const shiftTypes = shiftTypesByWh[whKey] ?? SHIFT_TYPE_DEFAULTS;
+  const setShiftTypes = (types) => {
+    setShiftTypesByWh(prev => ({ ...prev, [whKey]: types }));
   };
-  const saveTypes = (types, whId) => {
-    localStorage.setItem(getWhKey(whId), JSON.stringify(types));
-  };
-  const [shiftTypes, setShiftTypes] = useState(() => loadTypes(selectedWarehouse));
-  // 切換倉別時重新載入，不觸發 save
-  useEffect(() => { setShiftTypes(loadTypes(selectedWarehouse)); }, [selectedWarehouse]);
 
   const [showTypeModal, setShowTypeModal] = useState(false);
   const emptyType = { id: '', name: '', startTime: '0900', endTime: '1800', color: 'bg-blue-100 text-blue-800' };
@@ -5216,7 +5196,6 @@ function ShiftSetup() {
       ? shiftTypes.map(t => t.id === editTypeId ? { ...typeForm, id: editTypeId } : t)
       : [...shiftTypes, { ...typeForm, id: 'st' + Date.now() }];
     setShiftTypes(newTypes);
-    saveTypes(newTypes, selectedWarehouse);
     toast(editTypeId ? '班別已更新' : '班別已新增', 'success');
     setShowTypeModal(false);
   };
@@ -5224,7 +5203,6 @@ function ShiftSetup() {
   const deleteType = id => {
     const newTypes = shiftTypes.filter(t => t.id !== id);
     setShiftTypes(newTypes);
-    saveTypes(newTypes, selectedWarehouse);
     setEmployees(p => p.map(e => e.shiftTypeId === id ? { ...e, shiftTypeId: '' } : e));
     toast('班別已刪除', 'info');
   };
@@ -5528,20 +5506,12 @@ function ShiftSetup() {
 function ShiftCodeTable() {
   const toast = useToast();
   const fileRef = useRef();
+  const { shiftCodeRows: rows, setShiftCodeRows: setRows,
+          shiftCodeHeaders: headers, setShiftCodeHeaders: setHeaders } = useApp();
 
-  // ── 資料狀態：可由 Excel 匯入更新，預設用內建常數，localStorage 持久化 ──
-  const [headers, setHeaders] = useState(() =>
-    LS.get('sms_shiftcode_headers', SHIFT_CODE_HEADERS)
-  );
-  const [rows, setRows] = useState(() =>
-    LS.get('sms_shiftcode_rows', SHIFT_CODE_ROWS)
-  );
   const [importedAt, setImportedAt] = useState(() =>
     LS.get('sms_shiftcode_imported_at', null)
   );
-
-  useEffect(() => { LS.set('sms_shiftcode_headers',     headers);    }, [headers]);
-  useEffect(() => { LS.set('sms_shiftcode_rows',        rows);       }, [rows]);
   useEffect(() => { LS.set('sms_shiftcode_imported_at', importedAt); }, [importedAt]);
 
   // ── 密碼鎖 ──
@@ -6427,6 +6397,53 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen,    setMobileNavOpen]    = useState(false);
 
+  // ── 班別設定（跨裝置同步，存入 server） ──
+  const [shiftTypesByWh, setShiftTypesByWh] = useState(() => {
+    const map = {};
+    Object.keys(localStorage)
+      .filter(k => k === 'sms_shift_types' || k.startsWith('sms_shift_types_'))
+      .forEach(k => {
+        const wk = k === 'sms_shift_types' ? 'default' : k.replace('sms_shift_types_', '');
+        try { map[wk] = JSON.parse(localStorage.getItem(k)); } catch {}
+      });
+    return map;
+  });
+  const [shiftCodeRows,    setShiftCodeRows]    = useState(() => LS.get('sms_shiftcode_rows',    SHIFT_CODE_ROWS));
+  const [shiftCodeHeaders, setShiftCodeHeaders] = useState(() => LS.get('sms_shiftcode_headers', SHIFT_CODE_HEADERS));
+
+  // ── Server-sync ──
+  const serverSyncedRef = useRef(false);
+  const saveDebouncerRef = useRef(null);
+
+  const loadServerState = useCallback(async (token) => {
+    try {
+      const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return;
+      const state = await r.json();
+      if (!state) return;
+      if (state.employees)              setEmployees(state.employees);
+      if (state.vendors)                setVendors(state.vendors);
+      if (state.warehouses)             setWarehouses(state.warehouses);
+      if (state.schedule)               setSchedule(state.schedule);
+      if (state.systemLocked   != null) setSystemLocked(state.systemLocked);
+      if (state.scheduleRange)          setScheduleRange(state.scheduleRange);
+      if (state.openHolidays)           setOpenHolidays(state.openHolidays);
+      if (state.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
+      if (state.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
+      if (state.attendData)             setAttendData(state.attendData);
+      if (state.extras)                 setExtras(state.extras);
+      if (state.shiftTypesByWh)         setShiftTypesByWh(state.shiftTypesByWh);
+      if (state.shiftCodeRows)          setShiftCodeRows(state.shiftCodeRows);
+      if (state.shiftCodeHeaders)       setShiftCodeHeaders(state.shiftCodeHeaders);
+    } catch (e) {
+      console.warn('無法從伺服器載入狀態:', e.message);
+    } finally {
+      serverSyncedRef.current = true;
+    }
+  }, [setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
+      setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
+      setAttendData, setExtras]);
+
   // ── Persist to localStorage ──
   const storageWarn = useCallback(() => {
     // 避免重複 toast（每分鐘最多一次）
@@ -6459,6 +6476,35 @@ export default function App() {
   useEffect(() => { LS.set('sms_month',     selectedMonth); }, [selectedMonth]);
   useEffect(() => { LS.set('sms_attendance',    attendData); }, [attendData]);
   useEffect(() => { LS.set('sms_attend_extras', extras);    }, [extras]);
+  useEffect(() => { LS.set('sms_shiftcode_rows',    shiftCodeRows);    }, [shiftCodeRows]);
+  useEffect(() => { LS.set('sms_shiftcode_headers', shiftCodeHeaders); }, [shiftCodeHeaders]);
+  useEffect(() => {
+    Object.entries(shiftTypesByWh).forEach(([wk, types]) => {
+      const key = wk === 'default' ? 'sms_shift_types' : `sms_shift_types_${wk}`;
+      try { localStorage.setItem(key, JSON.stringify(types)); } catch {}
+    });
+  }, [shiftTypesByWh]);
+
+  // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
+  useEffect(() => {
+    if (!serverSyncedRef.current) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
+    saveDebouncerRef.current = setTimeout(() => {
+      fetch('/api/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          employees, vendors, warehouses, schedule, systemLocked,
+          scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+          attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+        }),
+      }).catch(e => console.warn('狀態同步失敗:', e.message));
+    }, 2000);
+  }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
+      openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem(JWT_KEY);
@@ -6513,13 +6559,17 @@ export default function App() {
           permissions: getDefaultPermissions(role),
           approved: true, _apiAuth: true,
         });
+        loadServerState(token);
       })
       .catch(() => localStorage.removeItem(JWT_KEY));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogin = useCallback((user, jwtToken) => {
-    if (jwtToken) localStorage.setItem(JWT_KEY, jwtToken);
+    if (jwtToken) {
+      localStorage.setItem(JWT_KEY, jwtToken);
+      loadServerState(jwtToken);
+    }
     if (user._apiAuth) {
       setCurrentUser(user);
       return;
@@ -6527,7 +6577,7 @@ export default function App() {
     const updated = { ...user, loginCount: (user.loginCount ?? 0) + 1 };
     setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
     setCurrentUser(updated);
-  }, []);
+  }, [loadServerState]);
 
   const ctx = {
     users, setUsers,
@@ -6547,6 +6597,9 @@ export default function App() {
     selectedMonth, setSelectedMonth,
     attendData, setAttendData,
     extras, setExtras,
+    shiftTypesByWh, setShiftTypesByWh,
+    shiftCodeRows, setShiftCodeRows,
+    shiftCodeHeaders, setShiftCodeHeaders,
     currentUser,
   };
 

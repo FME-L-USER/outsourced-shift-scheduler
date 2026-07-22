@@ -75,6 +75,13 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved      BOOLEAN      NOT NULL DEFAULT false`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login    TIMESTAMPTZ`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_state (
+      id         VARCHAR(50) PRIMARY KEY,
+      data       JSONB       NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   // 確保 reyi 帳號存在（本地帳號，密碼由 ADMIN_INITIAL_PASSWORD 控制）
   const { rowCount } = await pool.query('SELECT id FROM users WHERE username = $1', ['reyi']);
@@ -153,6 +160,12 @@ function requireAuth(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: '需要管理員權限' });
+  next();
+}
+
+function requireManagerOrAdmin(req, res, next) {
+  const role = req.user?.role;
+  if (role !== 'admin' && role !== 'area') return res.status(403).json({ error: '需要管理員或區域主管權限' });
   next();
 }
 
@@ -272,6 +285,22 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'grace 帳號不可刪除' });
   }
   await pool.query('DELETE FROM users WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+
+// ── GET /api/state ────────────────────────────────────────
+app.get('/api/state', requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  res.json(rows[0]?.data ?? null);
+});
+
+// ── PUT /api/state ────────────────────────────────────────
+app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  await pool.query(
+    `INSERT INTO app_state (id, data, updated_at) VALUES ('main',$1,NOW())
+     ON CONFLICT (id) DO UPDATE SET data=$1, updated_at=NOW()`,
+    [req.body]
+  );
   res.json({ ok: true });
 });
 
