@@ -74,7 +74,8 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS fn_perms      TEXT[]       NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved      BOOLEAN      NOT NULL DEFAULT false`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login    TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login         TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_warehouses TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_state (
       id         VARCHAR(50) PRIMARY KEY,
@@ -176,6 +177,12 @@ async function seedDaxiEmployees() {
       [e.u, e.u, e.n]
     );
   }
+  // 設定大溪倉權限（wh1），僅對尚未指派倉別的帳號更新
+  const daxiUsernames = DAXI_EMPLOYEES.map(e => e.u);
+  await pool.query(
+    `UPDATE users SET allowed_warehouses = '{wh1}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`,
+    [daxiUsernames]
+  );
 
   // 2. 將員工加入 app_state.employees（僅新增不存在的）
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
@@ -205,7 +212,6 @@ async function seedDaxiEmployees() {
 const AREA_EMPLOYEES = [
   // 大肚倉、大肚理貨課
   { u: 'ef322202',   n: '李依芳', d: '大肚理貨課', wh: '大肚倉' },
-  { u: 'grace',      n: '李貴瑜', d: '大肚理貨課', wh: '大肚倉' },  // 帳號已存在(admin)，跳過建立
   { u: 'seven0826',  n: '卓亭宜', d: '大肚理貨課', wh: '大肚倉' },
   { u: 'lan0916',    n: '周春蘭', d: '大肚理貨課', wh: '大肚倉' },
   { u: 'kunyi',      n: '林坤易', d: '大肚理貨課', wh: '大肚倉' },
@@ -230,7 +236,6 @@ const AREA_EMPLOYEES = [
   { u: 'zongyue27',  n: '呂宗岳', d: '大肚運務課', wh: '大肚倉' },
   { u: 'luckyx67',   n: '陳育棋', d: '大肚運務課', wh: '大肚倉' },
   { u: 'reyi1002',   n: '彭惠美', d: '大肚運務課', wh: '大肚倉' },
-  { u: 'vincent',    n: '黃文呈', d: '大肚運務課', wh: '大肚倉' },  // 同時在岡山營運課
   { u: 'graciaywl',  n: '廖弈雯', d: '大肚運務課', wh: '大肚倉' },
   { u: 'liou0707',   n: '劉芷榕', d: '大肚運務課', wh: '大肚倉' },
   { u: 'lyx01912',   n: '賴宜欣', d: '大肚運務課', wh: '大肚倉' },
@@ -271,7 +276,18 @@ async function seedAreaEmployees() {
   }
   if (usersCreated > 0) console.log(`大肚/岡山員工帳號：新建 ${usersCreated} 筆`);
 
-  // 2. 更新 app_state.employees（每個倉別+課別的員工清冊，vincent 建兩筆）
+  // 設定各帳號的倉別限制（冪等：僅更新尚未設定者）
+  const wh2Users = [...new Set(AREA_EMPLOYEES.filter(e => e.wh === '大肚倉').map(e => e.u))];
+  const wh3Users = [...new Set(AREA_EMPLOYEES.filter(e => e.wh === '岡山倉').map(e => e.u))];
+  // 同時在兩倉的帳號取交集
+  const bothUsers = wh2Users.filter(u => wh3Users.includes(u));
+  const onlyWh2   = wh2Users.filter(u => !wh3Users.includes(u));
+  const onlyWh3   = wh3Users.filter(u => !wh2Users.includes(u));
+  if (onlyWh2.length)   await pool.query(`UPDATE users SET allowed_warehouses = '{wh2}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`, [onlyWh2]);
+  if (onlyWh3.length)   await pool.query(`UPDATE users SET allowed_warehouses = '{wh3}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`, [onlyWh3]);
+  if (bothUsers.length) await pool.query(`UPDATE users SET allowed_warehouses = '{wh2,wh3}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`, [bothUsers]);
+
+  // 2. 更新 app_state.employees（每個倉別+課別的員工清冊）
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   const state = rows[0]?.data;
   if (!state) return;
@@ -329,7 +345,7 @@ async function verifyAD(username, password) {
 // ── JWT 工具 ──────────────────────────────────────────────
 function issueToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms },
+    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms, allowedWarehouses: user.allowed_warehouses || [] },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
@@ -337,13 +353,14 @@ function issueToken(user) {
 
 function safeUser(u) {
   return {
-    id:         u.id,
-    username:   u.username,
-    role:       u.role,
-    page_perms: u.page_perms  || [],
-    fn_perms:   u.fn_perms    || [],
-    approved:   u.approved,
-    last_login: u.last_login,
+    id:                u.id,
+    username:          u.username,
+    role:              u.role,
+    page_perms:        u.page_perms        || [],
+    fn_perms:          u.fn_perms          || [],
+    allowedWarehouses: u.allowed_warehouses || [],
+    approved:          u.approved,
+    last_login:        u.last_login,
   };
 }
 

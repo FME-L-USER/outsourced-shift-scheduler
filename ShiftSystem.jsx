@@ -6406,12 +6406,19 @@ export default function App() {
     }
     if (user._apiAuth) {
       setCurrentUser(user);
+      // 若只開放一個倉，登入後自動選取
+      if ((user.allowedWarehouses ?? []).length === 1) {
+        setSelectedWarehouse(user.allowedWarehouses[0]);
+      }
       return;
     }
     const updated = { ...user, loginCount: (user.loginCount ?? 0) + 1 };
     setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
     setCurrentUser(updated);
-  }, [loadServerState]);
+    if ((user.allowedWarehouses ?? []).length === 1) {
+      setSelectedWarehouse(user.allowedWarehouses[0]);
+    }
+  }, [loadServerState, setSelectedWarehouse]);
 
   const ctx = {
     users, setUsers,
