@@ -1009,8 +1009,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               {/* 驗證碼 */}
               <div className="mb-5">
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
-                <div className="flex items-center gap-2 w-full overflow-hidden">
-                  <canvas ref={captchaRef} width={110} height={40}
+                <div className="flex items-center gap-2 w-full">
+                  <canvas ref={captchaRef} width={130} height={44}
                     className="shrink-0 rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
                     title="點擊刷新" onClick={refreshCaptcha} />
                   <button type="button" onClick={refreshCaptcha}
