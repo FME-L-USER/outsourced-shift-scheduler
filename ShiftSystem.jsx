@@ -109,7 +109,6 @@ import React, {
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
-import html2pdf from 'html2pdf.js';
 
 /** Modal wrapper：用 portal 掛到 body，避免被捲動容器裁切 */
 function Modal({ children, onClose }) {
@@ -2773,13 +2772,6 @@ function EmployeeRoster() {
 // REPORTS
 // ─────────────────────────────────────────────
 
-// HTML 安全跳脫，防止 XSS 注入到 PDF 匯出的 HTML 字串
-const esc = s => String(s ?? '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
 
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth,
@@ -3104,160 +3096,6 @@ function Reports() {
     }
   };
 
-  const exportVendorPDF = (vendor) => {
-    const rocYear = selectedYear - 1911;
-    const emps = scopedEmployees.filter(e => e.vendor === vendor);
-    const daysInMonth = days;
-    const companyName = vendorCompanyNames[vendor] ?? vendor;
-    const WD = ['日','一','二','三','四','五','六'];
-    const getCode = (emp, d) => schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V';
-    const countCode = (emp, code) => { let c = 0; for (let d = 1; d <= daysInMonth; d++) if (getCode(emp,d)===code) c++; return c; };
-    const monthHolidays = NATIONAL_HOLIDAYS.filter(h => h.year===selectedYear && h.month===selectedMonth);
-    const getRemarks = (emp) => {
-      const parts = [];
-      for (const h of monthHolidays) {
-        if (getCode(emp, h.day) !== '國') {
-          for (let d = 1; d <= daysInMonth; d++) {
-            if (getCode(emp, d) === '國') { parts.push(`原${selectedMonth}/${h.day}國定假日${h.name}調移至${selectedMonth}/${d}`); break; }
-          }
-        }
-      }
-      return parts.join('；');
-    };
-    const codeStyle = c => c==='休'?'color:#0070C0;font-weight:bold':c==='例'?'color:#7030A0;font-weight:bold':c==='國'?'color:#CC0000;font-weight:bold':'';
-    const dayInfos = Array.from({length:daysInMonth},(_,i)=>{
-      const d=i+1, wd=new Date(selectedYear,selectedMonth-1,d).getDay();
-      return {d, month:selectedMonth, weekday:WD[wd], isSun:wd===0, isSat:wd===6};
-    });
-
-    // Inline style constants — avoid class-based styles which html2canvas may not honour
-    const F   = "font-family:'微軟正黑體','Microsoft JhengHei',Arial,sans-serif;";
-    // C = wrapper div forces center alignment in html2canvas
-    const C   = (t) => `<div style="text-align:center;width:100%;display:block;">${t}</div>`;
-    // Base cell 8pt — enough room in 13px day cols for single CJK/Latin chars
-    const CS  = `border:1px solid #888;padding:1px 1px;text-align:center;vertical-align:middle;font-size:8pt;${F}`;
-    const HS  = CS + 'background:#4472C4;color:#fff;font-weight:bold;';
-    const HDS = CS + 'background:#2F5496;color:#fff;font-weight:bold;';
-    const HSG = CS + 'background:#F4B8A0;color:#333;font-weight:bold;';
-    const HCN = CS + 'background:#4472C4;color:#fff;font-weight:bold;font-size:6.5pt;line-height:1.3;';
-    const HWK = CS + 'background:#2F5496;color:#fff;font-weight:bold;';   // weekend header
-    const CNT = CS + 'background:#DEEAF1;';
-    const SIG = CS + 'background:#FDE9D9;';
-    const RMK = `border:1px solid #888;padding:1px 3px;text-align:left;vertical-align:middle;white-space:normal;word-break:break-all;font-size:7pt;background:#FDE9D9;${F}`;
-
-    const dCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.d)}</th>`;
-    const wCell = di => `<th style="${di.isSat||di.isSun?HWK:HS}width:13px;">${C(di.weekday)}</th>`;
-    const eDay  = ()  => `<th style="${HS}width:13px;"></th>`;
-    const eCnt  = ()  => `<th style="${HS}width:28px;"></th>`;
-
-    // Merge consecutive same-month day columns into one colspan cell
-    const monthGroupCells = (() => {
-      const groups = [];
-      dayInfos.forEach(di => {
-        if (!groups.length || groups[groups.length-1].month !== di.month) {
-          groups.push({ month: di.month, count: 1 });
-        } else {
-          groups[groups.length-1].count++;
-        }
-      });
-      return groups.map(g =>
-        `<th style="${HS}" colspan="${g.count}">${C(g.month)}</th>`
-      ).join('');
-    })();
-
-    const dateCells  = dayInfos.map(dCell).join('');
-    const weekCells  = dayInfos.map(wCell).join('');
-    const emptyDays  = dayInfos.map(eDay).join('');
-    const emptyCount = eCnt()+eCnt()+eCnt()+eCnt();
-
-    const empRows = emps.map((emp,idx)=>{
-      const rowBg = idx%2===1 ? 'background:#FFF5F5;' : '';
-      const dayCells = dayInfos.map(di=>{
-        const code = getCode(emp,di.d);
-        const wkBg = di.isSat||di.isSun ? 'background:#DAE3F3;' : rowBg;
-        return `<td style="${CS}${wkBg}${codeStyle(code)}">${C(code)}</td>`;
-      }).join('');
-      const leave=countCode(emp,'事')+countCode(emp,'病'), rest=countCode(emp,'休'),
-            hol=countCode(emp,'例'), nat=countCode(emp,'國'), rmk=getRemarks(emp);
-      return `<tr style="height:21px;">
-        <td style="${CS}${rowBg}font-size:7.5pt;">${C(esc(emp.empId))}</td>
-        <td style="${CS}${rowBg}font-size:8pt;">${C(esc(emp.name))}</td>
-        ${dayCells}
-        <td style="${CNT}">${C(leave)}</td><td style="${CNT}">${C(rest)}</td>
-        <td style="${CNT}">${C(hol)}</td><td style="${CNT}">${C(nat)}</td>
-        <td style="${SIG}"></td><td style="${SIG}"></td>
-        <td style="${RMK}">${esc(rmk)}</td>
-      </tr>`;
-    }).join('');
-
-    const html = `<div style="font-size:8pt;background:#fff;padding:0;margin:0;${F}">
-<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:2px;">
-  <tr>
-    <td style="border:none;color:#CC0000;font-weight:bold;font-size:12pt;white-space:nowrap;padding:0 8px 0 0;${F}">${companyName}</td>
-    <td style="border:none;font-weight:bold;font-size:12pt;text-align:center;${F}">當月排班確認表</td>
-    <td style="border:none;font-weight:bold;font-size:9pt;text-align:right;white-space:nowrap;${F}">確認排班區間：${rocYear}年${selectedMonth}月1日&nbsp;~&nbsp;${rocYear}年${selectedMonth}月${daysInMonth}日</td>
-  </tr>
-</table>
-<table style="width:100%;border-collapse:collapse;border:none;margin-bottom:3px;">
-  <tr>
-    <td style="border:none;font-size:8pt;line-height:1.65;vertical-align:top;padding-right:6px;${F}">
-      <div>1.&nbsp;本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。</div>
-      <div style="margin-left:14px;">※班別／狀態說明：V＝出勤日　例＝例假日　休＝休假日　事＝事假　病＝病假　國＝國定假日</div>
-      <div>2.&nbsp;當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。</div>
-    </td>
-    <td style="border:2px solid #888;width:160px;text-align:center;vertical-align:middle;font-weight:bold;font-size:9pt;padding:6px 4px;${F}">人力廠商&nbsp;假別確認簽章</td>
-  </tr>
-</table>
-<table style="border-collapse:collapse;width:100%;table-layout:fixed;">
-  <colgroup>
-    <col style="width:86px"><col style="width:72px">
-    ${dayInfos.map(()=>`<col style="width:13px">`).join('')}
-    <col style="width:28px"><col style="width:28px"><col style="width:28px"><col style="width:28px">
-    <col style="width:52px"><col style="width:52px"><col>
-  </colgroup>
-  <thead>
-    <tr>
-      <th style="${HS}" colspan="2">月份</th>
-      ${monthGroupCells}
-      <th style="${HDS}" colspan="4">各假別計算</th>
-      <th style="${HSG}" rowspan="4">員工簽名</th>
-      <th style="${HSG}" rowspan="4">確認日期</th>
-      <th style="${HSG}" rowspan="4">備註</th>
-    </tr>
-    <tr>
-      <th style="${HS}" colspan="2">日期</th>
-      ${dateCells}
-      <th style="${HCN}" rowspan="3">請假<br>天數</th><th style="${HCN}" rowspan="3">休假<br>天數</th>
-      <th style="${HCN}" rowspan="3">例假日<br>天數</th><th style="${HCN}" rowspan="3">國定<br>假日<br>天數</th>
-    </tr>
-    <tr>
-      <th style="${HS}" colspan="2">星期</th>
-      ${weekCells}
-    </tr>
-    <tr>
-      <th style="${HS}">員工編號</th><th style="${HS}">員工姓名</th>
-      ${emptyDays}
-    </tr>
-  </thead>
-  <tbody>${empRows}</tbody>
-</table>
-</div>`;
-
-    toast(`正在產生 PDF，請稍候…`, 'info');
-
-    // Use 'string' mode — html2pdf manages its own DOM lifecycle and render timing
-    html2pdf().set({
-      margin:       [8, 6, 8, 6],
-      filename:     `班表_${vendor}_${rocYear}年${selectedMonth}月.pdf`,
-      image:        { type: 'jpeg', quality: 0.97 },
-      html2canvas:  { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' },
-    }).from(html, 'string').save().then(() => {
-      toast(`已下載 ${vendor} PDF 班表`, 'success');
-    }).catch(err => {
-      toast('PDF 產生失敗：' + err.message, 'error');
-    });
-  };
 
   const vendors = useMemo(() => [...new Set(scopedEmployees.map(e => e.vendor))], [scopedEmployees]);
 
@@ -3288,12 +3126,8 @@ function Reports() {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => exportVendor(vendor)}
-                  className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                  className="w-full py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
                   📊 匯出 Excel
-                </button>
-                <button onClick={() => exportVendorPDF(vendor)}
-                  className="flex-1 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700">
-                  📄 匯出 PDF
                 </button>
               </div>
             </div>
