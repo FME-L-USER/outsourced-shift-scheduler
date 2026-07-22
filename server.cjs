@@ -97,6 +97,8 @@ async function initDB() {
 
   // 大溪倉員工帳號與清冊種子資料（冪等，重複執行不會重複建立）
   await seedDaxiEmployees();
+  // 大肚倉/岡山倉員工帳號與清冊種子資料（role=area，可使用所有分頁功能）
+  await seedAreaEmployees();
 }
 
 // ── 大溪倉員工種子資料 ────────────────────────────────────────────────────────
@@ -195,6 +197,104 @@ async function seedDaxiEmployees() {
     [{ ...state, employees: merged }]
   );
   console.log(`大溪倉員工清冊：新增 ${toAdd.length} 筆`);
+}
+
+// ── 大肚倉/岡山倉 Area 員工種子資料 ──────────────────────────────────────────
+// role=area：可使用所有分頁功能（班表管理、點名表、人員清冊、報表、班別設定等）
+// 注意：同一帳號出現在多課別時，清冊建多筆，帳號建一筆（ON CONFLICT DO NOTHING）
+const AREA_EMPLOYEES = [
+  // 大肚倉、大肚理貨課
+  { u: 'ef322202',   n: '李依芳', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'grace',      n: '李貴瑜', d: '大肚理貨課', wh: '大肚倉' },  // 帳號已存在(admin)，跳過建立
+  { u: 'seven0826',  n: '卓亭宜', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'lan0916',    n: '周春蘭', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'kunyi',      n: '林坤易', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'luu1204',    n: '林芸羽', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'ting0424',   n: '林宴停', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'emma',       n: '張惠真', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'bei57617',   n: '陳芊貝', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'jar147258',  n: '陳宜蓁', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'jessica',    n: '陳美英', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'green8',     n: '温哲凱', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'funnyjesus', n: '游世萱', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'david0403',  n: '黃冠龍', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'boom517',    n: '廖玲平', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'ru850513',   n: '潘如瑩', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'reyisummer', n: '蕭俐芸', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'sakula',     n: '謝佳蓁', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'usacoca',    n: '謝尚蓁', d: '大肚理貨課', wh: '大肚倉' },
+  { u: 'c830627',    n: '蘇柏任', d: '大肚理貨課', wh: '大肚倉' },
+  // 大肚倉、大肚運務課
+  { u: 'alanwn',     n: '王世輝', d: '大肚運務課', wh: '大肚倉' },
+  { u: '5000xp',     n: '余武謙', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'zongyue27',  n: '呂宗岳', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'luckyx67',   n: '陳育棋', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'reyi1002',   n: '彭惠美', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'vincent',    n: '黃文呈', d: '大肚運務課', wh: '大肚倉' },  // 同時在岡山營運課
+  { u: 'graciaywl',  n: '廖弈雯', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'liou0707',   n: '劉芷榕', d: '大肚運務課', wh: '大肚倉' },
+  { u: 'lyx01912',   n: '賴宜欣', d: '大肚運務課', wh: '大肚倉' },
+  // 岡山倉、岡山營運課
+  { u: 'nina2628',     n: '何凰薇', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'njwu09',       n: '吳念臻', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'shiyaolin9',   n: '林士堯', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'd8r999123',    n: '張文仁', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'yingyun',      n: '張孆芸', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'yimin',        n: '郭依旻', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'vivn',         n: '陳家淇', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'vincent',      n: '黃文呈', d: '岡山營運課', wh: '岡山倉' },  // 清冊多一筆，帳號不重建
+  { u: 'l098316816',   n: '楊凱汎', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'amber1253',    n: '葉宇涵', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'orzyaloco',    n: '葉濡溢', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'hsuan',        n: '蔡昀暄', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'leo0961',      n: '鄧勝献', d: '岡山營運課', wh: '岡山倉' },
+  { u: 'allthebest',   n: '賴建廷', d: '岡山營運課', wh: '岡山倉' },
+];
+
+async function seedAreaEmployees() {
+  // 取得已建立帳號集合，避免重複
+  const { rows: existingUsers } = await pool.query('SELECT username FROM users');
+  const existingUsernames = new Set(existingUsers.map(r => r.username));
+
+  // 1. 建立 users（role=area，ON CONFLICT DO NOTHING 保護現有帳號）
+  const uniqueUsers = [...new Map(AREA_EMPLOYEES.map(e => [e.u, e])).values()];
+  let usersCreated = 0;
+  for (const e of uniqueUsers) {
+    if (existingUsernames.has(e.u)) continue; // 已存在（含 grace admin）跳過
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
+       VALUES ($1, $2, 'ad_auth_only', 'area', true, $3, '{}', '{}')
+       ON CONFLICT (username) DO NOTHING`,
+      [e.u, e.u, e.n]
+    );
+    usersCreated++;
+  }
+  if (usersCreated > 0) console.log(`大肚/岡山員工帳號：新建 ${usersCreated} 筆`);
+
+  // 2. 更新 app_state.employees（每個倉別+課別的員工清冊，vincent 建兩筆）
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const state = rows[0]?.data;
+  if (!state) return;
+
+  const existing    = Array.isArray(state.employees) ? state.employees : [];
+  const existingIds = new Set(existing.map(e => e.id));
+
+  const toAdd = [];
+  for (const e of AREA_EMPLOYEES) {
+    const empId = `emp_${e.u}_${e.d.replace(/[^a-z0-9]/gi, '')}`;
+    if (!existingIds.has(empId)) {
+      toAdd.push({ id: empId, empId: e.u, name: e.n, vendor: '', dept: e.d, group: '', status: '在職' });
+    }
+  }
+
+  if (toAdd.length === 0) return;
+  const merged = [...existing, ...toAdd];
+  await pool.query(
+    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1, NOW())
+     ON CONFLICT (id) DO UPDATE SET data = $1, updated_at = NOW()`,
+    [{ ...state, employees: merged }]
+  );
+  console.log(`大肚/岡山員工清冊：新增 ${toAdd.length} 筆`);
 }
 
 // ── EIP AD 驗證 ───────────────────────────────────────────
