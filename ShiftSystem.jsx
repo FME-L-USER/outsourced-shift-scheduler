@@ -1108,7 +1108,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
         {!collapsed && (
           <div className="mb-2 text-xs text-slate-400 truncate">
             <div className="font-medium text-slate-200">{currentUser.name}</div>
-            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
+            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
           </div>
         )}
         <button onClick={onLogout}
@@ -1312,7 +1312,7 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
         <div className="p-4 border-t border-[#1C4A46] text-sm text-slate-300">
           <div className="font-medium text-slate-200 mb-1">{currentUser.name}</div>
           <div className="text-xs text-slate-400 mb-3">
-            {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '當區幹部' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
+            {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
           </div>
           <button onClick={onLogout} className="flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors">
             <span>🚪</span><span>登出</span>
@@ -5800,7 +5800,7 @@ function AccountManagement() {
       : [...(p.allowedWarehouses ?? []), whId],
   }));
 
-  const roleLabel = { admin: '管理員', area: '當區幹部', vendor: '委外幹部', worker: '委外人員' };
+  const roleLabel = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員' };
   const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
 
   const pendingUsers = users.filter(u => u.approved === false);
@@ -6086,7 +6086,7 @@ function AccountManagement() {
               <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
                 className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
                 <option value={ROLES.ADMIN}>管理員</option>
-                <option value={ROLES.AREA}>當區幹部</option>
+                <option value={ROLES.AREA}>日翊</option>
                 <option value={ROLES.VENDOR}>委外幹部</option>
               </select>
             </div>
