@@ -289,7 +289,7 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ── GET /api/state ────────────────────────────────────────
-app.get('/api/state', requireAuth, async (req, res) => {
+app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   res.json(rows[0]?.data ?? null);
 });
