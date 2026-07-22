@@ -94,6 +94,107 @@ async function initDB() {
     );
     console.log('建立初始管理員帳號：reyi');
   }
+
+  // 大溪倉員工帳號與清冊種子資料（冪等，重複執行不會重複建立）
+  await seedDaxiEmployees();
+}
+
+// ── 大溪倉員工種子資料 ────────────────────────────────────────────────────────
+const DAXI_EMPLOYEES = [
+  // 大溪倉、倉儲管理課
+  { u: 'cami700220', n: '李淑惠', d: '倉儲管理課' },
+  { u: 'judy',       n: '林麗雲', d: '倉儲管理課' },
+  { u: 'beyi',       n: '洪淑娥', d: '倉儲管理課' },
+  { u: 'papa0130',   n: '洪逸樺', d: '倉儲管理課' },
+  { u: 'lin',        n: '張秋梅', d: '倉儲管理課' },
+  { u: 'adychang',   n: '張綾娟', d: '倉儲管理課' },
+  { u: 'wandychen',  n: '陳怡如', d: '倉儲管理課' },
+  { u: 'choeuyi',    n: '陳明憶', d: '倉儲管理課' },
+  { u: 'lulu5566',   n: '曾郁茹', d: '倉儲管理課' },
+  { u: 'angieliau',  n: '廖亞仙', d: '倉儲管理課' },
+  { u: 'soda0968',   n: '蔡欣如', d: '倉儲管理課' },
+  { u: 'lynn110501', n: '鄭伊伶', d: '倉儲管理課' },
+  { u: 'huei',       n: '蕭嘉慧', d: '倉儲管理課' },
+  { u: 'antin',      n: '鮑玉婷', d: '倉儲管理課' },
+  { u: 'ebba',       n: '鍾惠玲', d: '倉儲管理課' },
+  // 大溪倉、大溪理貨一課
+  { u: 'una800607',  n: '王敏瑜', d: '大溪理貨一課' },
+  { u: 'd57633',     n: '王歆語', d: '大溪理貨一課' },
+  { u: 'a033825385', n: '王語喬', d: '大溪理貨一課' },
+  { u: 'x6706889',   n: '呂芷軒', d: '大溪理貨一課' },
+  { u: 'kiki1123',   n: '呂嘉綾', d: '大溪理貨一課' },
+  { u: 'lee0929',    n: '李育瑄', d: '大溪理貨一課' },
+  { u: 'wei',        n: '李薇',   d: '大溪理貨一課' },
+  { u: 'huj102001',  n: '林昀安', d: '大溪理貨一課' },
+  { u: 'an05566',    n: '林明霞', d: '大溪理貨一課' },
+  { u: 'a3731703',   n: '林羅響', d: '大溪理貨一課' },
+  { u: 'cpu1020',    n: '邱品惠', d: '大溪理貨一課' },
+  { u: 't48568',     n: '邱綉婷', d: '大溪理貨一課' },
+  { u: 'car55688',   n: '徐輔懋', d: '大溪理貨一課' },
+  { u: 'king',       n: '高政華', d: '大溪理貨一課' },
+  { u: 'yan',        n: '張雁婷', d: '大溪理貨一課' },
+  { u: 'ry10806005', n: '許佑豪', d: '大溪理貨一課' },
+  { u: 'mingli1125', n: '彭明莉', d: '大溪理貨一課' },
+  { u: 'lv6868',     n: '温惠君', d: '大溪理貨一課' },
+  { u: 'qaz1346',    n: '黃邱鴻', d: '大溪理貨一課' },
+  { u: 'd10813023',  n: '黃俊誠', d: '大溪理貨一課' },
+  { u: 'zmliu',      n: '劉姿旻', d: '大溪理貨一課' },
+  { u: 'ooxx0105',   n: '蔡晏如', d: '大溪理貨一課' },
+  { u: 'mini0228',   n: '賴韋妏', d: '大溪理貨一課' },
+  { u: 'luo',        n: '駱佩妏', d: '大溪理貨一課' },
+  { u: 'm5426',      n: '駱眉綺', d: '大溪理貨一課' },
+  // 大溪倉、大溪理貨二課
+  { u: 'yu0314',     n: '方心妤', d: '大溪理貨二課' },
+  { u: 'bigcavan',   n: '全雅慈', d: '大溪理貨二課' },
+  { u: 'jiu120914',  n: '江映慈', d: '大溪理貨二課' },
+  { u: 'kelly1009',  n: '呂羿螢', d: '大溪理貨二課' },
+  { u: 'the1053',    n: '林玠含', d: '大溪理貨二課' },
+  { u: 'beverly',    n: '林育瑩', d: '大溪理貨二課' },
+  { u: 'avon',       n: '林雅芳', d: '大溪理貨二課' },
+  { u: 'yilu1983',   n: '陳怡茹', d: '大溪理貨二課' },
+  { u: 'yung',       n: '陳詩永', d: '大溪理貨二課' },
+  { u: 'cschen',     n: '陳嘉興', d: '大溪理貨二課' },
+  { u: 'winnie2023', n: '黃安笛', d: '大溪理貨二課' },
+  { u: 'liwen1212',  n: '董麗雯', d: '大溪理貨二課' },
+  { u: 'jz13',       n: '劉俊助', d: '大溪理貨二課' },
+  { u: 'ning',       n: '鄭亦甯', d: '大溪理貨二課' },
+  { u: 'zheng1212',  n: '鄭喻云', d: '大溪理貨二課' },
+  { u: 'hw289',      n: '鄭惠雯', d: '大溪理貨二課' },
+  { u: 'jiarong84',  n: '謝佳蓉', d: '大溪理貨二課' },
+  { u: 'upin0122',   n: '鍾玉屏', d: '大溪理貨二課' },
+];
+
+async function seedDaxiEmployees() {
+  // 1. 批次建立 users（ON CONFLICT DO NOTHING，冪等）
+  for (const e of DAXI_EMPLOYEES) {
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
+       VALUES ($1, $2, 'ad_auth_only', 'worker', true, $3, '{}', '{}')
+       ON CONFLICT (username) DO NOTHING`,
+      [e.u, e.u, e.n]
+    );
+  }
+
+  // 2. 將員工加入 app_state.employees（僅新增不存在的）
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const state = rows[0]?.data;
+  if (!state) return; // app_state 尚未初始化，等管理員首次登入後再寫入
+
+  const existing   = Array.isArray(state.employees) ? state.employees : [];
+  const existingUs = new Set(existing.map(e => (e.empId || '').toLowerCase()));
+  const toAdd = DAXI_EMPLOYEES
+    .filter(e => !existingUs.has(e.u))
+    .map(e => ({ id: `emp_${e.u}`, empId: e.u, name: e.n, vendor: '', dept: e.d, group: '', status: '在職' }));
+
+  if (toAdd.length === 0) return;
+
+  const merged = [...existing, ...toAdd];
+  await pool.query(
+    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1, NOW())
+     ON CONFLICT (id) DO UPDATE SET data = $1, updated_at = NOW()`,
+    [{ ...state, employees: merged }]
+  );
+  console.log(`大溪倉員工清冊：新增 ${toAdd.length} 筆`);
 }
 
 // ── EIP AD 驗證 ───────────────────────────────────────────
