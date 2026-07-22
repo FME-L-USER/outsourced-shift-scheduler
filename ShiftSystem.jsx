@@ -764,6 +764,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             id: `api_${data.user.id}`, username: data.user.username, name: data.user.username,
             role: apiRole, vendors: vendors.map(v => v.name),
             permissions: getDefaultPermissions(apiRole),
+            allowedWarehouses: data.user.allowedWarehouses || [],
             approved: true, _apiAuth: true,
           }, data.token);
           return;
@@ -6387,12 +6388,15 @@ export default function App() {
       .then(apiUser => {
         if (!apiUser) { localStorage.removeItem(JWT_KEY); return; }
         const role = apiUser.role === 'admin' ? ROLES.ADMIN : ROLES.AREA;
+        const allowedWh = apiUser.allowedWarehouses || [];
         setCurrentUser({
           id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.username,
           role, vendors: vendors.map(v => v.name),
           permissions: getDefaultPermissions(role),
+          allowedWarehouses: allowedWh,
           approved: true, _apiAuth: true,
         });
+        if (allowedWh.length === 1) setSelectedWarehouse(allowedWh[0]);
         loadServerState(token);
       })
       .catch(() => localStorage.removeItem(JWT_KEY));
