@@ -472,7 +472,7 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = String(req.params.id).trim();
   if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
-  const { role, approved, page_perms, fn_perms } = req.body ?? {};
+  const { role, approved, page_perms, fn_perms, allowed_warehouses } = req.body ?? {};
 
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (!existing[0]) return res.status(404).json({ error: '找不到此帳號' });
@@ -481,10 +481,11 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 
   const sets = [], vals = [];
-  if (role       !== undefined) { vals.push(role);       sets.push(`role=$${vals.length}`); }
-  if (approved   !== undefined) { vals.push(approved);   sets.push(`approved=$${vals.length}`); }
-  if (page_perms !== undefined) { vals.push(page_perms); sets.push(`page_perms=$${vals.length}`); }
-  if (fn_perms   !== undefined) { vals.push(fn_perms);   sets.push(`fn_perms=$${vals.length}`); }
+  if (role               !== undefined) { vals.push(role);               sets.push(`role=$${vals.length}`); }
+  if (approved           !== undefined) { vals.push(approved);           sets.push(`approved=$${vals.length}`); }
+  if (page_perms         !== undefined) { vals.push(page_perms);         sets.push(`page_perms=$${vals.length}`); }
+  if (fn_perms           !== undefined) { vals.push(fn_perms);           sets.push(`fn_perms=$${vals.length}`); }
+  if (allowed_warehouses !== undefined) { vals.push(allowed_warehouses); sets.push(`allowed_warehouses=$${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: '無可更新欄位' });
 
   vals.push(id);

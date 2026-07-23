@@ -4260,26 +4260,33 @@ function Settings() {
   const [end,   setEnd]   = useState(scheduleRange.end   ?? '');
 
   // ── 廠商別 modal 狀態 ──
-  const emptyVd = { id: '', code: '', name: '' };
+  const emptyVd = { id: '', code: '', name: '', companyHeader: '' };
   const [vdModal,  setVdModal]  = useState(false);
   const [vdTarget, setVdTarget] = useState(null);
   const [vdForm,   setVdForm]   = useState(emptyVd);
 
   const openAddVd  = () => { setVdForm(emptyVd); setVdTarget(null); setVdModal(true); };
-  const openEditVd = vd => { setVdForm({ ...vd }); setVdTarget(vd); setVdModal(true); };
+  const openEditVd = vd => { setVdForm({ companyHeader: vendorCompanyNames[vd.name] ?? '', ...vd }); setVdTarget(vd); setVdModal(true); };
 
   const saveVd = () => {
     if (!vdForm.name.trim()) { toast('廠商名稱為必填', 'error'); return; }
     if (vendors.some(v => v.name === vdForm.name.trim() && v.id !== vdForm.id)) {
       toast('已有相同廠商名稱', 'error'); return;
     }
-    const updated = { ...vdForm, name: vdForm.name.trim(), code: vdForm.code.trim().toUpperCase() };
+    const updated = { ...vdForm, name: vdForm.name.trim(), code: vdForm.code.trim().toUpperCase(), companyHeader: vdForm.companyHeader.trim() };
     if (vdTarget) {
       setVendors(prev => prev.map(v => v.id === updated.id ? updated : v));
       toast('廠商已更新：' + updated.name, 'success');
     } else {
       setVendors(prev => [...prev, { ...updated, id: 'vd_' + Date.now() }]);
       toast('已新增廠商：' + updated.name, 'success');
+    }
+    if (updated.companyHeader) {
+      setVendorCompanyNames(prev => {
+        const next = { ...prev, [updated.name]: updated.companyHeader };
+        LS.set('sms_vendor_company_names', next);
+        return next;
+      });
     }
     setVdModal(false);
   };
@@ -4583,10 +4590,17 @@ function Settings() {
             <p className="text-xs text-slate-400 mt-0.5">每個倉可設定多個課別，每個課別再配置所屬廠商。</p>
           </div>
           <button onClick={openAddWh}
-            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            disabled={vendors.length === 0}
+            title={vendors.length === 0 ? '請先在「廠商別維護」新增廠商' : undefined}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
             ➕ 新增倉別
           </button>
         </div>
+        {vendors.length === 0 && (
+          <div className="mb-4 flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+            <span>⚠️</span> 請先在上方「廠商別維護」新增廠商，再設定倉別與課別的廠商配置。
+          </div>
+        )}
 
         {warehouses.length === 0 && (
           <p className="text-sm text-slate-400 text-center py-6">尚未設定任何倉別</p>
@@ -4731,13 +4745,22 @@ function Settings() {
                 maxLength={6}
                 className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm uppercase" />
             </div>
-            <div className="mb-5">
+            <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">
                 廠商名稱 <span className="text-red-400">*</span>
               </label>
               <input value={vdForm.name}
                 onChange={e => setVdForm(p => ({ ...p, name: e.target.value }))}
                 placeholder="例如：承杺"
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                公司抬頭 <span className="text-slate-400 font-normal text-xs">（Excel／報表顯示的全名）</span>
+              </label>
+              <input value={vdForm.companyHeader ?? ''}
+                onChange={e => setVdForm(p => ({ ...p, companyHeader: e.target.value }))}
+                placeholder="例如：承杺人力資源有限公司"
                 className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
             <div className="flex gap-2 justify-end">
@@ -5708,13 +5731,56 @@ function ShiftCodeTable() {
 // ─────────────────────────────────────────────
 
 function AccountManagement() {
-  const { users, setUsers, vendors, warehouses } = useApp();
+  const { users, setUsers, vendors, warehouses, currentUser } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
 
   // ── 分頁 Tab ──
   const [activeTab,   setActiveTab]   = useState('staff');
   const [expandedId,  setExpandedId]  = useState(null);
+
+  // ── AD 員工清單（從後端取得）──
+  const [apiUsers,       setApiUsers]       = useState([]);
+  const [apiUsersLoaded, setApiUsersLoaded] = useState(false);
+  const [savingWhFor,    setSavingWhFor]    = useState(null);
+
+  useEffect(() => {
+    if (!currentUser?._apiAuth) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) { setApiUsers(data); setApiUsersLoaded(true); } })
+      .catch(() => {});
+  }, [currentUser]);
+
+  const updateApiUserWh = async (userId, newWh) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setSavingWhFor(userId);
+    try {
+      const r = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ allowed_warehouses: newWh }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+        toast('倉別權限已更新：' + updated.username, 'success');
+      } else {
+        toast('更新失敗', 'error');
+      }
+    } catch {
+      toast('更新失敗', 'error');
+    } finally {
+      setSavingWhFor(null);
+    }
+  };
+
+  // ── 委外人員搜尋 ──
+  const [workerSearchName, setWorkerSearchName] = useState('');
+  const [workerSearchId,   setWorkerSearchId]   = useState('');
 
   // ── 帳號新增 / 編輯 Modal ──
   const [showModal, setShowModal] = useState(false);
@@ -5805,12 +5871,33 @@ function AccountManagement() {
 
   const pendingUsers = users.filter(u => u.approved === false);
   const staffUsers   = users.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role) && u.approved !== false);
-  const vendorUsers  = users.filter(u => u.role === ROLES.VENDOR && u.approved !== false);
-  const tabUsers     = activeTab === 'staff' ? staffUsers : vendorUsers;
+
+  // Tab 2: 廠商帳號 — 依登入員工的倉別×課別×廠商別綁定過濾可見廠商
+  const allowedWhForFilter = currentUser?.role === ROLES.ADMIN ? null : (currentUser?.allowedWarehouses ?? []);
+  const visibleVendorNames = allowedWhForFilter === null
+    ? null
+    : allowedWhForFilter.length === 0
+      ? null
+      : new Set(
+          warehouses
+            .filter(w => allowedWhForFilter.includes(w.id))
+            .flatMap(w => w.departments ?? [])
+            .flatMap(d => d.vendors ?? [])
+        );
+  const vendorUsers = users.filter(u =>
+    u.role === ROLES.VENDOR && u.approved !== false &&
+    (visibleVendorNames === null || (u.vendors ?? []).some(v => visibleVendorNames.has(v)))
+  );
+
+  const tabUsers = activeTab === 'staff' ? staffUsers : vendorUsers;
 
   // 委外人員 tab：從員工清冊取得，標示是否已升級為幹部帳號
   const { employees } = useApp();
-  const workerEmpList = employees.filter(e => e.status !== '離職');
+  const workerEmpListAll = employees.filter(e => e.status !== '離職');
+  const workerEmpList = workerEmpListAll.filter(e =>
+    (!workerSearchName || e.name?.includes(workerSearchName)) &&
+    (!workerSearchId   || e.empId?.includes(workerSearchId))
+  );
   const upgradedEmpIds = new Set(
     users.filter(u => u.role === ROLES.VENDOR && u.employeeId).map(u => u.employeeId)
   );
@@ -5842,9 +5929,9 @@ function AccountManagement() {
   };
 
   const TAB_CFG = [
-    { key: 'staff',  label: '員工帳號', icon: '🏢', count: staffUsers.length },
+    { key: 'staff',  label: '員工帳號', icon: '🏢', count: apiUsersLoaded ? apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).length : staffUsers.length },
     { key: 'vendor', label: '廠商帳號', icon: '🤝', count: vendorUsers.length },
-    { key: 'worker', label: '委外人員', icon: '👷', count: workerEmpList.length },
+    { key: 'worker', label: '委外人員', icon: '👷', count: workerEmpListAll.length },
   ];
 
   return (
@@ -5904,6 +5991,24 @@ function AccountManagement() {
 
       {/* ── 委外人員 Tab ── */}
       {activeTab === 'worker' && (
+        <div>
+        <div className="flex gap-2 mb-3">
+          <input value={workerSearchName} onChange={e => setWorkerSearchName(e.target.value)}
+            placeholder="搜尋姓名…"
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-40" />
+          <input value={workerSearchId} onChange={e => setWorkerSearchId(e.target.value)}
+            placeholder="搜尋員編…"
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-36" />
+          {(workerSearchName || workerSearchId) && (
+            <button onClick={() => { setWorkerSearchName(''); setWorkerSearchId(''); }}
+              className="px-3 py-1.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC]">
+              清除
+            </button>
+          )}
+          <span className="ml-auto text-xs text-slate-400 self-center">
+            顯示 {workerEmpList.length} / {workerEmpListAll.length} 筆
+          </span>
+        </div>
         <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
           <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                           bg-slate-100 px-4 py-2.5 border-b border-[#DDD9D0]"
@@ -5946,10 +6051,51 @@ function AccountManagement() {
             })}
           </div>
         </div>
+        </div>
       )}
 
       {/* 清單表頭（員工 / 廠商 tab） */}
-      {activeTab !== 'worker' && (
+      {/* ── 員工帳號 Tab：AD 員工清單（API mode） ── */}
+      {activeTab === 'staff' && apiUsersLoaded && (
+        <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+          <div className="bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0] flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">AD 員工帳號（{apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).length} 筆）</span>
+            <span className="text-xs text-slate-400">可設定每位員工可使用的倉別</span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).map(u => (
+              <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
+                <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>{roleLabel[u.role]}</span>
+                <span className="text-xs text-slate-400 shrink-0">可用倉別：</span>
+                <div className="flex flex-wrap gap-2 flex-1">
+                  {warehouses.map(w => {
+                    const checked = (u.allowedWarehouses ?? []).includes(w.id);
+                    return (
+                      <label key={w.id} className="flex items-center gap-1 cursor-pointer text-sm select-none">
+                        <input type="checkbox"
+                          checked={checked}
+                          disabled={u.role === ROLES.ADMIN || savingWhFor === u.id}
+                          onChange={() => {
+                            const cur = u.allowedWarehouses ?? [];
+                            const next = checked ? cur.filter(x => x !== w.id) : [...cur, w.id];
+                            updateApiUserWh(u.id, next);
+                          }}
+                          className="rounded accent-teal-600" />
+                        <span className={u.role === ROLES.ADMIN ? 'text-slate-400' : ''}>{w.name}</span>
+                      </label>
+                    );
+                  })}
+                  {u.role === ROLES.ADMIN && <span className="text-xs text-slate-400 italic">管理員可使用全部倉別</span>}
+                  {savingWhFor === u.id && <span className="text-xs text-slate-400">儲存中…</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(activeTab === 'vendor' || (activeTab === 'staff' && !apiUsersLoaded)) && (
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                       bg-slate-100 rounded-t-xl px-4 py-2.5 border border-[#DDD9D0]"
            style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
@@ -5963,7 +6109,7 @@ function AccountManagement() {
       </div>
       )}
 
-      {activeTab !== 'worker' && (
+      {(activeTab === 'vendor' || (activeTab === 'staff' && !apiUsersLoaded)) && (
       <div className="border border-[#DDD9D0] rounded-b-xl divide-y divide-slate-100 overflow-hidden">
         {tabUsers.map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
