@@ -6066,6 +6066,7 @@ function AccountManagement() {
             {apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).map(u => (
               <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
+                {u.display_name && <span className="text-sm text-slate-600 shrink-0">{u.display_name}</span>}
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>{roleLabel[u.role]}</span>
                 <span className="text-xs text-slate-400 shrink-0">可用倉別：</span>
                 <div className="flex flex-wrap gap-2 flex-1">
