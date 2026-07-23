@@ -592,7 +592,7 @@ function ForcePwdChange({ user, onDone }) {
   );
 }
 
-function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwds = {} }) {
+function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwds = {}, warehouses = [] }) {
   // identity: null | 'riyi' | 'vendor_mgr' | 'worker' | 'register'
   const [identity, setIdentity] = useState('');
   const [username, setUsername] = useState('');
@@ -655,7 +655,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   }, [captcha, identity]);
 
   // 申請表單狀態
-  const [regForm, setRegForm] = useState({ username: '', password: '', confirm: '', name: '', vendor: '' });
+  const [regForm, setRegForm] = useState({ username: '', password: '', confirm: '', name: '', warehouse: '', vendor: '' });
   const [regError, setRegError] = useState('');
   const [regDone, setRegDone] = useState(false);
 
@@ -816,7 +816,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     if (lastReg && Date.now() - Number(lastReg) < 60000) {
       setRegError('操作過於頻繁，請稍候再試。'); return;
     }
-    if (!regForm.username || !regForm.password || !regForm.name || !regForm.vendor) {
+    if (!regForm.username || !regForm.password || !regForm.name || !regForm.warehouse || !regForm.vendor) {
       setRegError('所有欄位皆為必填'); return;
     }
     if (regForm.password !== regForm.confirm) {
@@ -837,7 +837,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       name: regForm.name,
       role: ROLES.VENDOR,
       vendors: [regForm.vendor],
-      allowedWarehouses: [],
+      allowedWarehouses: regForm.warehouse ? [regForm.warehouse] : [],
       approved: false,
     });
     setRegDone(true);
@@ -865,7 +865,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             <button type="button" onClick={() => setIdentity('')} className="text-slate-400 hover:text-slate-600 text-xl">‹</button>
             <div>
               <h1 className="text-xl font-bold text-slate-800">📝 申請廠商帳號</h1>
-              <p className="text-xs text-slate-400">送出後等候管理員審核</p>
+              <p className="text-xs text-red-600 font-medium">送出後等候管理員審核</p>
             </div>
           </div>
           {regError && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{regError}</div>}
@@ -882,12 +882,29 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                 className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
             </div>
           ))}
+          <div className="mb-3">
+            <label className="block text-sm font-medium text-slate-700 mb-1">所屬倉別</label>
+            <select value={regForm.warehouse}
+              onChange={e => setRegForm(p => ({ ...p, warehouse: e.target.value, vendor: '' }))}
+              className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+              <option value="">── 請選擇倉別 ──</option>
+              {warehouses.filter(w => (w.departments ?? []).some(d => (d.vendors ?? []).length > 0)).map(w => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-700 mb-1">所屬廠商</label>
             <select value={regForm.vendor} onChange={e => setRegForm(p => ({ ...p, vendor: e.target.value }))}
-              className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
-              <option value="">── 請選擇廠商 ──</option>
-              {vendorNames.map(v => <option key={v} value={v}>{v}</option>)}
+              disabled={!regForm.warehouse}
+              className="w-full px-3 py-2 border border-[#DDD9D0] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50 disabled:cursor-not-allowed">
+              <option value="">{regForm.warehouse ? '── 請選擇廠商 ──' : '── 請先選擇倉別 ──'}</option>
+              {regForm.warehouse && [
+                ...new Set(
+                  (warehouses.find(w => w.id === regForm.warehouse)?.departments ?? [])
+                    .flatMap(d => d.vendors ?? [])
+                )
+              ].map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
           <button type="submit" className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
@@ -6610,7 +6627,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <ToastProvider>
-        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} employees={employees} workerPwds={workerPwds} />
+        <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} employees={employees} workerPwds={workerPwds} warehouses={warehouses} />
       </ToastProvider>
     );
   }
