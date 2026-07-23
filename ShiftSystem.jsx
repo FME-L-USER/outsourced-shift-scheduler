@@ -2423,7 +2423,7 @@ function EmployeeRoster() {
   const visible = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     if (filterVendor !== '全部') list = list.filter(e => e.vendor === filterVendor);
     if (search.trim()) {
