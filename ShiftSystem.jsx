@@ -6515,13 +6515,55 @@ export default function App() {
   const forceSaveRef = useRef(false); // 匯入等重要操作後設 true，下次 effect 立即存
 
   const loadServerState = useCallback(async (token) => {
+    // 將本地 localStorage 全部狀態寫回 DB（用於本地資料比 DB 新的情況）
+    const writeLocalToServer = () => {
+      const localShiftTypesByWh = {};
+      Object.keys(localStorage)
+        .filter(k => k === 'sms_shift_types' || k.startsWith('sms_shift_types_'))
+        .forEach(k => {
+          const wk = k === 'sms_shift_types' ? 'default' : k.replace('sms_shift_types_', '');
+          try { localShiftTypesByWh[wk] = JSON.parse(localStorage.getItem(k)); } catch {}
+        });
+      serverSyncedRef.current = true;
+      fetch('/api/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          employees:          LS.get('sms_employees', []),
+          vendors:            LS.get('sms_vendors', []),
+          warehouses:         LS.get('sms_warehouses', []),
+          schedule:           LS.get('sms_schedule', {}),
+          systemLocked:       LS.get('sms_locked', false),
+          scheduleRange:      LS.get('sms_range', {}),
+          openHolidays:       LS.get('sms_open_holidays', []),
+          vendorHolidayOpen:  LS.get('sms_vendor_hol_open', false),
+          vendorCompanyNames: LS.get('sms_vendor_company_names', {}),
+          attendData:         LS.get('sms_attendance', {}),
+          extras:             LS.get('sms_attend_extras', {}),
+          shiftTypesByWh:     localShiftTypesByWh,
+          shiftCodeRows:      LS.get('sms_shiftcode_rows', []),
+          shiftCodeHeaders:   LS.get('sms_shiftcode_headers', []),
+        }),
+      }).catch(e => console.warn('本地回寫失敗:', e.message));
+    };
+
     try {
       const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) return;
       const state = await r.json();
-      // state 可能為 null（DB 全空）；用 optional chaining 統一處理
-      // DB 有資料才覆蓋本地；DB 空時保留 localStorage 資料
-      if (state?.employees?.length > 0)              setEmployees(state.employees);
+
+      const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
+      const localEmps  = LS.get('sms_employees', []);
+
+      // 本地員工數多於 DB → 代表有尚未入庫的匯入資料（例如之前 PUT 失敗）
+      // 保留本地資料（React 已從 localStorage 初始化），立即回寫 DB
+      if (localEmps.length > serverEmps.length) {
+        writeLocalToServer();
+        return;
+      }
+
+      // DB 資料不少於本地 → 以 DB 為準（正常情況）
+      if (serverEmps.length > 0)              setEmployees(serverEmps);
       if (state?.vendors?.length > 0)                setVendors(state.vendors);
       if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
       if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
@@ -6535,40 +6577,9 @@ export default function App() {
       if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
       if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
       if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
-      // DB 無員工資料時（含 state=null），立即將本地全部資料回寫 DB
-      if (!state?.employees?.length) {
-        const localEmployees = LS.get('sms_employees', []);
-        if (localEmployees.length > 0) {
-          const localShiftTypesByWh = {};
-          Object.keys(localStorage)
-            .filter(k => k === 'sms_shift_types' || k.startsWith('sms_shift_types_'))
-            .forEach(k => {
-              const wk = k === 'sms_shift_types' ? 'default' : k.replace('sms_shift_types_', '');
-              try { localShiftTypesByWh[wk] = JSON.parse(localStorage.getItem(k)); } catch {}
-            });
-          serverSyncedRef.current = true;
-          fetch('/api/state', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              employees:         localEmployees,
-              vendors:           LS.get('sms_vendors', []),
-              warehouses:        LS.get('sms_warehouses', []),
-              schedule:          LS.get('sms_schedule', {}),
-              systemLocked:      LS.get('sms_locked', false),
-              scheduleRange:     LS.get('sms_range', {}),
-              openHolidays:      LS.get('sms_open_holidays', []),
-              vendorHolidayOpen: LS.get('sms_vendor_hol_open', false),
-              vendorCompanyNames: LS.get('sms_vendor_company_names', {}),
-              attendData:        LS.get('sms_attendance', {}),
-              extras:            LS.get('sms_attend_extras', {}),
-              shiftTypesByWh:    localShiftTypesByWh,
-              shiftCodeRows:     LS.get('sms_shiftcode_rows', []),
-              shiftCodeHeaders:  LS.get('sms_shiftcode_headers', []),
-            }),
-          }).catch(e => console.warn('初始化回寫失敗:', e.message));
-        }
-      }
+
+      // DB 無員工（含 state=null）且本地有員工 → 寫回 DB
+      if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
     } catch (e) {
       console.warn('無法從伺服器載入狀態:', e.message);
     } finally {
@@ -6659,11 +6670,13 @@ export default function App() {
       // 匯入等重要操作後立即存，不經 setTimeout（避免關頁前 callback 被取消）
       forceSaveRef.current = false;
       fetch('/api/state', { method: 'PUT', headers, body })
+        .then(r => { if (!r.ok) console.warn('匯入後立即存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('匯入後立即存檔失敗:', e.message));
       return;
     }
     saveDebouncerRef.current = setTimeout(() => {
       fetch('/api/state', { method: 'PUT', headers, body })
+        .then(r => { if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
