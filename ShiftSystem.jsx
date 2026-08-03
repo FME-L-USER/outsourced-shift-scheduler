@@ -5250,7 +5250,7 @@ function ShiftSetup() {
   const visibleEmps = (() => {
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     const filtered = list.filter(e => {
       if (filterVendor && e.vendor !== filterVendor) return false;
