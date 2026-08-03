@@ -2661,6 +2661,7 @@ function EmployeeRoster() {
           skippedLeave ? `已離職 ${skippedLeave} 筆` : '',
         ].filter(Boolean).join('、');
 
+        forceSaveRef.current = true; // 匯入完成後立即存 DB，不等 2s debounce
         toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}`, 'success');
       } catch (err) {
         toast('檔案解析失敗：' + err.message, 'error');
@@ -6474,6 +6475,7 @@ export default function App() {
   // ── Server-sync ──
   const serverSyncedRef = useRef(false);
   const saveDebouncerRef = useRef(null);
+  const forceSaveRef = useRef(false); // 匯入等重要操作後設 true，下次 effect 立即存
 
   const loadServerState = useCallback(async (token) => {
     try {
@@ -6586,6 +6588,8 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
+    const delay = forceSaveRef.current ? 0 : 2000;
+    forceSaveRef.current = false;
     saveDebouncerRef.current = setTimeout(() => {
       fetch('/api/state', {
         method: 'PUT',
@@ -6596,7 +6600,7 @@ export default function App() {
           attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
         }),
       }).catch(e => console.warn('狀態同步失敗:', e.message));
-    }, 2000);
+    }, delay);
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
