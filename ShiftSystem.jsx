@@ -2449,6 +2449,27 @@ function ScheduleTable() {
                   </tr>
                 );
               })}
+              {/* ── 底部統計列 ── */}
+              {visibleEmployees.length > 0 && (() => {
+                const REST = new Set(['休', '例', '國']);
+                const summaryRows = [
+                  { label: '總人數',   bgRow: 'bg-slate-100', bgLabel: 'bg-slate-100', color: 'text-slate-700', fn: () => visibleEmployees.length },
+                  { label: '出勤人數', bgRow: 'bg-green-50',  bgLabel: 'bg-green-50',  color: 'text-green-700', fn: (dk) => visibleEmployees.filter(e => (schedule[e.id]?.[dk] ?? 'V') === 'V').length },
+                  { label: '休假人數', bgRow: 'bg-orange-50', bgLabel: 'bg-orange-50', color: 'text-orange-700', fn: (dk) => visibleEmployees.filter(e => REST.has(schedule[e.id]?.[dk] ?? '')).length },
+                ];
+                return summaryRows.map(({ label, bgRow, bgLabel, color, fn }, si) => (
+                  <tr key={label} className={`${bgRow} ${si === 0 ? 'border-t-2 border-slate-400' : 'border-t border-slate-200'} font-medium text-xs`}>
+                    <td className={`sticky left-0 z-10 ${bgLabel}`} style={{ width: 32 }} />
+                    <td className={`sticky left-8 z-10 px-2 py-1.5 font-bold ${bgLabel} ${color} whitespace-nowrap`}>{label}</td>
+                    <td className="hidden sm:table-cell" />
+                    <td className="hidden sm:table-cell" />
+                    {dayHeaders.map(({ dk }) => (
+                      <td key={dk} className={`px-1 py-1.5 text-center font-semibold ${color}`}>{fn(dk)}</td>
+                    ))}
+                    <td className="px-2 py-1.5" />
+                  </tr>
+                ));
+              })()}
             </tbody>
           </table>
         </div>
