@@ -2477,7 +2477,7 @@ function fuzzyMatch(headers) {
 
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup } = useApp();
+    warehouses, selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -2695,7 +2695,7 @@ function EmployeeRoster() {
           skippedLeave ? `已離職 ${skippedLeave} 筆` : '',
         ].filter(Boolean).join('、');
 
-        forceSaveRef.current = true; // 匯入完成後立即存 DB，不等 2s debounce
+        triggerForceSave(); // 匯入完成後立即存 DB，不等 2s debounce
         toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}`, 'success');
       } catch (err) {
         toast('檔案解析失敗：' + err.message, 'error');
@@ -6616,6 +6616,8 @@ export default function App() {
     });
   }, [shiftTypesByWh]);
 
+  const triggerForceSave = useCallback(() => { forceSaveRef.current = true; }, []);
+
   // ── 手動立即存檔 ──
   const saveNow = useCallback((onDone) => {
     if (!serverSyncedRef.current) return;
@@ -6764,6 +6766,8 @@ export default function App() {
     shiftCodeRows, setShiftCodeRows,
     shiftCodeHeaders, setShiftCodeHeaders,
     currentUser,
+    saveNow,
+    triggerForceSave,
   };
 
   const PAGE_MAP = {
