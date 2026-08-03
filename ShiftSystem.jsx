@@ -599,6 +599,26 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
+  const [lockUntil, setLockUntil] = useState(0);
+
+  // 鎖定倒數：鎖定期間每秒更新顯示，到期自動解鎖
+  useEffect(() => {
+    if (lockUntil <= 0) return;
+    const tick = () => {
+      const rem = lockUntil - Date.now();
+      if (rem <= 0) {
+        setLockUntil(0);
+        setError('');
+      } else {
+        const m = Math.floor(rem / 60000);
+        const s = Math.ceil((rem % 60000) / 1000);
+        setError(`登入失敗次數過多，帳號已鎖定，請 ${m > 0 ? `${m} 分 ` : ''}${s} 秒後再試`);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lockUntil]);
 
   // 驗證碼
   const genCaptcha = () => {
@@ -703,8 +723,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     // 鎖定檢查
     const lockData = getLockData(uKey);
     if (lockData.until > Date.now()) {
-      const mins = Math.ceil((lockData.until - Date.now()) / 60000);
-      setError(`登入失敗次數過多，帳號已鎖定，請 ${mins} 分鐘後再試`);
+      setLockUntil(lockData.until);
       refreshCaptcha();
       return;
     }
@@ -1045,8 +1064,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               </div>
 
               <button type="submit"
-                className="w-full py-3 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
-                登入系統
+                disabled={lockUntil > Date.now()}
+                className="w-full py-3 bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+                {lockUntil > Date.now() ? '帳號鎖定中...' : '登入系統'}
               </button>
             </>
           )}
