@@ -1477,11 +1477,11 @@ function Dashboard() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: '長期在職人數',           value: visibleEmployees.length,                           icon: '👥', color: 'bg-teal-50 border-teal-200' },
-          { label: `${dashMonth}/${safeDay} 出勤總人數`,   value: actualPresent,                      icon: '📋', color: 'bg-blue-50 border-blue-200',
+          { label: '長期在職人數',           value: visibleEmployees.length,                           color: 'bg-teal-50 border-teal-200' },
+          { label: `${dashMonth}/${safeDay} 出勤總人數`,   value: actualPresent,                      color: 'bg-blue-50 border-blue-200',
             sub: actualPresent === 0 ? '點名表未填寫' : null },
-          { label: `${dashMonth}/${safeDay} 長期（今日出勤）`, value: selectedDayWorking,             icon: '✅', color: 'bg-green-50 border-green-200' },
-          { label: `${dashMonth}/${safeDay} 臨時（今日出勤）`, value: Math.max(0, actualPresent - selectedDayWorking), icon: '🔄', color: 'bg-amber-50 border-amber-200',
+          { label: `${dashMonth}/${safeDay} 長期（今日出勤）`, value: selectedDayWorking,             color: 'bg-green-50 border-green-200' },
+          { label: `${dashMonth}/${safeDay} 臨時（今日出勤）`, value: Math.max(0, actualPresent - selectedDayWorking), color: 'bg-amber-50 border-amber-200',
             sub: actualPresent === 0 ? '點名表未填寫' : null },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
