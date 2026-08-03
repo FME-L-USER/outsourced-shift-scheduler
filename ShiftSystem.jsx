@@ -1084,7 +1084,37 @@ const NAV_ITEMS = [
   { key: 'accounts',     label: '帳號與權限',   icon: '🔑', roles: [ROLES.ADMIN] },
 ];
 
-function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, onToggle }) {
+function SaveButton({ onSave, collapsed, mobile = false }) {
+  const [status, setStatus] = useState('idle'); // idle | saving | ok | err
+  const timerRef = useRef(null);
+  const handle = () => {
+    if (status === 'saving') return;
+    setStatus('saving');
+    onSave((ok) => {
+      setStatus(ok ? 'ok' : 'err');
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setStatus('idle'), 2000);
+    });
+  };
+  const label = status === 'saving' ? '存檔中…' : status === 'ok' ? '已存檔 ✓' : status === 'err' ? '存檔失敗' : '存檔';
+  const color = status === 'ok' ? 'text-emerald-300' : status === 'err' ? 'text-red-400' : 'text-slate-400 hover:text-emerald-300';
+  if (mobile) {
+    return (
+      <button onClick={handle} className={`flex items-center gap-2 transition-colors ${color}`}>
+        <span>💾</span><span>{label}</span>
+      </button>
+    );
+  }
+  return (
+    <button onClick={handle}
+      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors mb-1 ${color}`}>
+      <span>💾</span>
+      {!collapsed && label}
+    </button>
+  );
+}
+
+function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, collapsed, onToggle }) {
   const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
   const items = NAV_ITEMS.filter(n =>
     n.roles.includes(currentUser.role) &&
@@ -1128,6 +1158,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, collapsed, on
             <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
           </div>
         )}
+        {onSave && <SaveButton onSave={onSave} collapsed={collapsed} />}
         <button onClick={onLogout}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-400
                      hover:text-red-300 transition-colors">
@@ -1293,7 +1324,7 @@ function WarehouseDeptBar() {
   );
 }
 
-function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClose }) {
+function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, open, onClose }) {
   if (!open) return null;
   const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
   const items = NAV_ITEMS.filter(n =>
@@ -1331,9 +1362,12 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, open, onClo
           <div className="text-xs text-slate-400 mb-3">
             {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
           </div>
-          <button onClick={onLogout} className="flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors">
-            <span>🚪</span><span>登出</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {onSave && <SaveButton onSave={onSave} mobile />}
+            <button onClick={onLogout} className="flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors">
+              <span>🚪</span><span>登出</span>
+            </button>
+          </div>
         </div>
       </aside>
     </>
@@ -6582,6 +6616,26 @@ export default function App() {
     });
   }, [shiftTypesByWh]);
 
+  // ── 手動立即存檔 ──
+  const saveNow = useCallback((onDone) => {
+    if (!serverSyncedRef.current) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
+    fetch('/api/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        employees, vendors, warehouses, schedule, systemLocked,
+        scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+        attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+      }),
+    }).then(() => { if (onDone) onDone(true); })
+      .catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
+  }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
+      openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
+
   // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
   useEffect(() => {
     if (!serverSyncedRef.current) return;
@@ -6764,7 +6818,7 @@ export default function App() {
           <div className="hidden md:flex">
             <Sidebar
               currentPage={currentPage} onNavigate={setCurrentPage}
-              currentUser={currentUser} onLogout={handleLogout}
+              currentUser={currentUser} onLogout={handleLogout} onSave={saveNow}
               collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(p => !p)}
             />
           </div>
@@ -6772,7 +6826,7 @@ export default function App() {
           {/* Mobile nav */}
           <MobileNav
             currentPage={currentPage} onNavigate={setCurrentPage}
-            currentUser={currentUser} onLogout={handleLogout}
+            currentUser={currentUser} onLogout={handleLogout} onSave={saveNow}
             open={mobileNavOpen} onClose={() => setMobileNavOpen(false)}
           />
 
