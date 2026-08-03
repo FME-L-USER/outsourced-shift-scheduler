@@ -6480,31 +6480,53 @@ export default function App() {
       const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) return;
       const state = await r.json();
-      if (!state) return;
+      // state 可能為 null（DB 全空）；用 optional chaining 統一處理
       // DB 有資料才覆蓋本地；DB 空時保留 localStorage 資料
-      if (state.employees?.length > 0)              setEmployees(state.employees);
-      if (state.vendors?.length > 0)                setVendors(state.vendors);
-      if (state.warehouses?.length > 0)             setWarehouses(state.warehouses);
-      if (state.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
-      if (state.systemLocked   != null) setSystemLocked(state.systemLocked);
-      if (state.scheduleRange)          setScheduleRange(state.scheduleRange);
-      if (state.openHolidays)           setOpenHolidays(state.openHolidays);
-      if (state.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
-      if (state.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
-      if (state.attendData)             setAttendData(state.attendData);
-      if (state.extras)                 setExtras(state.extras);
-      if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
-      if (state.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
-      if (state.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
-      // DB 無員工資料時，立即將本地資料回寫 DB，防止下次部署後資料流失
-      if (!(state.employees?.length > 0)) {
-        const local = LS.get('sms_employees', []);
-        if (local.length > 0) {
+      if (state?.employees?.length > 0)              setEmployees(state.employees);
+      if (state?.vendors?.length > 0)                setVendors(state.vendors);
+      if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
+      if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
+      if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
+      if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
+      if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
+      if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
+      if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
+      if (state?.attendData)             setAttendData(state.attendData);
+      if (state?.extras)                 setExtras(state.extras);
+      if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+      if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
+      if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
+      // DB 無員工資料時（含 state=null），立即將本地全部資料回寫 DB
+      if (!state?.employees?.length) {
+        const localEmployees = LS.get('sms_employees', []);
+        if (localEmployees.length > 0) {
+          const localShiftTypesByWh = {};
+          Object.keys(localStorage)
+            .filter(k => k === 'sms_shift_types' || k.startsWith('sms_shift_types_'))
+            .forEach(k => {
+              const wk = k === 'sms_shift_types' ? 'default' : k.replace('sms_shift_types_', '');
+              try { localShiftTypesByWh[wk] = JSON.parse(localStorage.getItem(k)); } catch {}
+            });
           serverSyncedRef.current = true;
           fetch('/api/state', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ ...state, employees: local }),
+            body: JSON.stringify({
+              employees:         localEmployees,
+              vendors:           LS.get('sms_vendors', []),
+              warehouses:        LS.get('sms_warehouses', []),
+              schedule:          LS.get('sms_schedule', {}),
+              systemLocked:      LS.get('sms_locked', false),
+              scheduleRange:     LS.get('sms_range', {}),
+              openHolidays:      LS.get('sms_open_holidays', []),
+              vendorHolidayOpen: LS.get('sms_vendor_hol_open', false),
+              vendorCompanyNames: LS.get('sms_vendor_company_names', {}),
+              attendData:        LS.get('sms_attendance', {}),
+              extras:            LS.get('sms_attend_extras', {}),
+              shiftTypesByWh:    localShiftTypesByWh,
+              shiftCodeRows:     LS.get('sms_shiftcode_rows', []),
+              shiftCodeHeaders:  LS.get('sms_shiftcode_headers', []),
+            }),
           }).catch(e => console.warn('初始化回寫失敗:', e.message));
         }
       }
