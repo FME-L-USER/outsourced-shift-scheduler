@@ -2695,7 +2695,10 @@ function EmployeeRoster() {
           skippedLeave ? `已離職 ${skippedLeave} 筆` : '',
         ].filter(Boolean).join('、');
 
-        triggerForceSave(); // 匯入完成後立即存 DB，不等 2s debounce
+        // React re-render 後（100ms）再存，保證 saveNow 讀到最新 employees
+        setTimeout(() => saveNow((ok) => {
+          if (!ok) toast('資料同步失敗，請手動按存檔鍵', 'error');
+        }), 100);
         toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}`, 'success');
       } catch (err) {
         toast('檔案解析失敗：' + err.message, 'error');
@@ -6618,7 +6621,15 @@ export default function App() {
 
   const triggerForceSave = useCallback(() => { forceSaveRef.current = true; }, []);
 
-  // ── 手動立即存檔 ──
+  // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
+  const latestStateRef = useRef({});
+  latestStateRef.current = {
+    employees, vendors, warehouses, schedule, systemLocked,
+    scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+    attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+  };
+
+  // ── 手動立即存檔（讀 latestStateRef，無 stale closure 問題） ──
   const saveNow = useCallback((onDone) => {
     if (!serverSyncedRef.current) return;
     const token = localStorage.getItem(JWT_KEY);
@@ -6627,16 +6638,10 @@ export default function App() {
     fetch('/api/state', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        employees, vendors, warehouses, schedule, systemLocked,
-        scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
-        attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
-      }),
+      body: JSON.stringify(latestStateRef.current),
     }).then(() => { if (onDone) onDone(true); })
       .catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
-  }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
-      openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
-      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
+  }, []); // 不需任何 deps，永遠讀最新 ref
 
   // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
   useEffect(() => {
