@@ -1485,10 +1485,9 @@ function Dashboard() {
             sub: actualPresent === 0 ? '點名表未填寫' : null },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
-            <div className="text-2xl mb-1">{c.icon}</div>
-            <div className="text-3xl font-bold text-slate-800">{c.value}</div>
-            <div className="text-xs text-slate-500 mt-1">{c.label}</div>
-            {c.sub && <div className="text-xs text-slate-400 mt-0.5">{c.sub}</div>}
+            <div className="text-sm font-semibold text-slate-600 mb-2">{c.label}</div>
+            <div className="text-4xl font-bold text-slate-800">{c.value}</div>
+            {c.sub && <div className="text-xs text-slate-400 mt-1">{c.sub}</div>}
           </div>
         ))}
       </div>
@@ -2857,9 +2856,12 @@ function Reports() {
   const toast = useToast();
   const days = getDaysInMonth(selectedYear, selectedMonth);
 
-  const scopedEmployees = useMemo(() =>
-    filterByScope(employees, warehouses, selectedWarehouse, selectedDept, selectedGroup),
-    [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
+  const scopedEmployees = useMemo(() => {
+    let list = currentUser.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
   const buildVendorSheet = (vendor) => {
     const emps = scopedEmployees.filter(e => e.vendor === vendor);
