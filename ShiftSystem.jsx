@@ -1366,7 +1366,7 @@ function Dashboard() {
   const visibleEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
@@ -1825,7 +1825,7 @@ function ScheduleTable() {
     }
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
@@ -2008,7 +2008,7 @@ function ScheduleTable() {
           const s = String(v ?? '').trim();
           if (s === 'V') return 'V';
           if (s === '例' || s === '(例)') return '例';
-          if (s === '休' || s === '(休)') return '例'; // 舊格式向下相容
+          if (s === '休' || s === '(休)') return '休';
           if (s === '國') return '國';
           if (s === '' || s === '-') return null;
           if (/^\d+$/.test(s)) return 'V';
@@ -2073,8 +2073,18 @@ function ScheduleTable() {
           }
           if (!emp) { skippedEmps++; continue; }
           if (!updates[emp.id]) updates[emp.id] = {};
+          const weekRestCount = {};
           for (const { col, month, day } of dateCols) {
-            const val = mapVal(row[col]);
+            let val = mapVal(row[col]);
+            if (val === '休') {
+              const d = new Date(getYear(month), month - 1, day);
+              const dow = (d.getDay() + 6) % 7; // 0=Mon
+              const mon = new Date(d); mon.setDate(day - dow);
+              const wk = `${mon.getFullYear()}-${mon.getMonth()+1}-${mon.getDate()}`;
+              const cnt = weekRestCount[wk] ?? 0;
+              if (cnt >= 1) val = '例';
+              weekRestCount[wk] = cnt + 1;
+            }
             if (val !== null) {
               updates[emp.id][dateKey(getYear(month), month, day)] = val;
               updatedCells++;
