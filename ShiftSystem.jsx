@@ -6644,19 +6644,23 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
-    const delay = forceSaveRef.current ? 0 : 2000;
-    forceSaveRef.current = false;
+    const body = JSON.stringify({
+      employees, vendors, warehouses, schedule, systemLocked,
+      scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+      attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+    });
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    if (forceSaveRef.current) {
+      // 匯入等重要操作後立即存，不經 setTimeout（避免關頁前 callback 被取消）
+      forceSaveRef.current = false;
+      fetch('/api/state', { method: 'PUT', headers, body })
+        .catch(e => console.warn('匯入後立即存檔失敗:', e.message));
+      return;
+    }
     saveDebouncerRef.current = setTimeout(() => {
-      fetch('/api/state', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          employees, vendors, warehouses, schedule, systemLocked,
-          scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
-          attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
-        }),
-      }).catch(e => console.warn('狀態同步失敗:', e.message));
-    }, delay);
+      fetch('/api/state', { method: 'PUT', headers, body })
+        .catch(e => console.warn('狀態同步失敗:', e.message));
+    }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
