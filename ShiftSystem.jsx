@@ -2939,7 +2939,7 @@ function EmployeeRoster() {
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
-    vendorCompanyNames } = useApp();
+    vendorCompanyNames, currentUser } = useApp();
   const toast = useToast();
   const days = getDaysInMonth(selectedYear, selectedMonth);
 
