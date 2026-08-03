@@ -6639,7 +6639,7 @@ export default function App() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(latestStateRef.current),
-    }).then(() => { if (onDone) onDone(true); })
+    }).then(r => { if (onDone) onDone(r.ok); })
       .catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
   }, []); // 不需任何 deps，永遠讀最新 ref
 

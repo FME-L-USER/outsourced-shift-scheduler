@@ -7,7 +7,7 @@ const jwt        = require('jsonwebtoken');
 const path       = require('path');
 
 const app  = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // ── HTTP 安全標頭 ─────────────────────────────────────────
 app.use((_req, res, next) => {
