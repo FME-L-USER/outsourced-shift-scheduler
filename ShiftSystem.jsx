@@ -1949,6 +1949,28 @@ function ScheduleTable() {
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years  = [2024, 2025, 2026, 2027];
 
+  const exportScheduleRaw = () => {
+    try {
+      const colLabel = h => `${h.month}/${h.day}(${h.wd})`;
+      const header = ['員工編號', '姓名', '廠商', ...dayHeaders.map(colLabel)];
+      const rows = visibleEmployees.map(emp => {
+        const dayCells = dayHeaders.map(({ dk }) => schedule[emp.id]?.[dk] ?? 'V');
+        return [emp.empId ?? '', emp.name, emp.vendor ?? '', ...dayCells];
+      });
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, ...dayHeaders.map(() => ({ wch: 6 }))];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '班表');
+      const label = rangeMode
+        ? `${scheduleRange.start}~${scheduleRange.end}`
+        : `${selectedYear}年${selectedMonth}月`;
+      XLSX.writeFile(wb, `班表存檔_${label}.xlsx`);
+      toast('班表存檔成功', 'success');
+    } catch (err) {
+      toast('存檔失敗：' + err.message, 'error');
+    }
+  };
+
   const exportConverted = () => {
     try {
       const colLabel = h => rangeMode ? `${h.month}/${h.day}(${h.wd})` : `${h.day}(${h.wd})`;
@@ -2247,6 +2269,10 @@ function ScheduleTable() {
             📥 匯入班表
           </button>
           <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
+          <button onClick={exportScheduleRaw}
+            className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-1">
+            💾 存檔班表
+          </button>
           <button onClick={exportConverted}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
@@ -2478,6 +2504,25 @@ function EmployeeRoster() {
     toast('人員已移除', 'info');
   };
 
+  const handleExportRoster = () => {
+    try {
+      const header = ['員工編號', '姓名', '廠商', '課別', '組別', '職位', '狀態'];
+      const rows = visible.map(e => [
+        e.empId ?? '', e.name ?? '', e.vendor ?? '',
+        e.dept ?? '', e.group ?? '', e.position ?? '', e.status ?? '在職',
+      ]);
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 8 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '人員清冊');
+      const today = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `人員清冊_${today}.xlsx`);
+      toast('清冊匯出成功', 'success');
+    } catch (err) {
+      toast('匯出失敗：' + err.message, 'error');
+    }
+  };
+
   const handleImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2673,6 +2718,10 @@ function EmployeeRoster() {
                 📥 匯入 Excel
               </button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
+              <button onClick={handleExportRoster}
+                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+                📤 匯出清冊
+              </button>
             </>
           )}
           <button onClick={() => setShowAddModal(true)}
@@ -3244,7 +3293,7 @@ function Attendance() {
   const scopedEmps = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees;
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
     // 班表當日排休/例/國 → 不出現在點名名單
