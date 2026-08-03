@@ -2112,21 +2112,24 @@ function ScheduleTable() {
         if (dateCols.length === 0) { toast('找不到日期欄位', 'error'); return; }
 
         const updates = {};
-        let updatedCells = 0, skippedEmps = 0;
+        let updatedCells = 0;
+        const unmatchedIds = [];
         for (let r = dataStart; r < aoa.length; r++) {
           const row = aoa[r];
-          let emp = null;
+          let emp = null, identifier = '';
           if (isFormatC) {
             const name   = String(row[1] ?? '').trim();
             const vendor = String(row[2] ?? '').trim();
             if (!name) continue;
             emp = nameMap[`${name}|${vendor}`] ?? nameMap[name] ?? null;
+            identifier = vendor ? `${name}（${vendor}）` : name;
           } else {
             const empId = String(row[empIdCol] ?? '').trim();
             if (!empId) continue;
             emp = empMap[empId] ?? null;
+            identifier = empId;
           }
-          if (!emp) { skippedEmps++; continue; }
+          if (!emp) { unmatchedIds.push(identifier); continue; }
           if (!updates[emp.id]) updates[emp.id] = {};
           const weekRestCount = {};
           for (const { col, month, day } of dateCols) {
@@ -2147,8 +2150,13 @@ function ScheduleTable() {
           }
         }
 
+        const skippedEmps = unmatchedIds.length;
+        const unmatchedDetail = skippedEmps > 0
+          ? `（未匹配：${unmatchedIds.slice(0, 10).join('、')}${unmatchedIds.length > 10 ? `…等${unmatchedIds.length}筆` : ''}）`
+          : '';
+
         if (Object.keys(updates).length === 0) {
-          toast(`找不到符合員工編號的資料${skippedEmps > 0 ? `（${skippedEmps} 筆員編未匹配）` : ''}`, 'error');
+          toast(`找不到符合員工編號的資料${unmatchedDetail}`, 'error');
           return;
         }
         setSchedule(prev => {
@@ -2156,7 +2164,7 @@ function ScheduleTable() {
           Object.entries(updates).forEach(([id, days]) => { next[id] = { ...next[id], ...days }; });
           return next;
         });
-        toast(`匯入完成：${Object.keys(updates).length} 位員工、${updatedCells} 格班表已更新${skippedEmps > 0 ? `，${skippedEmps} 筆員編未匹配` : ''}`, 'success');
+        toast(`匯入完成：${Object.keys(updates).length} 位員工、${updatedCells} 格班表已更新${skippedEmps > 0 ? `，${skippedEmps} 筆員編未匹配${unmatchedDetail}` : ''}`, 'success');
       } catch (err) {
         toast('匯入失敗：' + err.message, 'error');
       }
