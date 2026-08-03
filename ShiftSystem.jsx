@@ -1485,7 +1485,7 @@ function Dashboard() {
             sub: actualPresent === 0 ? '點名表未填寫' : null },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
-            <div className="text-sm font-semibold text-slate-600 mb-2">{c.label}</div>
+            <div className="text-xl font-semibold text-slate-700 mb-2">{c.label}</div>
             <div className="text-4xl font-bold text-slate-800">{c.value}</div>
             {c.sub && <div className="text-xs text-slate-400 mt-1">{c.sub}</div>}
           </div>
@@ -6481,10 +6481,11 @@ export default function App() {
       if (!r.ok) return;
       const state = await r.json();
       if (!state) return;
-      if (state.employees)              setEmployees(state.employees);
-      if (state.vendors)                setVendors(state.vendors);
-      if (state.warehouses)             setWarehouses(state.warehouses);
-      if (state.schedule)               setSchedule(state.schedule);
+      // DB 有資料才覆蓋本地；DB 空時保留 localStorage 資料
+      if (state.employees?.length > 0)              setEmployees(state.employees);
+      if (state.vendors?.length > 0)                setVendors(state.vendors);
+      if (state.warehouses?.length > 0)             setWarehouses(state.warehouses);
+      if (state.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
       if (state.systemLocked   != null) setSystemLocked(state.systemLocked);
       if (state.scheduleRange)          setScheduleRange(state.scheduleRange);
       if (state.openHolidays)           setOpenHolidays(state.openHolidays);
@@ -6492,9 +6493,21 @@ export default function App() {
       if (state.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
       if (state.attendData)             setAttendData(state.attendData);
       if (state.extras)                 setExtras(state.extras);
-      if (state.shiftTypesByWh)         setShiftTypesByWh(state.shiftTypesByWh);
-      if (state.shiftCodeRows)          setShiftCodeRows(state.shiftCodeRows);
-      if (state.shiftCodeHeaders)       setShiftCodeHeaders(state.shiftCodeHeaders);
+      if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+      if (state.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
+      if (state.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
+      // DB 無員工資料時，立即將本地資料回寫 DB，防止下次部署後資料流失
+      if (!(state.employees?.length > 0)) {
+        const local = LS.get('sms_employees', []);
+        if (local.length > 0) {
+          serverSyncedRef.current = true;
+          fetch('/api/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ ...state, employees: local }),
+          }).catch(e => console.warn('初始化回寫失敗:', e.message));
+        }
+      }
     } catch (e) {
       console.warn('無法從伺服器載入狀態:', e.message);
     } finally {
@@ -6502,7 +6515,7 @@ export default function App() {
     }
   }, [setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
-      setAttendData, setExtras]);
+      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
 
   // ── Persist to localStorage ──
   const storageWarn = useCallback(() => {
