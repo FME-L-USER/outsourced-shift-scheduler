@@ -524,6 +524,34 @@ app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── GET /api/attendance （admin / area / vendor 可讀）─────
+app.get('/api/attendance', requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  if (!['admin','area','vendor'].includes(role))
+    return res.status(403).json({ error: '無存取權限' });
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const data = rows[0]?.data ?? {};
+  res.json({ attendData: data.attendData ?? {}, extras: data.extras ?? {} });
+});
+
+// ── PUT /api/attendance （admin / area / vendor 可寫）─────
+app.put('/api/attendance', requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  if (!['admin','area','vendor'].includes(role))
+    return res.status(403).json({ error: '無存取權限' });
+  const { attendData, extras } = req.body ?? {};
+  await pool.query(
+    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE
+       SET data = app_state.data
+             || jsonb_build_object('attendData', $1::jsonb->'attendData',
+                                   'extras',     $1::jsonb->'extras'),
+           updated_at = NOW()`,
+    [JSON.stringify({ attendData: attendData ?? {}, extras: extras ?? {} })]
+  );
+  res.json({ ok: true });
+});
+
 // ── GET /api/health ───────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 

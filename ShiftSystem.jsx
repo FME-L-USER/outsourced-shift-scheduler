@@ -7055,38 +7055,50 @@ export default function App() {
     };
 
     try {
-      const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) return;
-      const state = await r.json();
+      const isVendor = currentUser?.role === ROLES.VENDOR;
 
-      const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
-      const localEmps  = LS.get('sms_employees', []);
+      if (isVendor) {
+        // vendor 只能讀取出勤資料
+        const r = await fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) {
+          const att = await r.json();
+          if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
+          if (att?.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
+        }
+      } else {
+        const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) return;
+        const state = await r.json();
 
-      // 本地員工數多於 DB → 代表有尚未入庫的匯入資料（例如之前 PUT 失敗）
-      // 保留本地資料（React 已從 localStorage 初始化），立即回寫 DB
-      if (localEmps.length > serverEmps.length) {
-        writeLocalToServer();
-        return;
+        const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
+        const localEmps  = LS.get('sms_employees', []);
+
+        // 本地員工數多於 DB → 代表有尚未入庫的匯入資料（例如之前 PUT 失敗）
+        // 保留本地資料（React 已從 localStorage 初始化），立即回寫 DB
+        if (localEmps.length > serverEmps.length) {
+          writeLocalToServer();
+          return;
+        }
+
+        // DB 資料不少於本地 → 以 DB 為準（正常情況）
+        if (serverEmps.length > 0)              setEmployees(serverEmps);
+        if (state?.vendors?.length > 0)                setVendors(state.vendors);
+        if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
+        if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
+        if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
+        if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
+        if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
+        if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
+        if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
+        if (state?.attendData)             setAttendData(state.attendData);
+        if (state?.extras)                 setExtras(state.extras);
+        if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+        if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
+        if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
+
+        // DB 無員工（含 state=null）且本地有員工 → 寫回 DB
+        if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
       }
-
-      // DB 資料不少於本地 → 以 DB 為準（正常情況）
-      if (serverEmps.length > 0)              setEmployees(serverEmps);
-      if (state?.vendors?.length > 0)                setVendors(state.vendors);
-      if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
-      if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
-      if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
-      if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
-      if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
-      if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
-      if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
-      if (state?.attendData)             setAttendData(state.attendData);
-      if (state?.extras)                 setExtras(state.extras);
-      if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
-      if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
-      if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
-
-      // DB 無員工（含 state=null）且本地有員工 → 寫回 DB
-      if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
     } catch (e) {
       console.warn('無法從伺服器載入狀態:', e.message);
     } finally {
@@ -7189,6 +7201,30 @@ export default function App() {
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
+
+  // ── vendor 出勤資料同步（PUT /api/attendance，2s debounce）──
+  const vendorAttendDebRef = useRef(null);
+  useEffect(() => {
+    if (!serverSyncedRef.current) return;
+    if (currentUser?.role !== ROLES.VENDOR) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
+    const body = JSON.stringify({ attendData, extras });
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    if (forceSaveRef.current) {
+      forceSaveRef.current = false;
+      fetch('/api/attendance', { method: 'PUT', headers, body })
+        .then(r => { if (!r.ok) console.warn('出勤立即存檔失敗 HTTP', r.status); })
+        .catch(e => console.warn('出勤立即存檔失敗:', e.message));
+      return;
+    }
+    vendorAttendDebRef.current = setTimeout(() => {
+      fetch('/api/attendance', { method: 'PUT', headers, body })
+        .then(r => { if (!r.ok) console.warn('出勤自動存檔失敗 HTTP', r.status); })
+        .catch(e => console.warn('出勤自動存檔失敗:', e.message));
+    }, 2000);
+  }, [attendData, extras, currentUser]);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem(JWT_KEY);
