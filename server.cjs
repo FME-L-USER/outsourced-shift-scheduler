@@ -537,11 +537,17 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 });
 
 // ── PUT /api/state ────────────────────────────────────────
+// 以 merge 方式更新，保留 attendData / extras（由 PUT /api/attendance 管理）
 app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const incoming = req.body;
+  // 移除 attendData / extras，避免覆蓋 vendor 透過 /api/attendance 存入的出勤紀錄
+  const { attendData: _a, extras: _e, ...rest } = incoming;
   await pool.query(
-    `INSERT INTO app_state (id, data, updated_at) VALUES ('main',$1,NOW())
-     ON CONFLICT (id) DO UPDATE SET data=$1, updated_at=NOW()`,
-    [req.body]
+    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE
+       SET data = app_state.data || $1::jsonb,
+           updated_at = NOW()`,
+    [JSON.stringify(rest)]
   );
   res.json({ ok: true });
 });
