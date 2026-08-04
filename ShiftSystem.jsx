@@ -41,9 +41,9 @@ import React, {
       --sms-amber-border: #FDE68A;
       --sms-border:       #DDD9D0;
       --sms-border-dark:  #C8C4BA;
-      --sms-sidebar:      #14302D;
-      --sms-sidebar-hover:#1C4A46;
-      --sms-sidebar-active:#1E7A4A;
+      --sms-sidebar:      #1a2f5e;
+      --sms-sidebar-hover:#1e3870;
+      --sms-sidebar-active:#2563eb;
       --sms-text:         #1C2B3A;
       --sms-text-muted:   #6B7280;
       --sms-radius-sm:    6px;
