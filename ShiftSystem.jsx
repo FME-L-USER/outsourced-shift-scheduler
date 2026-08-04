@@ -1708,7 +1708,7 @@ function Dashboard() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse" style={{minWidth: 560, fontVariantNumeric: 'tabular-nums'}}>
+          <table className="w-full border-collapse font-bold" style={{minWidth: 560, fontVariantNumeric: 'tabular-nums'}}>
             <thead>
               {/* 群組標題列 */}
               <tr className="bg-slate-50 border-t border-slate-200">
