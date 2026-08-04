@@ -3814,6 +3814,27 @@ function AttendSubBtn({ active, onClick, icon, label }) {
   );
 }
 
+const MaintTagList = ({ items, onRemove }) => (
+  <div className="flex flex-wrap gap-2 mt-2">
+    {(items ?? []).map(item => (
+      <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
+        {item}
+        <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
+      </span>
+    ))}
+  </div>
+);
+
+const MaintAddRow = ({ value, onChange, onAdd, placeholder }) => (
+  <div className="flex gap-2 mt-2">
+    <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      onKeyDown={e => e.key === 'Enter' && onAdd()}
+      className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+    <button onClick={onAdd}
+      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
+  </div>
+);
+
 function MaintPane({ attendSettings, setAttendSettings, groupOptions }) {
   const { attendData, setAttendData, employees } = useApp();
   const toast = useToast();
@@ -3871,47 +3892,26 @@ function MaintPane({ attendSettings, setAttendSettings, groupOptions }) {
     setCleanPreview(null); setCleanConfirm(false);
   };
 
-  const TagList = ({ items, onRemove }) => (
-    <div className="flex flex-wrap gap-2 mt-2">
-      {(items ?? []).map(item => (
-        <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
-          {item}
-          <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
-        </span>
-      ))}
-    </div>
-  );
-
-  const AddRow = ({ value, onChange, onAdd, placeholder }) => (
-    <div className="flex gap-2 mt-2">
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        onKeyDown={e => e.key === 'Enter' && onAdd()}
-        className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-      <button onClick={onAdd}
-        className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
-    </div>
-  );
-
   return (
     <div className="space-y-5">
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-5">
         <h3 className="font-semibold text-slate-700">系統參數維護</h3>
         <div>
           <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
-          <TagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
-          <AddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
+          <MaintTagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
+          <MaintAddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
             onAdd={() => addItem('leaveTypes', newLeave, setNewLeave)} />
         </div>
         <div className="border-t border-slate-100 pt-4">
           <div className="text-sm font-medium text-slate-600">🏭 作業組別</div>
-          <TagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
-          <AddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
+          <MaintTagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
+          <MaintAddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
             onAdd={() => addItem('groups', newGroup, setNewGroup)} />
         </div>
         <div className="border-t border-slate-100 pt-4">
           <div className="text-sm font-medium text-slate-600">📊 出勤狀況</div>
-          <TagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
-          <AddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
+          <MaintTagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
+          <MaintAddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
             onAdd={() => addItem('lateEarlyStatus', newStatus, setNewStatus)} />
         </div>
       </div>
