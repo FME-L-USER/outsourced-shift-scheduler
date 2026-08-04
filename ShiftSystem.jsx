@@ -3774,6 +3774,162 @@ function AttendSubBtn({ active, onClick, icon, label }) {
   );
 }
 
+function MaintPane({ attendSettings, setAttendSettings, groupOptions }) {
+  const { attendData, setAttendData, employees } = useApp();
+  const toast = useToast();
+  const [newLeave, setNewLeave] = useState('');
+  const [newGroup, setNewGroup] = useState('');
+  const [newStatus, setNewStatus] = useState('');
+  const [cleanStart, setCleanStart] = useState('');
+  const [cleanEnd, setCleanEnd] = useState('');
+  const [cleanGroup, setCleanGroup] = useState('');
+  const [cleanPreview, setCleanPreview] = useState(null);
+  const [cleanConfirm, setCleanConfirm] = useState(false);
+
+  const addItem = (key, val, setter) => {
+    if (!val.trim()) return;
+    if ((attendSettings[key] ?? []).includes(val.trim())) { toast('已存在', 'warn'); return; }
+    setAttendSettings(prev => ({ ...prev, [key]: [...(prev[key] ?? []), val.trim()] }));
+    setter('');
+  };
+  const removeItem = (key, val) =>
+    setAttendSettings(prev => ({ ...prev, [key]: (prev[key] ?? []).filter(x => x !== val) }));
+
+  const previewClean = () => {
+    if (!cleanStart || !cleanEnd) { toast('請設定起迄日期', 'error'); return; }
+    let count = 0;
+    Object.keys(attendData).forEach(dk => {
+      if (dk >= cleanStart && dk <= cleanEnd) {
+        if (!cleanGroup) count += Object.keys(attendData[dk]).length;
+        else {
+          const g = cleanGroup;
+          count += employees.filter(e => (e.shiftType === g || e.group === g) && attendData[dk][e.id]).length;
+        }
+      }
+    });
+    setCleanPreview(count);
+    setCleanConfirm(false);
+  };
+
+  const executeClean = () => {
+    setAttendData(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(dk => {
+        if (dk >= cleanStart && dk <= cleanEnd) {
+          if (!cleanGroup) { delete next[dk]; }
+          else {
+            const day = { ...next[dk] };
+            const g = cleanGroup;
+            employees.filter(e => e.shiftType === g || e.group === g).forEach(e => delete day[e.id]);
+            next[dk] = day;
+          }
+        }
+      });
+      return next;
+    });
+    toast('已清除完成', 'success');
+    setCleanPreview(null); setCleanConfirm(false);
+  };
+
+  const TagList = ({ items, onRemove }) => (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {(items ?? []).map(item => (
+        <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
+          {item}
+          <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
+        </span>
+      ))}
+    </div>
+  );
+
+  const AddRow = ({ value, onChange, onAdd, placeholder }) => (
+    <div className="flex gap-2 mt-2">
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        onKeyDown={e => e.key === 'Enter' && onAdd()}
+        className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+      <button onClick={onAdd}
+        className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-5">
+        <h3 className="font-semibold text-slate-700">系統參數維護</h3>
+        <div>
+          <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
+          <TagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
+          <AddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
+            onAdd={() => addItem('leaveTypes', newLeave, setNewLeave)} />
+        </div>
+        <div className="border-t border-slate-100 pt-4">
+          <div className="text-sm font-medium text-slate-600">🏭 作業組別</div>
+          <TagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
+          <AddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
+            onAdd={() => addItem('groups', newGroup, setNewGroup)} />
+        </div>
+        <div className="border-t border-slate-100 pt-4">
+          <div className="text-sm font-medium text-slate-600">📊 出勤狀況</div>
+          <TagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
+          <AddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
+            onAdd={() => addItem('lateEarlyStatus', newStatus, setNewStatus)} />
+        </div>
+      </div>
+
+      <div className="bg-white border border-rose-100 rounded-xl p-5">
+        <h3 className="font-semibold text-slate-700 mb-1">🗑 異常資料清理</h3>
+        <p className="text-xs text-slate-400 mb-4">清除特定日期範圍的點名記錄，此操作不可逆。</p>
+        <div className="flex flex-wrap gap-3 items-end mb-4">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">起始日期</label>
+            <input type="date" value={cleanStart} onChange={e => setCleanStart(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">迄止日期</label>
+            <input type="date" value={cleanEnd} onChange={e => setCleanEnd(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">清除組別</label>
+            <select value={cleanGroup} onChange={e => setCleanGroup(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
+              <option value="">全部</option>
+              {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <button onClick={previewClean}
+            className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm">
+            預覽影響筆數
+          </button>
+        </div>
+        {cleanPreview !== null && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+            <p className="text-sm text-rose-700">
+              將清除 <strong>{cleanStart}</strong> 至 <strong>{cleanEnd}</strong>
+              {cleanGroup ? `（${cleanGroup}）` : '（全部組別）'} 共 <strong>{cleanPreview}</strong> 筆資料。
+            </p>
+            {!cleanConfirm ? (
+              <button onClick={() => setCleanConfirm(true)}
+                className="mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm">
+                確認清除
+              </button>
+            ) : (
+              <div className="mt-3 flex gap-2 items-center">
+                <span className="text-sm text-rose-600 font-medium">確定要永久清除？</span>
+                <button onClick={executeClean}
+                  className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-sm">確認</button>
+                <button onClick={() => setCleanConfirm(false)}
+                  className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Attendance() {
   const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras } = useApp();
   const toast = useToast();
@@ -4335,160 +4491,7 @@ function Attendance() {
     );
   };
 
-  // ── 維護分頁
-  const MaintPane = () => {
-    const [newLeave, setNewLeave] = useState('');
-    const [newGroup, setNewGroup] = useState('');
-    const [newStatus, setNewStatus] = useState('');
-    const [cleanStart, setCleanStart] = useState('');
-    const [cleanEnd, setCleanEnd] = useState('');
-    const [cleanGroup, setCleanGroup] = useState('');
-    const [cleanPreview, setCleanPreview] = useState(null);
-    const [cleanConfirm, setCleanConfirm] = useState(false);
-
-    const addItem = (key, val, setter) => {
-      if (!val.trim()) return;
-      if ((attendSettings[key] ?? []).includes(val.trim())) { toast('已存在', 'warn'); return; }
-      setAttendSettings(prev => ({ ...prev, [key]: [...(prev[key] ?? []), val.trim()] }));
-      setter('');
-    };
-    const removeItem = (key, val) =>
-      setAttendSettings(prev => ({ ...prev, [key]: (prev[key] ?? []).filter(x => x !== val) }));
-
-    const previewClean = () => {
-      if (!cleanStart || !cleanEnd) { toast('請設定起迄日期', 'error'); return; }
-      let count = 0;
-      Object.keys(attendData).forEach(dk => {
-        if (dk >= cleanStart && dk <= cleanEnd) {
-          if (!cleanGroup) count += Object.keys(attendData[dk]).length;
-          else {
-            const g = cleanGroup;
-            count += employees.filter(e => (e.shiftType === g || e.group === g) && attendData[dk][e.id]).length;
-          }
-        }
-      });
-      setCleanPreview(count);
-      setCleanConfirm(false);
-    };
-
-    const executeClean = () => {
-      setAttendData(prev => {
-        const next = { ...prev };
-        Object.keys(next).forEach(dk => {
-          if (dk >= cleanStart && dk <= cleanEnd) {
-            if (!cleanGroup) { delete next[dk]; }
-            else {
-              const day = { ...next[dk] };
-              const g = cleanGroup;
-              employees.filter(e => e.shiftType === g || e.group === g).forEach(e => delete day[e.id]);
-              next[dk] = day;
-            }
-          }
-        });
-        return next;
-      });
-      toast('已清除完成', 'success');
-      setCleanPreview(null); setCleanConfirm(false);
-    };
-
-    const TagList = ({ items, onRemove }) => (
-      <div className="flex flex-wrap gap-2 mt-2">
-        {(items ?? []).map(item => (
-          <span key={item} className="flex items-center gap-1 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">
-            {item}
-            <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-500 ml-1 text-sm leading-none">×</button>
-          </span>
-        ))}
-      </div>
-    );
-
-    const AddRow = ({ value, onChange, onAdd, placeholder }) => (
-      <div className="flex gap-2 mt-2">
-        <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-          onKeyDown={e => e.key === 'Enter' && onAdd()}
-          className="flex-1 border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-        <button onClick={onAdd}
-          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">新增</button>
-      </div>
-    );
-
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-5">
-          <h3 className="font-semibold text-slate-700">系統參數維護</h3>
-          <div>
-            <div className="text-sm font-medium text-slate-600">🏖 請假別</div>
-            <TagList items={attendSettings.leaveTypes} onRemove={v => removeItem('leaveTypes', v)} />
-            <AddRow value={newLeave} onChange={setNewLeave} placeholder="新增假別（Enter確認）"
-              onAdd={() => addItem('leaveTypes', newLeave, setNewLeave)} />
-          </div>
-          <div className="border-t border-slate-100 pt-4">
-            <div className="text-sm font-medium text-slate-600">🏭 作業組別</div>
-            <TagList items={attendSettings.groups} onRemove={v => removeItem('groups', v)} />
-            <AddRow value={newGroup} onChange={setNewGroup} placeholder="新增組別"
-              onAdd={() => addItem('groups', newGroup, setNewGroup)} />
-          </div>
-          <div className="border-t border-slate-100 pt-4">
-            <div className="text-sm font-medium text-slate-600">📊 出勤狀況</div>
-            <TagList items={attendSettings.lateEarlyStatus} onRemove={v => removeItem('lateEarlyStatus', v)} />
-            <AddRow value={newStatus} onChange={setNewStatus} placeholder="新增出勤狀況"
-              onAdd={() => addItem('lateEarlyStatus', newStatus, setNewStatus)} />
-          </div>
-        </div>
-
-        <div className="bg-white border border-rose-100 rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-1">🗑 異常資料清理</h3>
-          <p className="text-xs text-slate-400 mb-4">清除特定日期範圍的點名記錄，此操作不可逆。</p>
-          <div className="flex flex-wrap gap-3 items-end mb-4">
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">起始日期</label>
-              <input type="date" value={cleanStart} onChange={e => setCleanStart(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">迄止日期</label>
-              <input type="date" value={cleanEnd} onChange={e => setCleanEnd(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">清除組別</label>
-              <select value={cleanGroup} onChange={e => setCleanGroup(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm min-w-[140px]">
-                <option value="">全部</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <button onClick={previewClean}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm">
-              預覽影響筆數
-            </button>
-          </div>
-          {cleanPreview !== null && (
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
-              <p className="text-sm text-rose-700">
-                將清除 <strong>{cleanStart}</strong> 至 <strong>{cleanEnd}</strong>
-                {cleanGroup ? `（${cleanGroup}）` : '（全部組別）'} 共 <strong>{cleanPreview}</strong> 筆資料。
-              </p>
-              {!cleanConfirm ? (
-                <button onClick={() => setCleanConfirm(true)}
-                  className="mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm">
-                  確認清除
-                </button>
-              ) : (
-                <div className="mt-3 flex gap-2 items-center">
-                  <span className="text-sm text-rose-600 font-medium">確定要永久清除？</span>
-                  <button onClick={executeClean}
-                    className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-sm">確認</button>
-                  <button onClick={() => setCleanConfirm(false)}
-                    className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  // (MaintPane is defined at module level)
 
   // ── 匯入分頁
   const ImportPane = () => {
@@ -4746,7 +4749,7 @@ function Attendance() {
         {subTab === 'attend' && <AttendPane />}
         {subTab === 'stats'  && <StatsPane />}
         {subTab === 'report' && <ReportPane />}
-        {subTab === 'maint'  && <MaintPane />}
+        {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
         {subTab === 'import' && <ImportPane />}
       </div>
 
