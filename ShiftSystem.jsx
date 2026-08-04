@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 企業級委外人力排班作業平台 (Shift Management System)
  * Single-file React application
  * Dependencies: react, react-dom, xlsx (SheetJS), file-saver
@@ -2398,6 +2398,80 @@ function ScheduleTable() {
     });
     toast(`已修正 ${fixedCount} 個格位：每週超過一天例休已改為休假（休）。`, 'success');
   }, [visibleEmployees, schedule, setSchedule, toast]);
+  // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
+  const handleDownloadTemplate = () => {
+    try {
+      const WD = ['日','一','二','三','四','五','六'];
+      // 取得目前視圖的日期區間
+      let dates = [];
+      if (rangeMode && viewRange) {
+        const cur = parseLocal(viewRange.start);
+        const end = parseLocal(viewRange.end);
+        while (cur <= end) {
+          dates.push({ y: cur.getFullYear(), m: cur.getMonth()+1, d: cur.getDate(), wd: WD[cur.getDay()] });
+          cur.setDate(cur.getDate()+1);
+        }
+      } else {
+        const daysCount = getDaysInMonth(selectedYear, selectedMonth);
+        for (let i = 1; i <= daysCount; i++) {
+          const dt = new Date(selectedYear, selectedMonth-1, i);
+          dates.push({ y: selectedYear, m: selectedMonth, d: i, wd: WD[dt.getDay()] });
+        }
+      }
+      const row1 = ['作業區(非必填)', '*姓名', '*廠商', ...dates.map(dt => dt.m)];
+      const row2 = ['', '', '', ...dates.map(dt => dt.d)];
+      const row3 = ['', '', '', ...dates.map(dt => dt.wd)];
+      const aoa  = [row1, row2, row3];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      // 欄寬
+      ws['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, ...dates.map(() => ({ wch: 4 }))];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '總表');
+
+      const label = rangeMode && viewRange
+        ? `${viewRange.start.replace(/-/g,'')}-${viewRange.end.replace(/-/g,'')}`
+        : `${selectedYear}${String(selectedMonth).padStart(2,'0')}`;
+      XLSX.writeFile(wb, `匯入班表範本_${label}.xlsx`);
+      toast('範本已下載', 'success');
+    } catch (err) {
+      toast('下載範本失敗：' + err.message, 'error');
+    }
+  };
+
+  // Weekday headers — range mode spans across months, uses viewRange for navigation
+  const dayHeaders = useMemo(() => {
+    if (rangeMode && viewRange) {
+      const start = parseLocal(viewRange.start);
+      const end   = parseLocal(viewRange.end);
+      const result = [];
+      const cur = new Date(start);
+      while (cur <= end) {
+        const y  = cur.getFullYear(), m = cur.getMonth() + 1, d = cur.getDate();
+        const wd = ['日','一','二','三','四','五','六'][cur.getDay()];
+        result.push({
+          day: d, month: m, year: y,
+          dk: dateKey(y, m, d),
+          wd, isWeekend: cur.getDay() === 0 || cur.getDay() === 6,
+          isMonthStart: d === 1,
+        });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return result;
+    }
+    return Array.from({ length: days }, (_, i) => {
+      const d = new Date(selectedYear, selectedMonth - 1, i + 1);
+      const wd = ['日','一','二','三','四','五','六'][d.getDay()];
+      return {
+        day: i + 1, month: selectedMonth, year: selectedYear,
+        dk: dateKey(selectedYear, selectedMonth, i + 1),
+        wd, isWeekend: d.getDay() === 0 || d.getDay() === 6,
+        isMonthStart: i === 0,
+      };
+    });
+  }, [days, selectedYear, selectedMonth, rangeMode, viewRange]);
+
 
   // 列印班表報表（依目前週期/月份，景印格式）
   const handlePrintReport = useCallback(() => {
@@ -2552,80 +2626,6 @@ function ScheduleTable() {
     win.focus();
     setTimeout(() => win.print(), 400);
   }, [visibleEmployees, schedule, dayHeaders, selectedYear, selectedMonth, selectedWarehouse, selectedDept, selectedGroup, warehouses, rangeMode, viewRange, showConverted, getDisplayCode, getHolidayLabel, toast]);
-
-  // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
-  const handleDownloadTemplate = () => {
-    try {
-      const WD = ['日','一','二','三','四','五','六'];
-      // 取得目前視圖的日期區間
-      let dates = [];
-      if (rangeMode && viewRange) {
-        const cur = parseLocal(viewRange.start);
-        const end = parseLocal(viewRange.end);
-        while (cur <= end) {
-          dates.push({ y: cur.getFullYear(), m: cur.getMonth()+1, d: cur.getDate(), wd: WD[cur.getDay()] });
-          cur.setDate(cur.getDate()+1);
-        }
-      } else {
-        const daysCount = getDaysInMonth(selectedYear, selectedMonth);
-        for (let i = 1; i <= daysCount; i++) {
-          const dt = new Date(selectedYear, selectedMonth-1, i);
-          dates.push({ y: selectedYear, m: selectedMonth, d: i, wd: WD[dt.getDay()] });
-        }
-      }
-      const row1 = ['作業區(非必填)', '*姓名', '*廠商', ...dates.map(dt => dt.m)];
-      const row2 = ['', '', '', ...dates.map(dt => dt.d)];
-      const row3 = ['', '', '', ...dates.map(dt => dt.wd)];
-      const aoa  = [row1, row2, row3];
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      // 欄寬
-      ws['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, ...dates.map(() => ({ wch: 4 }))];
-
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, '總表');
-
-      const label = rangeMode && viewRange
-        ? `${viewRange.start.replace(/-/g,'')}-${viewRange.end.replace(/-/g,'')}`
-        : `${selectedYear}${String(selectedMonth).padStart(2,'0')}`;
-      XLSX.writeFile(wb, `匯入班表範本_${label}.xlsx`);
-      toast('範本已下載', 'success');
-    } catch (err) {
-      toast('下載範本失敗：' + err.message, 'error');
-    }
-  };
-
-  // Weekday headers — range mode spans across months, uses viewRange for navigation
-  const dayHeaders = useMemo(() => {
-    if (rangeMode && viewRange) {
-      const start = parseLocal(viewRange.start);
-      const end   = parseLocal(viewRange.end);
-      const result = [];
-      const cur = new Date(start);
-      while (cur <= end) {
-        const y  = cur.getFullYear(), m = cur.getMonth() + 1, d = cur.getDate();
-        const wd = ['日','一','二','三','四','五','六'][cur.getDay()];
-        result.push({
-          day: d, month: m, year: y,
-          dk: dateKey(y, m, d),
-          wd, isWeekend: cur.getDay() === 0 || cur.getDay() === 6,
-          isMonthStart: d === 1,
-        });
-        cur.setDate(cur.getDate() + 1);
-      }
-      return result;
-    }
-    return Array.from({ length: days }, (_, i) => {
-      const d = new Date(selectedYear, selectedMonth - 1, i + 1);
-      const wd = ['日','一','二','三','四','五','六'][d.getDay()];
-      return {
-        day: i + 1, month: selectedMonth, year: selectedYear,
-        dk: dateKey(selectedYear, selectedMonth, i + 1),
-        wd, isWeekend: d.getDay() === 0 || d.getDay() === 6,
-        isMonthStart: i === 0,
-      };
-    });
-  }, [days, selectedYear, selectedMonth, rangeMode, viewRange]);
 
   return (
     <div className="p-6 space-y-4">
