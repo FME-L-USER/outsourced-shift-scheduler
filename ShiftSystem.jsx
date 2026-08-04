@@ -1431,13 +1431,17 @@ function Dashboard() {
     return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
   }, [dashYear, dashMonth, safeDay]);
 
-  // 組別欄位定義（顯示用標籤 → 比對 emp.group 包含的關鍵字）
-  const GROUP_COLS = useMemo(() => [
-    { label: '日班理貨組', match: g => g.includes('日班') && (g.includes('理貨') || g.includes('理货')) },
-    { label: '中班理貨組', match: g => g.includes('中班') && (g.includes('理貨') || g.includes('理货')) },
-    { label: '日班出貨組', match: g => g.includes('出貨') || g.includes('出货') },
-    { label: '運務組',     match: g => g.includes('運務') || g.includes('运务') },
-  ], []);
+  // 組別欄位定義：從員工資料動態產生，依實際組別名稱顯示
+  const GROUP_COLS = useMemo(() => {
+    const seen = new Set();
+    visibleEmployees.forEach(e => { if (e.group) seen.add(e.group); });
+    // 排序：日班優先、中班次之、其他依字典序
+    const sorted = [...seen].sort((a, b) => {
+      const order = v => v.includes('日班') ? 0 : v.includes('中班') ? 1 : 2;
+      return order(a) - order(b) || a.localeCompare(b, 'zh-TW');
+    });
+    return sorted.map(g => ({ label: g, match: empGroup => empGroup === g }));
+  }, [visibleEmployees]);
 
   // 所選日期出勤統計（各廠商）含前周差 + 組別細分
   const vendorStats = useMemo(() => {
