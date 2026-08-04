@@ -2035,22 +2035,24 @@ function ScheduleTable() {
   const exportConverted = () => {
     try {
       const colLabel = h => rangeMode ? `${h.month}/${h.day}(${h.wd})` : `${h.day}(${h.wd})`;
-      const header = ['員工編號', '姓名', '廠商', ...dayHeaders.map(colLabel), '出勤天'];
+      const header = ['員工編號', '姓名', '廠商', ...dayHeaders.map(colLabel), '出勤天', '休假天'];
       const rows = visibleEmployees.map(emp => {
         let workDays = 0;
+        let leaveDays = 0;
         const dayCells = dayHeaders.map(({ dk, day, month, year }) => {
           const raw = schedule[emp.id]?.[dk] ?? 'V';
           const holidayLabel = raw === '國' ? getHolidayLabel(day, month, year) : null;
           const sc = getDisplayCode(emp, raw, day, month, year);
           const display = (sc !== raw ? sc : null) ?? holidayLabel ?? raw;
           if (raw === 'V') workDays++;
+          else if (raw === '休' || raw === '例' || raw === '國') leaveDays++;
           return display;
         });
-        return [emp.empId ?? '', emp.name, emp.vendor ?? '', ...dayCells, workDays];
+        return [emp.empId ?? '', emp.name, emp.vendor ?? '', ...dayCells, workDays, leaveDays];
       });
       const aoa = [header, ...rows];
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, ...dayHeaders.map(() => ({ wch: 5 })), { wch: 6 }];
+      ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, ...dayHeaders.map(() => ({ wch: 5 })), { wch: 6 }, { wch: 6 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
       const label = rangeMode
