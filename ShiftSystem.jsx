@@ -730,7 +730,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 
     // 委外人員：首次用員編登入，之後用自訂密碼
     if (identity === 'worker') {
-      const emp = (employees ?? []).find(em => em.empId === username);
+      const emp = (employees ?? []).find(em => em.empId?.trim() === username.trim());
       if (!emp) {
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
