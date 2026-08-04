@@ -3930,6 +3930,62 @@ function MaintPane({ attendSettings, setAttendSettings, groupOptions }) {
   );
 }
 
+function ReportPane({ generateReport, groupOptions, attendDate, groupFilter }) {
+  const toast = useToast();
+  const [rDate, setRDate] = useState(attendDate);
+  const [rGroup, setRGroup] = useState(groupFilter);
+  const [text, setText] = useState('');
+  const textRef = React.useRef(null);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(
+      () => toast('已複製至剪貼簿', 'success'),
+      () => { textRef.current?.select(); document.execCommand('copy'); toast('已複製', 'success'); }
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-3 items-end">
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">出勤日期</label>
+          <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">作業組別</label>
+          <select value={rGroup} onChange={e => setRGroup(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
+            <option value="">全部</option>
+            {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <button onClick={() => setText(generateReport(rDate, rGroup))}
+          className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
+          📋 產生回報文字
+        </button>
+      </div>
+
+      {text ? (
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
+            <button onClick={handleCopy}
+              className="px-3 py-1.5 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-xs font-medium">
+              📋 一鍵複製文字
+            </button>
+          </div>
+          <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
+            rows={12}
+            className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm font-mono resize-y" />
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400 text-center py-8">選擇日期與組別後，點擊「產生回報文字」</p>
+      )}
+    </div>
+  );
+}
+
 function Attendance() {
   const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras } = useApp();
   const toast = useToast();
@@ -3950,9 +4006,10 @@ function Attendance() {
 
   const groupOptions = useMemo(() => {
     const fromEmps = new Set(employees.map(e => e.shiftType).filter(Boolean));
+    const fromExtras = new Set(Object.values(extras).flat().map(e => e.group).filter(Boolean));
     const custom = attendSettings.groups ?? [];
-    return [...new Set([...fromEmps, ...custom])].sort();
-  }, [employees, attendSettings.groups]);
+    return [...new Set([...fromEmps, ...fromExtras, ...custom])].sort();
+  }, [employees, extras, attendSettings.groups]);
 
   const ABSENT_CODES = new Set(['休', '例', '國']);
 
@@ -4443,61 +4500,7 @@ function Attendance() {
     );
   };
 
-  // ── 回報分頁
-  const ReportPane = () => {
-    const [rDate, setRDate] = useState(attendDate);
-    const [rGroup, setRGroup] = useState(groupFilter);
-    const [text, setText] = useState('');
-    const textRef = React.useRef(null);
-
-    const handleCopy = () => {
-      navigator.clipboard.writeText(text).then(
-        () => toast('已複製至剪貼簿', 'success'),
-        () => { textRef.current?.select(); document.execCommand('copy'); toast('已複製', 'success'); }
-      );
-    };
-
-    return (
-      <div className="space-y-4">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">出勤日期</label>
-            <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">作業組別</label>
-            <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
-              <option value="">全部</option>
-              {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </div>
-          <button onClick={() => setText(generateReport(rDate, rGroup))}
-            className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
-            📋 產生回報文字
-          </button>
-        </div>
-
-        {text ? (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
-              <button onClick={handleCopy}
-                className="px-3 py-1.5 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-xs font-medium">
-                📋 一鍵複製文字
-              </button>
-            </div>
-            <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
-              rows={12}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm font-mono resize-y" />
-          </div>
-        ) : (
-          <p className="text-sm text-slate-400 text-center py-8">選擇日期與組別後，點擊「產生回報文字」</p>
-        )}
-      </div>
-    );
-  };
+  // (ReportPane is defined at module level)
 
   // (MaintPane is defined at module level)
 
@@ -4756,7 +4759,7 @@ function Attendance() {
       <div>
         {subTab === 'attend' && <AttendPane />}
         {subTab === 'stats'  && <StatsPane />}
-        {subTab === 'report' && <ReportPane />}
+        {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} groupFilter={groupFilter} />}
         {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
         {subTab === 'import' && <ImportPane />}
       </div>
