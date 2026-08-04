@@ -1746,14 +1746,13 @@ function Dashboard() {
               {/* 群組標題列 */}
               <tr className="bg-slate-50 border-t border-slate-200">
                 <th rowSpan={2} className="text-left px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 border-b-2 border-slate-200">廠商</th>
-                <th colSpan={2 + GROUP_COLS.length + 2} className="text-center px-3 py-1.5 text-[10.5px] font-bold tracking-wider text-teal-700 bg-teal-50 border border-teal-200">長期人員</th>
+                <th colSpan={1 + GROUP_COLS.length + 2} className="text-center px-3 py-1.5 text-[10.5px] font-bold tracking-wider text-teal-700 bg-teal-50 border border-teal-200">長期人員</th>
                 <th colSpan={3} className="text-center px-3 py-1.5 text-[10.5px] font-bold tracking-wider text-orange-600 bg-orange-50 border border-orange-200">臨時人員</th>
                 <th rowSpan={2} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-600 border-b-2 border-slate-200">總出勤人數</th>
                 <th rowSpan={2} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 border-b-2 border-slate-200">前周差</th>
               </tr>
               {/* 欄位標題列 */}
               <tr className="bg-slate-50 border-b-2 border-slate-200">
-                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">在職</th>
                 <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-blue-500 bg-teal-50/40">應到</th>
                 {GROUP_COLS.map(gc => (
                   <th key={gc.label} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">{gc.label}</th>
@@ -1776,7 +1775,6 @@ function Dashboard() {
                       <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
                       {s.vendor}
                     </td>
-                    <td className="px-3 py-2.5 text-center text-sm text-slate-500">{s.roster}</td>
                     <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{s.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = s.groups[gc.label] ?? 0;
@@ -1852,7 +1850,6 @@ function Dashboard() {
                 return (
                   <tr className="border-t-2 border-slate-200 bg-slate-50">
                     <td className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wide">合計</td>
-                    <td className="px-3 py-2.5 text-center text-sm font-bold text-slate-600">{total.roster}</td>
                     <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{total.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
