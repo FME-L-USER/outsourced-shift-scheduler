@@ -1906,6 +1906,7 @@ function ScheduleTable() {
 
   // 班別設定與代號表從 context 取得（跨裝置同步）
   const { shiftTypesByWh, shiftCodeRows, shiftCodeHeaders } = useApp();
+  const isWorker = currentUser.role === ROLES.WORKER;
   const shiftTypes = shiftTypesByWh[selectedWarehouse ?? 'default'] ?? [];
 
   // 假日名稱 → 代號表欄位名稱對照
