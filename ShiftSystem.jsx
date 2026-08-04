@@ -4321,6 +4321,14 @@ function Attendance() {
                           <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{tempEmps.filter(e => e.present).length}/{tempEmps.length}人</span>
                           <span className="text-xs opacity-70">臨時</span>
                         </span>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium select-none">
+                          <input type="checkbox"
+                            checked={tempEmps.length > 0 && tempEmps.every(e => e.present)}
+                            ref={el => { if (el) el.indeterminate = tempEmps.some(e => e.present) && !tempEmps.every(e => e.present); }}
+                            onChange={ev => tempEmps.forEach(e => setExtraRecord(e.id, { present: ev.target.checked }))}
+                            className="w-4 h-4 accent-white cursor-pointer" />
+                          全選
+                        </label>
                       </div>
                       <div className="divide-y divide-slate-100">
                         {tempEmps.map(e => (
