@@ -29,10 +29,10 @@ import React, {
       --sms-bg:           #FAF7F2;
       --sms-surface:      #FFFFFF;
       --sms-surface-2:    #F5F2EC;
-      --sms-teal:         #0F766E;
-      --sms-teal-dark:    #0D6660;
-      --sms-teal-light:   #CCFBF1;
-      --sms-teal-50:      #F0FDFA;
+      --sms-teal:         #1a2f5e;
+      --sms-teal-dark:    #1e3870;
+      --sms-teal-light:   #dbeafe;
+      --sms-teal-50:      #eff6ff;
       --sms-coral:        #E05252;
       --sms-coral-bg:     #FEF2F2;
       --sms-coral-border: #FECACA;
@@ -583,7 +583,7 @@ function ForcePwdChange({ user, onDone }) {
             密碼規則：至少 8 個字元，需包含英文字母與數字
           </div>
           <button type="submit" disabled={busy}
-            className="w-full py-3 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+            className="w-full py-3 bg-[#1a2f5e] hover:bg-[#1e3870] disabled:opacity-50 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
             {busy ? '儲存中…' : '儲存新密碼並進入系統'}
           </button>
         </form>
@@ -880,7 +880,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
           <h2 className="text-xl font-bold text-slate-800 mb-2">申請已送出</h2>
           <p className="text-sm text-slate-500 mb-6">請等候管理員審核後即可登入，謝謝。</p>
           <button onClick={() => { setIdentity(''); setRegDone(false); setRegForm({ username:'', password:'', confirm:'', name:'', vendor:'' }); }}
-            className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
+            className="w-full py-2.5 bg-[#1a2f5e] hover:bg-[#1e3870] text-white font-semibold rounded-lg transition-colors">
             返回登入
           </button>
         </div>
@@ -935,7 +935,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               ].map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
-          <button type="submit" className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg transition-colors">
+          <button type="submit" className="w-full py-2.5 bg-[#1a2f5e] hover:bg-[#1e3870] text-white font-semibold rounded-lg transition-colors">
             送出申請
           </button>
           <button type="button" onClick={() => setIdentity('')} className="w-full mt-3 py-2 text-sm text-slate-500 hover:text-slate-700">
@@ -1074,7 +1074,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 
               <button type="submit"
                 disabled={lockUntil > Date.now()}
-                className="w-full py-3 bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
+                className="w-full py-3 bg-[#1a2f5e] hover:bg-[#1e3870] disabled:bg-slate-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-sm shadow-sm">
                 {lockUntil > Date.now() ? '帳號鎖定中...' : '登入系統'}
               </button>
             </>
@@ -2693,7 +2693,7 @@ function ScheduleTable() {
             </button>
           )}
           {!isWorker && <button onClick={handleDownloadTemplate}
-            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
+            className="px-3 py-1.5 bg-[#1e3870] text-white rounded-lg text-sm hover:bg-[#1a2f5e] flex items-center gap-1">
             📋 下載匯入範本
           </button>}
           {!isWorker && <button onClick={() => importFileRef.current.click()}
@@ -4433,7 +4433,7 @@ function Attendance() {
               </select>
             </div>
             <button onClick={() => exportStats(rDate, rGroup)}
-              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
+              className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
               📥 下載 Excel
             </button>
           </div>
@@ -4474,7 +4474,7 @@ function Attendance() {
             </select>
           </div>
           <button onClick={() => setText(generateReport(rDate, rGroup))}
-            className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-sm font-medium">
+            className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
             📋 產生回報文字
           </button>
         </div>
@@ -4484,7 +4484,7 @@ function Attendance() {
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-slate-700">出勤回報（可直接編輯）</span>
               <button onClick={handleCopy}
-                className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-medium">
+                className="px-3 py-1.5 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-xs font-medium">
                 📋 一鍵複製文字
               </button>
             </div>
@@ -4721,7 +4721,7 @@ function Attendance() {
                   ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
                 </div>
                 <button onClick={handleImport} disabled={importing}
-                  className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white rounded-xl font-medium text-sm">
+                  className="w-full py-2.5 bg-[#1a2f5e] hover:bg-[#1e3870] disabled:opacity-50 text-white rounded-xl font-medium text-sm">
                   ✅ 確認匯入 {parsedRows.length} 筆臨時人員
                 </button>
               </>
