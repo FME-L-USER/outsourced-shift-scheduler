@@ -1477,58 +1477,85 @@ function Dashboard() {
     ctx.fillStyle = '#ffffff'; ctx.fill();
   }, [vendorStats, VENDOR_COLORS_MAP]);
 
-  // ── draw stacked bar ──
+  // ── draw attendance rate bar chart ──
   useEffect(() => {
     const cv = barRef.current;
-    if (!cv || GROUP_COLS.length === 0) return;
+    if (!cv || vendorStats.length === 0) return;
     function drawBar() {
       const W = Math.max((cv.parentElement?.clientWidth || 400) - 36, 200);
-      const H = 240;
+      const ROW_H = 44;
+      const pL = 80, pR = 50, pT = 16, pB = 16;
+      const n = vendorStats.length;
+      const H = pT + pB + n * ROW_H;
       const dpr = window.devicePixelRatio || 1;
       cv.width = W * dpr; cv.height = H * dpr;
       cv.style.width = `${W}px`; cv.style.height = `${H}px`;
       const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, W, H);
-      const pL=36, pR=10, pT=18, pB=36;
-      const cW = W-pL-pR, cH = H-pT-pB;
-      const gTotals = GROUP_COLS.map(gc => vendorStats.reduce((s, v) => s + (v.groups[gc.label] ?? 0), 0));
-      const maxV = Math.max(...gTotals, 1);
-      const scaleMax = Math.ceil(maxV / 10) * 10 + 5;
-      for (let tick = 0; tick <= scaleMax; tick += 10) {
-        const y = pT + cH - (tick / scaleMax) * cH;
-        ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W-pR, y);
-        ctx.strokeStyle = 'rgba(0,0,0,0.05)'; ctx.lineWidth = 1; ctx.stroke();
-        ctx.fillStyle = '#94a3b8'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
-        ctx.fillText(tick, pL - 5, y + 3.5);
-      }
-      const bW = Math.min(cW / GROUP_COLS.length * 0.50, 64);
-      GROUP_COLS.forEach((gc, gi) => {
-        const x = pL + (gi + 0.5) * cW / GROUP_COLS.length - bW / 2;
-        let yBase = pT + cH;
-        vendorStats.forEach(s => {
-          const val = s.groups[gc.label] ?? 0; if (!val) return;
-          const bH = (val / scaleMax) * cH; yBase -= bH;
-          ctx.fillStyle = VENDOR_COLORS_MAP[s.vendor] || '#94a3b8';
-          ctx.fillRect(x, yBase, bW, bH);
-          if (bH >= 16) {
-            ctx.fillStyle = 'rgba(255,255,255,0.9)';
-            ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
-            ctx.fillText(val, x + bW/2, yBase + bH/2 + 3.5);
-          }
-        });
-        const tot = gTotals[gi];
-        const topY = pT + cH - (tot / scaleMax) * cH;
-        ctx.fillStyle = '#334155'; ctx.font = '600 11px system-ui'; ctx.textAlign = 'center';
-        ctx.fillText(tot, x + bW/2, topY - 6);
-        ctx.fillStyle = '#64748b'; ctx.font = '10.5px system-ui';
-        ctx.fillText(gc.label, pL + (gi + 0.5) * cW / GROUP_COLS.length, H - 10);
+      const cW = W - pL - pR;
+      // grid lines at 25/50/75/100
+      [0, 25, 50, 75, 100].forEach(v => {
+        const x = pL + (v / 100) * cW;
+        ctx.beginPath(); ctx.moveTo(x, pT); ctx.lineTo(x, H - pB);
+        ctx.strokeStyle = v === 0 ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.06)';
+        ctx.lineWidth = 1; ctx.stroke();
+        if (v > 0) {
+          ctx.fillStyle = '#94a3b8'; ctx.font = '9.5px system-ui'; ctx.textAlign = 'center';
+          ctx.fillText(v + '%', x, pT - 4);
+        }
       });
+      const bH = 14, gap = 4;
+      vendorStats.forEach((s, i) => {
+        const cy = pT + i * ROW_H + ROW_H / 2;
+        // vendor label
+        ctx.fillStyle = '#334155'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'right';
+        ctx.fillText(s.vendor, pL - 8, cy + 4);
+        // long-term rate bar (teal)
+        const longRate = s.working > 0 ? s.longPresent / s.working : 0;
+        const longW = longRate * cW;
+        ctx.fillStyle = '#0d9488';
+        roundRect(ctx, pL, cy - bH - gap/2, longW, bH, 3); ctx.fill();
+        // temp rate bar (orange)
+        const tempRate = s.tempExpected > 0 ? s.tempPresent / s.tempExpected : 0;
+        const tempW = tempRate * cW;
+        ctx.fillStyle = '#f97316';
+        roundRect(ctx, pL, cy + gap/2, tempW, bH, 3); ctx.fill();
+        // labels
+        ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'left';
+        if (s.working > 0) {
+          ctx.fillStyle = '#0d9488';
+          ctx.fillText(Math.round(longRate * 100) + '%', pL + longW + 4, cy - gap/2 - 2);
+        }
+        if (s.tempExpected > 0) {
+          ctx.fillStyle = '#f97316';
+          ctx.fillText(Math.round(tempRate * 100) + '%', pL + tempW + 4, cy + gap/2 + bH - 2);
+        }
+        // row divider
+        if (i < n - 1) {
+          ctx.beginPath(); ctx.moveTo(pL, cy + ROW_H/2); ctx.lineTo(W - pR + 30, cy + ROW_H/2);
+          ctx.strokeStyle = 'rgba(0,0,0,0.04)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+      });
+    }
+    function roundRect(ctx, x, y, w, h, r) {
+      if (w <= 0) { ctx.rect(x, y, 0, h); return; }
+      r = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
     }
     drawBar();
     const obs = new ResizeObserver(() => drawBar());
     if (cv.parentElement) obs.observe(cv.parentElement);
     return () => obs.disconnect();
-  }, [vendorStats, GROUP_COLS, VENDOR_COLORS_MAP]);
+  }, [vendorStats, hasAttendData]);
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -1679,14 +1706,20 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Stacked bar chart — 各組別排班 */}
+        {/* Vendor attendance rate chart */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
           <div className="px-5 pt-4 pb-0">
-            <div className="text-sm font-bold text-slate-800">各組別排班人力結構（{dashMonth}/{safeDay}{isToday ? ' · 今日' : ''}）</div>
-            <div className="text-xs text-slate-400 mt-0.5">排班出勤 {selectedDayWorking} 人</div>
+            <div className="text-sm font-bold text-slate-800">各廠商到班率（{dashMonth}/{safeDay}{isToday ? ' · 今日' : ''}）</div>
+            <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-3">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm" style={{background:'#0d9488'}} /> 長期到班率</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm" style={{background:'#f97316'}} /> 臨時到班率</span>
+            </div>
           </div>
           <div className="px-5 pb-4 pt-3">
-            <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+            {!hasAttendData && (
+              <div className="flex items-center justify-center h-20 text-xs text-slate-400">尚未填寫點名</div>
+            )}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3" style={{display:'none'}}>
               {vendorStats.map(s => (
                 <span key={s.vendor} className="flex items-center gap-1 text-xs text-slate-500">
                   <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
@@ -1694,7 +1727,7 @@ function Dashboard() {
                 </span>
               ))}
             </div>
-            <canvas ref={barRef} style={{width:'100%',display:'block'}} />
+            {hasAttendData && <canvas ref={barRef} style={{width:'100%',display:'block'}} />}
           </div>
         </div>
       </div>
