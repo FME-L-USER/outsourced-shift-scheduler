@@ -6058,7 +6058,7 @@ function AccountManagement() {
 
   // 委外人員 tab：從員工清冊取得，標示是否已升級為幹部帳號
   const { employees } = useApp();
-  const workerEmpListAll = employees.filter(e => e.status !== '離職');
+  const workerEmpListAll = employees.filter(e => e.status !== '離職' && e.vendor);
   const workerEmpList = workerEmpListAll.filter(e =>
     (!workerSearchName || e.name?.includes(workerSearchName)) &&
     (!workerSearchId   || e.empId?.includes(workerSearchId))
