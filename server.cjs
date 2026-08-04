@@ -528,14 +528,14 @@ app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ── GET /api/workers (公開，供委外人員登入驗證用) ─────────
-// 只回傳 empId + name，不含排班/薪資等敏感資料
+// 回傳 id / empId / name / vendor，不含排班/薪資等敏感資料
 app.get('/api/workers', async (_req, res) => {
   try {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
     const employees = rows[0]?.data?.employees ?? [];
     const list = employees
       .filter(e => e.empId && e.name)
-      .map(e => ({ empId: String(e.empId).trim(), name: e.name }));
+      .map(e => ({ id: e.id, empId: String(e.empId).trim(), name: e.name, vendor: e.vendor ?? '' }));
     res.json(list);
   } catch (e) {
     console.error('GET /api/workers error:', e.message);
