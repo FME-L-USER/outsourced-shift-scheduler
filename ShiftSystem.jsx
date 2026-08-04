@@ -1477,84 +1477,79 @@ function Dashboard() {
     ctx.fillStyle = '#ffffff'; ctx.fill();
   }, [vendorStats, VENDOR_COLORS_MAP]);
 
-  // ── draw attendance rate vertical bar chart ──
+  // ── draw attendance rate bar chart ──
   useEffect(() => {
     const cv = barRef.current;
     if (!cv || vendorStats.length === 0) return;
     function drawBar() {
-      const W = Math.max((cv.parentElement?.clientWidth || 400) - 8, 200);
-      const H = 260;
-      const pL = 32, pR = 12, pT = 24, pB = 52;
+      const W = Math.max((cv.parentElement?.clientWidth || 400) - 36, 200);
+      const ROW_H = 44;
+      const pL = 80, pR = 50, pT = 16, pB = 16;
+      const n = vendorStats.length;
+      const H = pT + pB + n * ROW_H;
       const dpr = window.devicePixelRatio || 1;
       cv.width = W * dpr; cv.height = H * dpr;
       cv.style.width = `${W}px`; cv.style.height = `${H}px`;
       const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, W, H);
       const cW = W - pL - pR;
-      const cH = H - pT - pB;
-      const n = vendorStats.length;
-      // horizontal grid lines
+      // grid lines at 25/50/75/100
       [0, 25, 50, 75, 100].forEach(v => {
-        const y = pT + cH - (v / 100) * cH;
-        ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y);
-        ctx.strokeStyle = v === 0 ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.07)';
+        const x = pL + (v / 100) * cW;
+        ctx.beginPath(); ctx.moveTo(x, pT); ctx.lineTo(x, H - pB);
+        ctx.strokeStyle = v === 0 ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.06)';
         ctx.lineWidth = 1; ctx.stroke();
-        ctx.fillStyle = '#94a3b8'; ctx.font = '9.5px system-ui'; ctx.textAlign = 'right';
-        ctx.fillText(v + '%', pL - 4, y + 3.5);
+        if (v > 0) {
+          ctx.fillStyle = '#94a3b8'; ctx.font = '9.5px system-ui'; ctx.textAlign = 'center';
+          ctx.fillText(v + '%', x, pT - 4);
+        }
       });
-      const groupW = cW / n;
-      const bW = Math.min(groupW * 0.32, 28);
-      const gap = Math.min(groupW * 0.06, 5);
-      function roundRectV(x, y, w, h, r) {
-        if (h <= 0) return;
-        r = Math.min(r, w / 2, h / 2);
-        ctx.beginPath();
-        ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h);
-        ctx.lineTo(x, y + r);
-        ctx.quadraticCurveTo(x, y, x + r, y);
-        ctx.closePath();
-      }
+      const bH = 14, gap = 4;
       vendorStats.forEach((s, i) => {
-        const cx = pL + (i + 0.5) * groupW;
+        const cy = pT + i * ROW_H + ROW_H / 2;
+        // vendor label
+        ctx.fillStyle = '#334155'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'right';
+        ctx.fillText(s.vendor, pL - 8, cy + 4);
+        // long-term rate bar (teal)
         const longRate = s.working > 0 ? s.longPresent / s.working : 0;
-        const tempRate = s.tempExpected > 0 ? s.tempPresent / s.tempExpected : 0;
-        const longH = longRate * cH;
-        const tempH = tempRate * cH;
-        const x1 = cx - gap / 2 - bW;
-        const x2 = cx + gap / 2;
-        const baseY = pT + cH;
-        // long-term bar (teal)
+        const longW = longRate * cW;
         ctx.fillStyle = '#0d9488';
-        roundRectV(x1, baseY - longH, bW, longH, 3); ctx.fill();
-        // temp bar (orange)
+        roundRect(ctx, pL, cy - bH - gap/2, longW, bH, 3); ctx.fill();
+        // temp rate bar (orange)
+        const tempRate = s.tempExpected > 0 ? s.tempPresent / s.tempExpected : 0;
+        const tempW = tempRate * cW;
         ctx.fillStyle = '#f97316';
-        roundRectV(x2, baseY - tempH, bW, tempH, 3); ctx.fill();
-        // percentage labels above bars
-        ctx.font = 'bold 9.5px system-ui'; ctx.textAlign = 'center';
+        roundRect(ctx, pL, cy + gap/2, tempW, bH, 3); ctx.fill();
+        // labels
+        ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'left';
         if (s.working > 0) {
           ctx.fillStyle = '#0d9488';
-          ctx.fillText(Math.round(longRate * 100) + '%', x1 + bW / 2, baseY - longH - 4);
+          ctx.fillText(Math.round(longRate * 100) + '%', pL + longW + 4, cy - gap/2 - 2);
         }
         if (s.tempExpected > 0) {
           ctx.fillStyle = '#f97316';
-          ctx.fillText(Math.round(tempRate * 100) + '%', x2 + bW / 2, baseY - tempH - 4);
+          ctx.fillText(Math.round(tempRate * 100) + '%', pL + tempW + 4, cy + gap/2 + bH - 2);
         }
-        // vendor name below x-axis (wrap long names)
-        ctx.fillStyle = '#475569'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
-        const maxW = groupW - 4;
-        const words = s.vendor.split('');
-        let line = '', lines = [];
-        words.forEach(ch => {
-          const test = line + ch;
-          if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = ch; }
-          else line = test;
-        });
-        if (line) lines.push(line);
-        lines = lines.slice(0, 3);
-        lines.forEach((ln, li) => ctx.fillText(ln, cx, baseY + 14 + li * 13));
+        // row divider
+        if (i < n - 1) {
+          ctx.beginPath(); ctx.moveTo(pL, cy + ROW_H/2); ctx.lineTo(W - pR + 30, cy + ROW_H/2);
+          ctx.strokeStyle = 'rgba(0,0,0,0.04)'; ctx.lineWidth = 1; ctx.stroke();
+        }
       });
+    }
+    function roundRect(ctx, x, y, w, h, r) {
+      if (w <= 0) { ctx.rect(x, y, 0, h); return; }
+      r = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
     }
     drawBar();
     const obs = new ResizeObserver(() => drawBar());
