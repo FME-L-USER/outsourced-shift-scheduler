@@ -527,6 +527,22 @@ app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
 // ── GET /api/health ───────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// ── GET /api/workers (公開，供委外人員登入驗證用) ─────────
+// 只回傳 empId + name，不含排班/薪資等敏感資料
+app.get('/api/workers', async (_req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const employees = rows[0]?.data?.employees ?? [];
+    const list = employees
+      .filter(e => e.empId && e.name)
+      .map(e => ({ empId: String(e.empId).trim(), name: e.name }));
+    res.json(list);
+  } catch (e) {
+    console.error('GET /api/workers error:', e.message);
+    res.json([]);
+  }
+});
+
 // ── Static SPA ────────────────────────────────────────────
 const DIST = path.join(__dirname, 'dist');
 app.use(express.static(DIST));

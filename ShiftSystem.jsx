@@ -730,7 +730,16 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 
     // 委外人員：首次用員編登入，之後用自訂密碼
     if (identity === 'worker') {
-      const emp = (employees ?? []).find(em => em.empId?.trim() === username.trim());
+      // 先嘗試從伺服器取最新員工清單（跨裝置支援），失敗則 fallback 到本地
+      let empList = employees ?? [];
+      try {
+        const res = await fetch('/api/workers');
+        if (res.ok) {
+          const serverList = await res.json();
+          if (Array.isArray(serverList) && serverList.length > 0) empList = serverList;
+        }
+      } catch (_) { /* 離線或網路異常，使用本地清單 */ }
+      const emp = empList.find(em => em.empId?.trim() === username.trim());
       if (!emp) {
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
