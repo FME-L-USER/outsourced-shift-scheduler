@@ -7056,12 +7056,45 @@ export default function App() {
 
     try {
       const isVendor = currentUser?.role === ROLES.VENDOR;
+      const isWorker = currentUser?.role === ROLES.WORKER;
 
-      if (isVendor) {
-        // vendor 只能讀取出勤資料
-        const r = await fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } });
+      if (isWorker) {
+        // worker 只能讀取班表資料（GET /api/schedule）
+        const r = await fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } });
         if (r.ok) {
-          const att = await r.json();
+          const s = await r.json();
+          if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
+          if (s.vendors?.length > 0)    setVendors(s.vendors);
+          if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
+          if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+          if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
+          if (s.openHolidays)            setOpenHolidays(s.openHolidays);
+          if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+          if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+          if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
+          if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
+        }
+      } else if (isVendor) {
+        // vendor 讀取班表 + 出勤資料
+        const [rs, ra] = await Promise.all([
+          fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } }),
+          fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (rs.ok) {
+          const s = await rs.json();
+          if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
+          if (s.vendors?.length > 0)    setVendors(s.vendors);
+          if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
+          if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+          if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
+          if (s.openHolidays)            setOpenHolidays(s.openHolidays);
+          if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+          if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+          if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
+          if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
+        }
+        if (ra.ok) {
+          const att = await ra.json();
           if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
           if (att?.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
         }
@@ -7110,37 +7143,44 @@ export default function App() {
       if (!serverSyncedRef.current) return;
       const token = localStorage.getItem(JWT_KEY);
       if (!token) return;
-      const isVendor = currentUser?.role === ROLES.VENDOR;
-      if (isVendor) {
+      const role = currentUser?.role;
+      const applySchedule = s => {
+        if (!s) return;
+        if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
+        if (s.vendors?.length > 0)    setVendors(s.vendors);
+        if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
+        if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+        if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
+        if (s.openHolidays)            setOpenHolidays(s.openHolidays);
+        if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+        if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+        if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
+        if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
+      };
+      if (role === ROLES.WORKER) {
+        fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+      } else if (role === ROLES.VENDOR) {
+        fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
         fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
           .then(r => r.ok ? r.json() : null)
           .then(att => {
             if (!att) return;
             if (att.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
             if (att.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
-          })
-          .catch(() => {});
+          }).catch(() => {});
       } else {
         fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
           .then(r => r.ok ? r.json() : null)
           .then(state => {
             if (!state) return;
-            if (Array.isArray(state.employees) && state.employees.length > 0) setEmployees(state.employees);
-            if (state.vendors?.length  > 0)  setVendors(state.vendors);
-            if (state.warehouses?.length > 0) setWarehouses(state.warehouses);
-            if (state.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
+            applySchedule(state);
             if (state.attendData)  setAttendData(state.attendData);
             if (state.extras)      setExtras(state.extras);
-            if (state.scheduleRange)           setScheduleRange(state.scheduleRange);
-            if (state.openHolidays)            setOpenHolidays(state.openHolidays);
-            if (state.systemLocked != null)    setSystemLocked(state.systemLocked);
-            if (state.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
-            if (state.vendorCompanyNames)      setVendorCompanyNames(state.vendorCompanyNames);
+            if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
             if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
-            if (state.shiftCodeRows?.length > 0)    setShiftCodeRows(state.shiftCodeRows);
-            if (state.shiftCodeHeaders?.length > 0) setShiftCodeHeaders(state.shiftCodeHeaders);
-          })
-          .catch(() => {});
+          }).catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', onVisible);

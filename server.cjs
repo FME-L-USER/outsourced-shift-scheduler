@@ -514,6 +514,28 @@ app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   res.json(rows[0]?.data ?? null);
 });
 
+// ── GET /api/schedule （所有登入角色可讀，供 worker/vendor 取得班表）─
+app.get('/api/schedule', requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const data = rows[0]?.data ?? {};
+  res.json({
+    schedule:        data.schedule        ?? {},
+    scheduleRange:   data.scheduleRange   ?? {},
+    openHolidays:    data.openHolidays    ?? [],
+    shiftCodeRows:   data.shiftCodeRows   ?? [],
+    shiftCodeHeaders:data.shiftCodeHeaders ?? [],
+    employees:       (data.employees ?? []).map(e => ({
+      id: e.id, empId: e.empId, name: e.name, vendor: e.vendor,
+      shiftType: e.shiftType, group: e.group, dept: e.dept,
+      warehouse: e.warehouse, section: e.section, status: e.status,
+    })),
+    vendors:     data.vendors     ?? [],
+    warehouses:  data.warehouses  ?? [],
+    systemLocked: data.systemLocked ?? false,
+    vendorHolidayOpen: data.vendorHolidayOpen ?? false,
+  });
+});
+
 // ── PUT /api/state ────────────────────────────────────────
 app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   await pool.query(
