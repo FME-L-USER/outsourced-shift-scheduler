@@ -1715,20 +1715,21 @@ function Dashboard() {
                 <th rowSpan={2} className="text-left px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 border-b-2 border-slate-200">廠商</th>
                 <th colSpan={2 + GROUP_COLS.length + 2} className="text-center px-3 py-1.5 text-[10.5px] font-bold tracking-wider text-teal-700 bg-teal-50 border border-teal-200">長期人員</th>
                 <th colSpan={3} className="text-center px-3 py-1.5 text-[10.5px] font-bold tracking-wider text-orange-600 bg-orange-50 border border-orange-200">臨時人員</th>
-                <th rowSpan={2} className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 border-b-2 border-slate-200">前周差</th>
+                <th rowSpan={2} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-600 border-b-2 border-slate-200">總出勤人數</th>
+                <th rowSpan={2} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 border-b-2 border-slate-200">前周差</th>
               </tr>
               {/* 欄位標題列 */}
               <tr className="bg-slate-50 border-b-2 border-slate-200">
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">在職</th>
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-blue-500 bg-teal-50/40">排班</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">在職</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-blue-500 bg-teal-50/40">應到</th>
                 {GROUP_COLS.map(gc => (
-                  <th key={gc.label} className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">{gc.label}</th>
+                  <th key={gc.label} className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 bg-teal-50/40">{gc.label}</th>
                 ))}
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600 bg-teal-50/40">到班（長）</th>
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600 bg-teal-50/40">到班率（長）</th>
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-400 bg-orange-50/40">應到（臨）</th>
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50/40">到班（臨）</th>
-                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50/40">到班率（臨）</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600 bg-teal-50/40">到班（長）</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600 bg-teal-50/40">到班率（長）</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-400 bg-orange-50/40">應到（臨）</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50/40">到班（臨）</th>
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50/40">到班率（臨）</th>
               </tr>
             </thead>
             <tbody>
@@ -1742,25 +1743,25 @@ function Dashboard() {
                       <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
                       {s.vendor}
                     </td>
-                    <td className="px-3 py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
-                    <td className="px-3 py-2.5 text-right text-sm font-bold text-blue-600">{s.working}</td>
+                    <td className="px-3 py-2.5 text-center text-sm text-slate-500">{s.roster}</td>
+                    <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{s.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = s.groups[gc.label] ?? 0;
                       return (
-                        <td key={gc.label} className="px-3 py-2.5 text-right text-sm">
+                        <td key={gc.label} className="px-3 py-2.5 text-center text-sm">
                           {cnt > 0 ? <span className="text-slate-700">{cnt}</span> : <span className="text-slate-300">—</span>}
                         </td>
                       );
                     })}
                     {/* 長期：到班（長） */}
-                    <td className="px-3 py-2.5 text-right text-sm bg-teal-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm bg-teal-50/20">
                       {hasAttendData
                         ? (s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">—</span>)
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
                     {/* 長期：到班率（長） */}
-                    <td className="px-3 py-2.5 text-right text-sm bg-teal-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm bg-teal-50/20">
                       {hasAttendData
                         ? (s.working > 0
                             ? <span className="font-semibold text-teal-600">{Math.round(s.longPresent / s.working * 100)}%</span>
@@ -1769,21 +1770,21 @@ function Dashboard() {
                       }
                     </td>
                     {/* 臨時：應到（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm bg-orange-50/20">
                       {hasAttendData
                         ? (s.tempExpected > 0 ? <span className="text-orange-400">{s.tempExpected}</span> : <span className="text-slate-300">—</span>)
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
                     {/* 臨時：到班（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm bg-orange-50/20">
                       {hasAttendData
                         ? (s.tempPresent > 0 ? <span className="font-semibold text-orange-500">{s.tempPresent}</span> : <span className="text-slate-300">—</span>)
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
                     {/* 臨時：到班率（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm bg-orange-50/20">
                       {hasAttendData
                         ? (s.tempExpected > 0
                             ? <span className="font-semibold text-orange-500">{Math.round(s.tempPresent / s.tempExpected * 100)}%</span>
@@ -1791,8 +1792,15 @@ function Dashboard() {
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
+                    {/* 總出勤人數 */}
+                    <td className="px-3 py-2.5 text-center text-sm">
+                      {hasAttendData
+                        ? <span className="font-bold text-slate-700">{s.longPresent + s.tempPresent}</span>
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
+                    </td>
                     {/* 前周差 */}
-                    <td className={`px-3 py-2.5 text-right text-sm ${diffColor}`}>{diffLabel}</td>
+                    <td className={`px-3 py-2.5 text-center text-sm ${diffColor}`}>{diffLabel}</td>
                   </tr>
                 );
               })}
@@ -1811,25 +1819,25 @@ function Dashboard() {
                 return (
                   <tr className="border-t-2 border-slate-200 bg-slate-50">
                     <td className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wide">合計</td>
-                    <td className="px-3 py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
-                    <td className="px-3 py-2.5 text-right text-sm font-bold text-blue-600">{total.working}</td>
+                    <td className="px-3 py-2.5 text-center text-sm font-bold text-slate-600">{total.roster}</td>
+                    <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{total.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
                       return (
-                        <td key={gc.label} className="px-3 py-2.5 text-right text-sm font-bold">
+                        <td key={gc.label} className="px-3 py-2.5 text-center text-sm font-bold">
                           {cnt > 0 ? <span className="text-slate-600">{cnt}</span> : <span className="text-slate-300">—</span>}
                         </td>
                       );
                     })}
                     {/* 長期：到班（長） */}
-                    <td className="px-3 py-2.5 text-right text-sm font-bold bg-teal-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm font-bold bg-teal-50/20">
                       {hasAttendData
                         ? (total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">—</span>)
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
                     {/* 長期：到班率（長） */}
-                    <td className="px-3 py-2.5 text-right text-sm font-bold bg-teal-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm font-bold bg-teal-50/20">
                       {hasAttendData
                         ? (total.working > 0
                             ? <span className="text-teal-600">{Math.round(total.longPresent / total.working * 100)}%</span>
@@ -1838,21 +1846,21 @@ function Dashboard() {
                       }
                     </td>
                     {/* 臨時：應到（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm font-bold bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm font-bold bg-orange-50/20">
                       {hasAttendData
                         ? (total.tempExpected > 0 ? <span className="text-orange-400">{total.tempExpected}</span> : <span className="text-slate-300">—</span>)
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
                     {/* 臨時：到班（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm font-bold bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm font-bold bg-orange-50/20">
                       {hasAttendData
                         ? (total.tempPresent > 0 ? <span className="text-orange-500">{total.tempPresent}</span> : <span className="text-slate-300">—</span>)
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
                     {/* 臨時：到班率（臨） */}
-                    <td className="px-3 py-2.5 text-right text-sm font-bold bg-orange-50/20">
+                    <td className="px-3 py-2.5 text-center text-sm font-bold bg-orange-50/20">
                       {hasAttendData
                         ? (total.tempExpected > 0
                             ? <span className="text-orange-500">{Math.round(total.tempPresent / total.tempExpected * 100)}%</span>
@@ -1860,8 +1868,15 @@ function Dashboard() {
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
+                    {/* 總出勤人數 */}
+                    <td className="px-3 py-2.5 text-center text-sm font-bold">
+                      {hasAttendData
+                        ? <span className="text-slate-700">{total.longPresent + total.tempPresent}</span>
+                        : <span className="text-slate-300">—</span>
+                      }
+                    </td>
                     {/* 前周差 */}
-                    <td className={`px-3 py-2.5 text-right text-sm font-bold ${tDiffColor}`}>{tDiffLabel}</td>
+                    <td className={`px-3 py-2.5 text-center text-sm font-bold ${tDiffColor}`}>{tDiffLabel}</td>
                   </tr>
                 );
               })()}
