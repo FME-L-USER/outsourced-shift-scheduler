@@ -1347,6 +1347,12 @@ function Dashboard() {
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
+  // 儀表板用：不過濾 vendor 角色，讓各廠商長期人員都能算到
+  const dashEmployees = useMemo(() => {
+    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+  }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
+
   // 前周同星期日期
   const prevWeekDate = useMemo(() => {
     const d = new Date(dashYear, dashMonth - 1, safeDay);
@@ -1357,14 +1363,14 @@ function Dashboard() {
   // 組別欄位定義：從員工資料動態產生，依實際組別名稱顯示
   const GROUP_COLS = useMemo(() => {
     const seen = new Set();
-    visibleEmployees.forEach(e => { if (e.group) seen.add(e.group); });
+    dashEmployees.forEach(e => { if (e.group) seen.add(e.group); });
     // 排序：日班優先、中班次之、其他依字典序
     const sorted = [...seen].sort((a, b) => {
       const order = v => v.includes('日班') ? 0 : v.includes('中班') ? 1 : 2;
       return order(a) - order(b) || a.localeCompare(b, 'zh-TW');
     });
     return sorted.map(g => ({ label: g, match: empGroup => empGroup === g }));
-  }, [visibleEmployees]);
+  }, [dashEmployees]);
 
   // 所選日期出勤統計（各廠商）含前周差 + 組別細分
   const vendorStats = useMemo(() => {
@@ -1372,7 +1378,7 @@ function Dashboard() {
     const dkPW = dateKey(prevWeekDate.year, prevWeekDate.month, prevWeekDate.day);
     const attendDkPad = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
     const map = {};
-    visibleEmployees.forEach(emp => {
+    dashEmployees.forEach(emp => {
       if (!map[emp.vendor]) {
         map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
         GROUP_COLS.forEach(gc => { map[emp.vendor].groups[gc.label] = 0; });
@@ -1418,7 +1424,7 @@ function Dashboard() {
       tempPresent:  s.tempPresent  ?? 0,
       tempExpected: s.tempExpected ?? 0,
     }));
-  }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
+  }, [dashEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
