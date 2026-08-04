@@ -3313,11 +3313,47 @@ function EmployeeRoster() {
 
 
 function Reports() {
-  const { employees, schedule, selectedYear, selectedMonth,
+  const { employees, schedule, selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
-    vendorCompanyNames, currentUser } = useApp();
+    vendorCompanyNames, currentUser, scheduleRange } = useApp();
   const toast = useToast();
-  const days = getDaysInMonth(selectedYear, selectedMonth);
+
+  const [viewOffset, setViewOffset] = useState(0);
+  const rangeMode = !!(scheduleRange.start && scheduleRange.end);
+  const viewRange = useMemo(() => {
+    if (!rangeMode) return null;
+    const s = parseLocal(scheduleRange.start);
+    const e = parseLocal(scheduleRange.end);
+    const len = Math.round((e - s) / 86400000);
+    const shift = viewOffset * len;
+    const vs = new Date(s); vs.setDate(vs.getDate() + shift);
+    const ve = new Date(e); ve.setDate(ve.getDate() + shift);
+    const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return { start: fmt(vs), end: fmt(ve), len };
+  }, [rangeMode, scheduleRange, viewOffset]);
+
+  // 依目前選擇週期建立日期陣列
+  const reportDates = useMemo(() => {
+    const WD = ['日','一','二','三','四','五','六'];
+    if (rangeMode && viewRange) {
+      const result = [];
+      const cur = parseLocal(viewRange.start);
+      const end = parseLocal(viewRange.end);
+      while (cur <= end) {
+        result.push({ year: cur.getFullYear(), month: cur.getMonth()+1, day: cur.getDate(), wd: WD[cur.getDay()] });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return result;
+    }
+    const dc = getDaysInMonth(selectedYear, selectedMonth);
+    return Array.from({ length: dc }, (_, i) => {
+      const d = new Date(selectedYear, selectedMonth-1, i+1);
+      return { year: selectedYear, month: selectedMonth, day: i+1, wd: WD[d.getDay()] };
+    });
+  }, [rangeMode, viewRange, selectedYear, selectedMonth]);
+
+  const years = useMemo(() => Array.from({length:5}, (_,i) => new Date().getFullYear() - 2 + i), []);
+  const months = Array.from({length:12}, (_,i) => i+1);
 
   const scopedEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
@@ -3327,130 +3363,92 @@ function Reports() {
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
   const buildVendorSheet = (vendor) => {
-    const emps = scopedEmployees.filter(e => e.vendor === vendor);
-    const rocYear = selectedYear - 1911;
-    const daysInMonth = days;
-    const WEEKDAYS = ['日','一','二','三','四','五','六'];
+    const emps       = scopedEmployees.filter(e => e.vendor === vendor);
+    const daysCount  = reportDates.length;
+    const startD     = reportDates[0];
+    const endD       = reportDates[daysCount - 1];
+    const rocYearS   = startD.year - 1911;
+    const rocYearE   = endD.year   - 1911;
+    const tableTitle = rangeMode ? '排班確認表' : '當月排班確認表';
+    const companyName = vendorCompanyNames[vendor] ?? vendor;
+    const dateRange = rocYearS === rocYearE
+      ? `確認排班區間：${rocYearS}年${startD.month}月${startD.day}日~${rocYearS}年${endD.month}月${endD.day}日`
+      : `確認排班區間：${rocYearS}年${startD.month}月${startD.day}日~${rocYearE}年${endD.month}月${endD.day}日`;
 
-    // National holidays in this month
-    const monthHolidays = NATIONAL_HOLIDAYS.filter(
-      h => h.year === selectedYear && h.month === selectedMonth
+    // 假日備註：找出本週期內的國定假日，若員工調移則備註
+    const periodHolidays = NATIONAL_HOLIDAYS.filter(
+      h => reportDates.some(d => d.year === h.year && d.month === h.month && d.day === h.day)
     );
-
-    // Get remark for employee: if employee's 國 falls on a non-holiday date
     const getRemarks = (emp) => {
       const parts = [];
-      for (const h of monthHolidays) {
-        const dk = dateKey(selectedYear, selectedMonth, h.day);
+      for (const h of periodHolidays) {
+        const dk = dateKey(h.year, h.month, h.day);
         const codeOnHoliday = schedule[emp.id]?.[dk] ?? 'V';
         if (codeOnHoliday !== '國') {
-          let foundDay = null;
-          for (let d = 1; d <= daysInMonth; d++) {
-            if ((schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V') === '國') { foundDay = d; break; }
-          }
-          if (foundDay) {
-            parts.push(`原${selectedMonth}/${h.day}國定假日${h.name}調移至${selectedMonth}/${foundDay}`);
-          }
+          const foundDate = reportDates.find(d => (schedule[emp.id]?.[dateKey(d.year, d.month, d.day)] ?? 'V') === '國');
+          if (foundDate) parts.push(`原${h.month}/${h.day}國定假日${h.name}調移至${foundDate.month}/${foundDate.day}`);
         }
       }
       return parts.join('；');
     };
 
-    const countCode = (emp, code) => {
-      let c = 0;
-      for (let d = 1; d <= daysInMonth; d++) {
-        if ((schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V') === code) c++;
-      }
-      return c;
-    };
+    const countCode = (emp, code) =>
+      reportDates.filter(d => (schedule[emp.id]?.[dateKey(d.year, d.month, d.day)] ?? 'V') === code).length;
 
-    // AOA rows — columns: [empty, col_B, col_C, day1..dayN, 請假,休假,例假,國定, 員工簽名, 確認日期, 備註]
-    const pad = (n) => { const a = []; for (let i = 0; i < n; i++) a.push(null); return a; };
-    const totalCols = 3 + daysInMonth + 4 + 3; // B,C + days + 4 counts + 3 sig cols
+    const totalCols = 3 + daysCount + 4 + 3;
+    const dc = 3 + daysCount;
+    const midCol = Math.floor((3 + dc) / 2);
+    const rgtCol = dc - 3;
 
-    const row = (...cells) => {
-      const r = new Array(totalCols).fill(null);
-      cells.forEach(([i, v]) => { r[i] = v; });
-      return r;
-    };
-
-    const companyName = vendorCompanyNames[vendor] ?? vendor;
-    const dateRange = `確認排班區間：${rocYear}年${selectedMonth}月1日~${rocYear}年${selectedMonth}月${daysInMonth}日`;
-
-    // Month row: position 1=月份, 2=empty, 3..3+days-1=month numbers, 3+days=各假別計算, 3+days+4=員工簽名, 3+days+5=確認日期, 3+days+6=備註
-    const dc = 3 + daysInMonth; // start of count columns (0-based index)
     const monthRow = new Array(totalCols).fill(null);
     monthRow[1] = '月份';
-    for (let d = 1; d <= daysInMonth; d++) monthRow[2 + d] = selectedMonth;
-    monthRow[dc] = '各假別計算';
-    monthRow[dc + 4] = '員工簽名';
-    monthRow[dc + 5] = '確認日期';
-    monthRow[dc + 6] = '備註';
+    reportDates.forEach((d, i) => { monthRow[2 + (i+1)] = d.month; });
+    monthRow[dc] = '各假別計算'; monthRow[dc+4] = '員工簽名'; monthRow[dc+5] = '確認日期'; monthRow[dc+6] = '備註';
 
     const dateRow = new Array(totalCols).fill(null);
     dateRow[1] = '日期';
-    for (let d = 1; d <= daysInMonth; d++) dateRow[2 + d] = d;
-    dateRow[dc] = '請假\n天數';
-    dateRow[dc + 1] = '休假\n天數';
-    dateRow[dc + 2] = '例假日\n天數';
-    dateRow[dc + 3] = '國定\n假日\n天數';
+    reportDates.forEach((d, i) => { dateRow[2 + (i+1)] = d.day; });
+    dateRow[dc] = '請假\n天數'; dateRow[dc+1] = '休假\n天數'; dateRow[dc+2] = '例假日\n天數'; dateRow[dc+3] = '國定\n假日\n天數';
 
     const weekRow = new Array(totalCols).fill(null);
     weekRow[1] = '星期';
-    for (let d = 1; d <= daysInMonth; d++) {
-      const wd = new Date(selectedYear, selectedMonth - 1, d).getDay();
-      weekRow[2 + d] = WEEKDAYS[wd];
-    }
+    reportDates.forEach((d, i) => { weekRow[2 + (i+1)] = d.wd; });
 
     const headerRow = new Array(totalCols).fill(null);
-    headerRow[1] = '員工編號';
-    headerRow[2] = '員工姓名';
+    headerRow[1] = '員工編號'; headerRow[2] = '員工姓名';
 
     const empRows = emps.map(emp => {
       const r = new Array(totalCols).fill(null);
-      r[1] = emp.empId;
-      r[2] = emp.name;
-      for (let d = 1; d <= daysInMonth; d++) {
-        r[2 + d] = schedule[emp.id]?.[dateKey(selectedYear, selectedMonth, d)] ?? 'V';
-      }
-      r[dc]     = countCode(emp, '事') + countCode(emp, '病');
-      r[dc + 1] = countCode(emp, '休');
-      r[dc + 2] = countCode(emp, '例');
-      r[dc + 3] = countCode(emp, '國');
-      r[dc + 6] = getRemarks(emp);
+      r[1] = emp.empId; r[2] = emp.name;
+      reportDates.forEach((d, i) => {
+        r[2 + (i+1)] = schedule[emp.id]?.[dateKey(d.year, d.month, d.day)] ?? 'V';
+      });
+      r[dc]   = countCode(emp, '事') + countCode(emp, '病');
+      r[dc+1] = countCode(emp, '休');
+      r[dc+2] = countCode(emp, '例');
+      r[dc+3] = countCode(emp, '國');
+      r[dc+6] = getRemarks(emp);
       return r;
     });
 
     const noteRow1 = new Array(totalCols).fill(null);
-    noteRow1[1] = '1. 本表僅供當月排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。';
-    noteRow1[dc + 4] = '人力廠商 假別確認簽章';
-
+    noteRow1[1] = '1. 本表僅供排班及出勤／休假日確認使用，標示說明如下：實際出勤、請假、加班、補休及薪資計算，仍以公司系統紀錄及相關規定為準。';
+    noteRow1[dc+4] = '人力廠商 假別確認簽章';
     const noteRow2 = new Array(totalCols).fill(null);
     noteRow2[1] = '     ※班別／狀態說明：V＝出勤日　例＝例假日　休＝休假日　事＝事假　病＝病假　國＝國定假日';
-
     const noteRow3 = new Array(totalCols).fill(null);
-    noteRow3[1] = '2. 當月排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。';
+    noteRow3[1] = '2. 排班確認表經勞資雙方個別協商確認，員工簽名即同意配合公司實施八週彈性工時進行工作日、休息日及國定假日之調移，調移後之具體日期如本表所載。';
 
-    // Title row: B2=廠商名(red), center=當月排班確認表, right-of-days=確認排班區間
-    const midCol  = Math.floor((3 + dc) / 2);
-    const rgtCol  = dc - 3;
     const titleRow = new Array(totalCols).fill(null);
-    titleRow[1]       = companyName;
-    titleRow[midCol]  = '當月排班確認表';
-    titleRow[rgtCol]  = dateRange;
+    titleRow[1] = companyName; titleRow[midCol] = tableTitle; titleRow[rgtCol] = dateRange;
 
     return [
       new Array(totalCols).fill(null),
       titleRow,
       new Array(totalCols).fill(null),
-      noteRow1,
-      noteRow2,
-      noteRow3,
+      noteRow1, noteRow2, noteRow3,
       new Array(totalCols).fill(null),
-      monthRow,
-      dateRow,
-      weekRow,
-      headerRow,
+      monthRow, dateRow, weekRow, headerRow,
       ...empRows,
     ];
   };
@@ -3623,15 +3621,18 @@ function Reports() {
 
   const exportVendor = (vendor) => {
     try {
-      const wb = XLSX.utils.book_new();
+      const wb   = XLSX.utils.book_new();
       const emps = scopedEmployees.filter(e => e.vendor === vendor);
       const wsData = buildVendorSheet(vendor);
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      applySheetStyles(ws, days, emps.length);
+      const ws   = XLSX.utils.aoa_to_sheet(wsData);
+      applySheetStyles(ws, reportDates.length, emps.length);
       XLSX.utils.book_append_sheet(wb, ws, vendor.substring(0, 30));
-      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+      const buf  = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+      const label = rangeMode && viewRange
+        ? `${viewRange.start.replace(/-/g,'')}~${viewRange.end.replace(/-/g,'')}`
+        : `${selectedYear}${String(selectedMonth).padStart(2,'0')}`;
       saveAs(new Blob([buf], { type: 'application/octet-stream' }),
-        `班表_${vendor}_${selectedYear}${String(selectedMonth).padStart(2,'0')}.xlsx`);
+        `班表_${vendor}_${label}.xlsx`);
       toast(`已匯出 ${vendor} 班表`, 'success');
     } catch (err) {
       toast('匯出失敗：' + err.message, 'error');
@@ -3648,12 +3649,46 @@ function Reports() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h2 className="text-xl font-bold text-slate-800">報表匯出</h2>
-        <button onClick={exportAll}
-          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm hover:bg-slate-900">
-          📦 批次匯出全部廠商
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {rangeMode ? (
+            <div className="flex items-center gap-1">
+              <button onClick={() => setViewOffset(v => v - 1)}
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
+                title="上一個週期">◀</button>
+              <span className={`px-3 py-1.5 border rounded-lg text-sm font-medium
+                ${viewOffset === 0 ? 'bg-teal-50 border-teal-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
+                📅 {viewRange?.start} ~ {viewRange?.end}
+                {viewOffset !== 0 && <span className="ml-1 text-xs opacity-70">（{viewOffset > 0 ? `+${viewOffset}` : viewOffset} 期）</span>}
+              </span>
+              <button onClick={() => setViewOffset(v => v + 1)}
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
+                title="下一個週期">▶</button>
+              {viewOffset !== 0 && (
+                <button onClick={() => setViewOffset(0)}
+                  className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
+                  回目前
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <select value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                {years.map(y => <option key={y} value={y}>{y}年</option>)}
+              </select>
+              <select value={selectedMonth} onChange={e => setSelectedMonth(+e.target.value)}
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                {months.map(m => <option key={m} value={m}>{m}月</option>)}
+              </select>
+            </>
+          )}
+          <button onClick={exportAll}
+            className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm hover:bg-slate-900">
+            📦 批次匯出全部廠商
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
