@@ -5896,7 +5896,8 @@ function ShiftCodeTable() {
 // ─────────────────────────────────────────────
 
 function AccountManagement() {
-  const { users, setUsers, vendors, warehouses, currentUser } = useApp();
+  const { users, setUsers, vendors, warehouses, currentUser, employees,
+          selectedWarehouse, selectedDept, selectedGroup } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
 
@@ -6049,16 +6050,25 @@ function AccountManagement() {
             .flatMap(w => w.departments ?? [])
             .flatMap(d => d.vendors ?? [])
         );
+  // 上方條件（倉別/課別）篩選廠商名稱
+  const scopeVendorNames = selectedDept
+    ? new Set(warehouses.find(w => w.id === selectedWarehouse)?.departments?.find(d => d.id === selectedDept)?.vendors ?? [])
+    : selectedWarehouse
+      ? new Set(warehouses.find(w => w.id === selectedWarehouse)?.departments?.flatMap(d => d.vendors ?? []) ?? [])
+      : null;
   const vendorUsers = users.filter(u =>
     u.role === ROLES.VENDOR && u.approved !== false &&
-    (visibleVendorNames === null || (u.vendors ?? []).some(v => visibleVendorNames.has(v)))
+    (visibleVendorNames === null || (u.vendors ?? []).some(v => visibleVendorNames.has(v))) &&
+    (scopeVendorNames === null || (u.vendors ?? []).some(v => scopeVendorNames.has(v)))
   );
 
   const tabUsers = activeTab === 'staff' ? staffUsers : vendorUsers;
 
-  // 委外人員 tab：從員工清冊取得，標示是否已升級為幹部帳號
-  const { employees } = useApp();
-  const workerEmpListAll = employees.filter(e => e.status !== '離職' && e.vendor);
+  // 委外人員 tab：從員工清冊取得，依上方條件篩選，標示是否已升級為幹部帳號
+  const workerEmpListAll = filterByScope(
+    employees.filter(e => e.status !== '離職' && e.vendor),
+    warehouses, selectedWarehouse, selectedDept, selectedGroup
+  );
   const workerEmpList = workerEmpListAll.filter(e =>
     (!workerSearchName || e.name?.includes(workerSearchName)) &&
     (!workerSearchId   || e.empId?.includes(workerSearchId))
