@@ -1165,7 +1165,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
         {items.map(item => (
           <button key={item.key}
             onClick={() => onNavigate(item.key)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors rounded-[6px] mx-0.5
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-base transition-colors rounded-[6px] mx-0.5
                         ${currentPage === item.key
                           ? 'text-white font-medium'
                           : 'text-slate-300 hover:text-white'}`}
