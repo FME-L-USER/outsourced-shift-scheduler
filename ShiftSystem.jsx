@@ -2200,6 +2200,45 @@ function ScheduleTable() {
     reader.readAsBinaryString(file);
   };
 
+  // 一週一例修正：掃描現有班表，每週超過一天「例」的降格為「休」
+  const handleFixWeeklyEx = useCallback(() => {
+    let fixedCount = 0;
+    const updates = {};
+    visibleEmployees.forEach(emp => {
+      const empSchedule = schedule[emp.id];
+      if (!empSchedule) return;
+      const exDates = Object.entries(empSchedule)
+        .filter(([, code]) => code === '例')
+        .map(([dk]) => {
+          const [y, m, d] = dk.split('-').map(Number);
+          return { dk, ts: new Date(y, m - 1, d).getTime() };
+        })
+        .sort((a, b) => a.ts - b.ts);
+      const weekExSeen = new Set();
+      const toConvert = [];
+      exDates.forEach(({ dk, ts }) => {
+        const date = new Date(ts);
+        const dow = (date.getDay() + 6) % 7;
+        const mon = new Date(ts);
+        mon.setDate(date.getDate() - dow);
+        const wk = `${mon.getFullYear()}-${mon.getMonth()+1}-${mon.getDate()}`;
+        if (weekExSeen.has(wk)) { toConvert.push(dk); } else { weekExSeen.add(wk); }
+      });
+      if (toConvert.length > 0) {
+        const ns = { ...empSchedule };
+        toConvert.forEach(dk => { ns[dk] = '休'; fixedCount++; });
+        updates[emp.id] = ns;
+      }
+    });
+    if (fixedCount === 0) { toast('無需修正，所有員工每週例休均已為一天。', 'info'); return; }
+    setSchedule(prev => {
+      const next = { ...prev };
+      Object.entries(updates).forEach(([id, days]) => { next[id] = days; });
+      return next;
+    });
+    toast(`已修正 ${fixedCount} 個格位：每週超過一天例休已改為休假（休）。`, 'success');
+  }, [visibleEmployees, schedule, setSchedule, toast]);
+
   // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
   const handleDownloadTemplate = () => {
     try {
@@ -2336,6 +2375,10 @@ function ScheduleTable() {
           <button onClick={() => importFileRef.current.click()}
             className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 flex items-center gap-1">
             📥 匯入班表
+          </button>
+          <button onClick={handleFixWeeklyEx}
+            className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-700 flex items-center gap-1">
+            🔧 修正一週一例
           </button>
           <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
           <button onClick={exportScheduleRaw}
