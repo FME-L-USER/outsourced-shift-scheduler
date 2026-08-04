@@ -7108,6 +7108,52 @@ export default function App() {
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
       setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
 
+  // ── 切回前景自動同步（另一位同事更新後，本機切回分頁即可看到最新資料）──
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!serverSyncedRef.current) return;
+      const token = localStorage.getItem(JWT_KEY);
+      if (!token) return;
+      const isVendor = currentUser?.role === ROLES.VENDOR;
+      if (isVendor) {
+        fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : null)
+          .then(att => {
+            if (!att) return;
+            if (att.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
+            if (att.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
+          })
+          .catch(() => {});
+      } else {
+        fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : null)
+          .then(state => {
+            if (!state) return;
+            if (Array.isArray(state.employees) && state.employees.length > 0) setEmployees(state.employees);
+            if (state.vendors?.length  > 0)  setVendors(state.vendors);
+            if (state.warehouses?.length > 0) setWarehouses(state.warehouses);
+            if (state.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
+            if (state.attendData)  setAttendData(state.attendData);
+            if (state.extras)      setExtras(state.extras);
+            if (state.scheduleRange)           setScheduleRange(state.scheduleRange);
+            if (state.openHolidays)            setOpenHolidays(state.openHolidays);
+            if (state.systemLocked != null)    setSystemLocked(state.systemLocked);
+            if (state.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
+            if (state.vendorCompanyNames)      setVendorCompanyNames(state.vendorCompanyNames);
+            if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+            if (state.shiftCodeRows?.length > 0)    setShiftCodeRows(state.shiftCodeRows);
+            if (state.shiftCodeHeaders?.length > 0) setShiftCodeHeaders(state.shiftCodeHeaders);
+          })
+          .catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [currentUser, setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
+      setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
+      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
+
   // ── Persist to localStorage ──
   const storageWarn = useCallback(() => {
     // 避免重複 toast（每分鐘最多一次）
