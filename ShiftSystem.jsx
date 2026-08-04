@@ -2641,9 +2641,9 @@ function ScheduleTable() {
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-slate-800">班表管理</h2>
-          <input value={nameSearch} onChange={e => setNameSearch(e.target.value)}
+          {!isWorker && <input value={nameSearch} onChange={e => setNameSearch(e.target.value)}
             placeholder="搜尋姓名／員工編號…"
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {rangeMode ? (
@@ -2685,33 +2685,33 @@ function ScheduleTable() {
                 : 'bg-white text-slate-600 border-[#DDD9D0] hover:bg-[#F5F2EC]'}`}>
             {showConverted ? '🔤 顯示代號中' : '🔡 顯示記號'}
           </button>
-          {checkedEmpIds.size > 0 && (
+          {!isWorker && checkedEmpIds.size > 0 && (
             <button onClick={resetChecked}
               className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 flex items-center gap-1">
               🔄 重排已選（{checkedEmpIds.size}人）
             </button>
           )}
-          <button onClick={handleDownloadTemplate}
+          {!isWorker && <button onClick={handleDownloadTemplate}
             className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
             📋 下載匯入範本
-          </button>
-          <button onClick={() => importFileRef.current.click()}
+          </button>}
+          {!isWorker && <button onClick={() => importFileRef.current.click()}
             className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 flex items-center gap-1">
             📥 匯入班表
-          </button>
-          <button onClick={handleFixWeeklyEx}
+          </button>}
+          {!isWorker && <button onClick={handleFixWeeklyEx}
             className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-700 flex items-center gap-1">
             🔧 修正一週一例
-          </button>
+          </button>}
           <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
-          <button onClick={exportScheduleRaw}
+          {!isWorker && <button onClick={exportScheduleRaw}
             className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-1">
             💾 存檔班表
-          </button>
-          <button onClick={exportConverted}
+          </button>}
+          {!isWorker && <button onClick={exportConverted}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
-          </button>
+          </button>}
           <button onClick={handlePrintReport}
             className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1">
             🖨️ 列印報表
@@ -7345,7 +7345,7 @@ export default function App() {
             </header>
 
             {/* 全域倉別 / 課別選擇列 */}
-            <WarehouseDeptBar />
+            {currentUser.role !== ROLES.WORKER && <WarehouseDeptBar />}
 
             <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
