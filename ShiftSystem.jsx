@@ -2439,11 +2439,13 @@ function ScheduleTable() {
                   );
                 })}
                 <th className="px-2 py-2 w-16 min-w-[64px]">出勤天</th>
+                <th className="px-2 py-2 w-16 min-w-[64px]">休假天</th>
               </tr>
             </thead>
             <tbody>
               {visibleEmployees.map((emp, rowIdx) => {
                 let workDays = 0;
+                let leaveDays = 0;
                 // 連續6天上班警示（僅對當區幹部/管理員顯示，廠商不顯示）
                 const warnDks = (() => {
                   if (currentUser.role === ROLES.VENDOR) return new Set();
@@ -2489,6 +2491,7 @@ function ScheduleTable() {
                     {dayHeaders.map(({ dk, day, month, year, isWeekend, isMonthStart }, colIdx) => {
                       const code = schedule[emp.id]?.[dk] ?? 'V';
                       if (code === 'V') workDays++;
+                      else if (code === '休' || code === '例' || code === '國') leaveDays++;
                       const holidayLabel = code === '國' ? getHolidayLabel(day, month, year) : null;
                       const displayCode = showConverted
                         ? (() => {
@@ -2517,6 +2520,9 @@ function ScheduleTable() {
                     <td className="px-2 py-1.5 text-center font-semibold text-blue-700">
                       {workDays}
                     </td>
+                    <td className="px-2 py-1.5 text-center font-semibold text-orange-600">
+                      {leaveDays}
+                    </td>
                   </tr>
                 );
               })}
@@ -2537,6 +2543,7 @@ function ScheduleTable() {
                     {dayHeaders.map(({ dk }) => (
                       <td key={dk} className={`px-1 py-1.5 text-center font-semibold ${color}`}>{fn(dk)}</td>
                     ))}
+                    <td className="px-2 py-1.5" />
                     <td className="px-2 py-1.5" />
                   </tr>
                 ));
