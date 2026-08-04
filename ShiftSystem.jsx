@@ -2357,10 +2357,10 @@ function ScheduleTable() {
       </div>
 
       {/* Table */}
-      <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
-        <div className="overflow-x-auto pb-4" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+      <div className="border border-[#DDD9D0] rounded-xl" style={{ overflow: 'clip' }}>
+        <div className="overflow-auto pb-4" style={{ maxHeight: 'calc(100vh - 220px)' }}>
           <table className="border-collapse text-xs" style={{ minWidth: `${160 + days * 44}px` }}>
-            <thead className="sticky top-0 z-10">
+            <thead className="sticky top-0 z-20">
               <tr className="bg-slate-700 text-white">
                 <th className="sticky left-0 z-20 bg-slate-700 px-2 py-2 w-8 min-w-[32px] text-center"
                   style={{ width: 32 }}>
