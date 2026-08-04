@@ -4017,10 +4017,11 @@ function Attendance() {
   useEffect(() => { LS.set('sms_attend_settings', attendSettings); }, [attendSettings]);
 
   const groupOptions = useMemo(() => {
-    const fromEmps = new Set(employees.map(e => e.shiftType).filter(Boolean));
-    const fromExtras = new Set(Object.values(extras).flat().map(e => e.group).filter(Boolean));
+    const fromShiftType = employees.map(e => e.shiftType).filter(Boolean);
+    const fromGroup = employees.map(e => e.group).filter(Boolean);
+    const fromExtras = Object.values(extras).flat().map(e => e.group).filter(Boolean);
     const custom = attendSettings.groups ?? [];
-    return [...new Set([...fromEmps, ...fromExtras, ...custom])].sort();
+    return [...new Set([...fromShiftType, ...fromGroup, ...fromExtras, ...custom])].sort();
   }, [employees, extras, attendSettings.groups]);
 
   const ABSENT_CODES = new Set(['休', '例', '國']);
