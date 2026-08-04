@@ -1977,13 +1977,17 @@ function ScheduleTable() {
       next = current === '休' ? 'V' : '休';
     }
 
-    // 防呆：委外幹部每週限排一天例休
-    if (currentUser.role === ROLES.VENDOR && next === '例') {
+    // 一週一例：超額時自動改為「休」；委外幹部仍顯示錯誤並阻擋
+    if (next === '例') {
       const existingLeaves = getWeeklyLeaves(empId, dk);
       const alreadyLeave = schedule[empId]?.[dk] === '例';
       if (!alreadyLeave && existingLeaves >= 1) {
-        toast('委外幹部每週限排一天例休，本週已達上限。', 'error');
-        return;
+        if (currentUser.role === ROLES.VENDOR) {
+          toast('委外幹部每週限排一天例休，本週已達上限。', 'error');
+          return;
+        }
+        next = '休';
+        toast('本週已有例休，自動改排休假（休）。', 'info');
       }
     }
 
@@ -2155,17 +2159,17 @@ function ScheduleTable() {
           }
           if (!emp) { unmatchedIds.push(identifier); continue; }
           if (!updates[emp.id]) updates[emp.id] = {};
-          const weekRestCount = {};
+          const weekExCount = {};
           for (const { col, month, day } of dateCols) {
             let val = mapVal(row[col]);
-            if (val === '休') {
+            if (val === '例') {
               const d = new Date(getYear(month), month - 1, day);
               const dow = (d.getDay() + 6) % 7; // 0=Mon
               const mon = new Date(d); mon.setDate(day - dow);
               const wk = `${mon.getFullYear()}-${mon.getMonth()+1}-${mon.getDate()}`;
-              const cnt = weekRestCount[wk] ?? 0;
-              if (cnt >= 1) val = '例';
-              weekRestCount[wk] = cnt + 1;
+              const cnt = weekExCount[wk] ?? 0;
+              if (cnt >= 1) val = '休';
+              weekExCount[wk] = cnt + 1;
             }
             if (val !== null) {
               updates[emp.id][dateKey(getYear(month), month, day)] = val;
