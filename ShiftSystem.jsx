@@ -2399,6 +2399,160 @@ function ScheduleTable() {
     toast(`已修正 ${fixedCount} 個格位：每週超過一天例休已改為休假（休）。`, 'success');
   }, [visibleEmployees, schedule, setSchedule, toast]);
 
+  // 列印班表報表（依目前週期/月份，景印格式）
+  const handlePrintReport = useCallback(() => {
+    const periodLabel = rangeMode && viewRange
+      ? `${viewRange.start} ～ ${viewRange.end}`
+      : `${selectedYear} 年 ${selectedMonth} 月`;
+
+    const scopeParts = [];
+    if (selectedWarehouse) {
+      const wh = warehouses.find(w => w.id === selectedWarehouse);
+      if (wh) scopeParts.push(wh.name);
+    }
+    if (selectedDept) scopeParts.push(selectedDept);
+    if (selectedGroup) scopeParts.push(selectedGroup);
+    const scopeLabel = scopeParts.length > 0 ? scopeParts.join(' › ') : '全部';
+
+    const today = new Date();
+    const printDate = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+
+    const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const CODE_BG  = { V: '#dcfce7', 例: '#fef9c3', 休: '#ffedd5', 國: '#dbeafe' };
+    const CODE_FG  = { V: '#166534', 例: '#854d0e', 休: '#9a3412', 國: '#1e40af' };
+    const WARN_BG  = '#fce7f3'; const WARN_FG = '#9d174d';
+
+    // Group by vendor
+    const vendorOrder = [];
+    const vendorMap = {};
+    visibleEmployees.forEach(emp => {
+      const v = emp.vendor ?? '（未設定廠商）';
+      if (!vendorMap[v]) { vendorMap[v] = []; vendorOrder.push(v); }
+      vendorMap[v].push(emp);
+    });
+
+    const colLabel = h => rangeMode ? `${h.month}/${h.day}<br>(${h.wd})` : `${h.day}<br>(${h.wd})`;
+
+    const buildRows = (emps) => emps.map(emp => {
+      let workDays = 0, leaveDays = 0;
+      const warnSet = new Set();
+      let run = [];
+      for (const { dk } of dayHeaders) {
+        if ((schedule[emp.id]?.[dk] ?? 'V') === 'V') { run.push(dk); }
+        else { if (run.length >= 6) run.forEach(k => warnSet.add(k)); run = []; }
+      }
+      if (run.length >= 6) run.forEach(k => warnSet.add(k));
+
+      const cells = dayHeaders.map(({ dk, day, month, year, isWeekend, isMonthStart }) => {
+        const code = schedule[emp.id]?.[dk] ?? 'V';
+        if (code === 'V') workDays++;
+        else if (code === '休' || code === '例' || code === '國') leaveDays++;
+        const holidayLabel = code === '國' ? getHolidayLabel(day, month, year) : null;
+        const displayCode = showConverted
+          ? (() => {
+              const sc = getDisplayCode(emp, code, day, month, year);
+              return (sc !== code ? sc : null) ?? holidayLabel ?? code;
+            })()
+          : (holidayLabel ?? (SHIFT_CODES[code]?.label || code));
+        const isWarn = warnSet.has(dk);
+        const bg = isWarn ? WARN_BG : (CODE_BG[code] ?? '#ffffff');
+        const fg = isWarn ? WARN_FG : (CODE_FG[code] ?? '#6b7280');
+        const dimFilter = isWeekend ? 'filter:brightness(0.93);' : '';
+        const borderL = rangeMode && isMonthStart && month !== dayHeaders[0]?.month ? 'border-left:2px solid #60a5fa;' : '';
+        return `<td style="background:${bg};color:${fg};text-align:center;padding:2px 1px;font-size:10px;border:1px solid #e2e8f0;${dimFilter}${borderL}">${esc(displayCode) || '·'}</td>`;
+      });
+      return { name: emp.name, empId: emp.empId ?? '', cells, workDays, leaveDays };
+    });
+
+    let bodyHtml = '';
+    vendorOrder.forEach(vendor => {
+      const emps = vendorMap[vendor];
+      const rows = buildRows(emps);
+      bodyHtml += `<tr><td colspan="${2 + dayHeaders.length + 2}" style="background:#1e40af;color:#fff;font-size:11px;font-weight:bold;padding:3px 6px;">${esc(vendor)}（${emps.length} 人）</td></tr>`;
+      rows.forEach((r, ri) => {
+        const rowBg = ri % 2 === 0 ? '#ffffff' : '#f8fafc';
+        bodyHtml += `<tr style="background:${rowBg}">
+          <td style="padding:2px 5px;font-size:10px;border:1px solid #e2e8f0;white-space:nowrap;">${esc(r.name)}</td>
+          <td style="padding:2px 5px;font-size:9px;color:#64748b;border:1px solid #e2e8f0;white-space:nowrap;">${esc(r.empId)}</td>
+          ${r.cells.join('')}
+          <td style="text-align:center;padding:2px 4px;font-size:10px;font-weight:600;color:#1d4ed8;border:1px solid #e2e8f0;">${r.workDays}</td>
+          <td style="text-align:center;padding:2px 4px;font-size:10px;font-weight:600;color:#ea580c;border:1px solid #e2e8f0;">${r.leaveDays}</td>
+        </tr>`;
+      });
+    });
+
+    const colHeadersHtml = dayHeaders.map(h => {
+      const wkStyle = h.isWeekend ? 'background:#fef2f2;color:#dc2626;' : '';
+      return `<th style="text-align:center;padding:2px 1px;font-size:9px;min-width:20px;border:1px solid #334155;${wkStyle}">${colLabel(h)}</th>`;
+    }).join('');
+
+    const legendItems = [
+      { code: 'V',  bg: CODE_BG.V,  fg: CODE_FG.V,  label: '上班' },
+      { code: '例', bg: CODE_BG.例, fg: CODE_FG.例, label: '例休' },
+      { code: '休', bg: CODE_BG.休, fg: CODE_FG.休, label: '休假' },
+      { code: '國', bg: CODE_BG.國, fg: CODE_FG.國, label: '國定假日' },
+      { code: 'V',  bg: WARN_BG,   fg: WARN_FG,    label: '連上6天(警示)' },
+    ];
+    const legendHtml = legendItems.map(({ code, bg, fg, label }) =>
+      `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:12px;font-size:10px;">
+        <span style="display:inline-block;width:15px;height:15px;background:${bg};color:${fg};border:1px solid #cbd5e1;text-align:center;line-height:15px;font-size:9px;font-weight:bold;">${code}</span>${label}
+      </span>`
+    ).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>班表報表 ${periodLabel}</title>
+<style>
+  @page { size: A3 landscape; margin: 1cm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Microsoft JhengHei', 'PingFang TC', Arial, sans-serif; margin: 0; padding: 6px; font-size: 11px; color: #1e293b; }
+  h1 { font-size: 15px; margin: 0 0 4px; color: #0f172a; }
+  .meta { display: flex; gap: 16px; align-items: baseline; font-size: 11px; color: #475569; margin-bottom: 6px; flex-wrap: wrap; }
+  .legend { margin-bottom: 8px; padding: 4px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; table-layout: auto; }
+  thead th { background: #1e293b; color: #fff; padding: 3px 2px; font-size: 10px; border: 1px solid #334155; }
+  .footer { margin-top: 6px; font-size: 9px; color: #94a3b8; }
+  @media print {
+    @page { size: A3 landscape; margin: 1cm; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<h1>班表報表</h1>
+<div class="meta">
+  <span>📅 週期：<strong>${esc(periodLabel)}</strong></span>
+  <span>🏢 範圍：${esc(scopeLabel)}</span>
+  <span style="margin-left:auto;font-size:10px;color:#94a3b8;">列印日期：${printDate}</span>
+</div>
+<div class="legend">${legendHtml}</div>
+<table>
+  <thead>
+    <tr>
+      <th style="text-align:left;padding:3px 5px;min-width:60px;">姓名</th>
+      <th style="text-align:left;padding:3px 5px;min-width:50px;font-size:9px;">員編</th>
+      ${colHeadersHtml}
+      <th style="min-width:28px;">出勤</th>
+      <th style="min-width:28px;">休假</th>
+    </tr>
+  </thead>
+  <tbody>${bodyHtml}</tbody>
+</table>
+<div class="footer">共 ${visibleEmployees.length} 位員工 · 共 ${dayHeaders.length} 天${showConverted ? '（已轉換代碼）' : ''}</div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { toast('無法開啟列印視窗，請允許彈出視窗後再試', 'error'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
+  }, [visibleEmployees, schedule, dayHeaders, selectedYear, selectedMonth, selectedWarehouse, selectedDept, selectedGroup, warehouses, rangeMode, viewRange, showConverted, getDisplayCode, getHolidayLabel, toast]);
+
   // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
   const handleDownloadTemplate = () => {
     try {
@@ -2548,6 +2702,10 @@ function ScheduleTable() {
           <button onClick={exportConverted}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
+          </button>
+          <button onClick={handlePrintReport}
+            className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1">
+            🖨️ 列印報表
           </button>
           {systemLocked && (
             <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full font-medium">
