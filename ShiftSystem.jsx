@@ -2377,36 +2377,48 @@ function ScheduleTable() {
     visibleEmployees.forEach(emp => {
       const empSchedule = schedule[emp.id];
       if (!empSchedule) return;
-      const exDates = Object.entries(empSchedule)
-        .filter(([, code]) => code === '例')
-        .map(([dk]) => {
+      // 收集所有例/休日，依日期排序
+      const offDays = Object.entries(empSchedule)
+        .filter(([, code]) => code === '例' || code === '休')
+        .map(([dk, code]) => {
           const [y, m, d] = dk.split('-').map(Number);
-          return { dk, ts: new Date(y, m - 1, d).getTime() };
+          return { dk, code, ts: new Date(y, m - 1, d).getTime() };
         })
         .sort((a, b) => a.ts - b.ts);
-      const weekExSeen = new Set();
-      const toConvert = [];
-      exDates.forEach(({ dk, ts }) => {
+      // 依週（週一為起點）分組
+      const weekMap = {};
+      offDays.forEach(({ dk, code, ts }) => {
         const date = new Date(ts);
-        const dow = (date.getDay() + 6) % 7;
+        const dow = (date.getDay() + 6) % 7; // Mon=0, Sun=6
         const mon = new Date(ts);
         mon.setDate(date.getDate() - dow);
         const wk = `${mon.getFullYear()}-${mon.getMonth()+1}-${mon.getDate()}`;
-        if (weekExSeen.has(wk)) { toConvert.push(dk); } else { weekExSeen.add(wk); }
+        if (!weekMap[wk]) weekMap[wk] = [];
+        weekMap[wk].push({ dk, code });
       });
-      if (toConvert.length > 0) {
-        const ns = { ...empSchedule };
-        toConvert.forEach(dk => { ns[dk] = '休'; fixedCount++; });
-        updates[emp.id] = ns;
-      }
+      const ns = { ...empSchedule };
+      let empFixed = false;
+      Object.values(weekMap).forEach(days => {
+        const exDays  = days.filter(d => d.code === '例');
+        const restDays = days.filter(d => d.code === '休');
+        if (exDays.length > 1) {
+          // 週內超過1個例 → 保留第1個，其餘改休
+          exDays.slice(1).forEach(({ dk }) => { ns[dk] = '休'; fixedCount++; empFixed = true; });
+        } else if (exDays.length === 0 && restDays.length > 0) {
+          // 週內無例但有休 → 最後一個休（週日位置）改為例
+          const last = restDays[restDays.length - 1];
+          ns[last.dk] = '例'; fixedCount++; empFixed = true;
+        }
+      });
+      if (empFixed) updates[emp.id] = ns;
     });
-    if (fixedCount === 0) { toast('無需修正，所有員工每週例休均已為一天。', 'info'); return; }
+    if (fixedCount === 0) { toast('無需修正，所有員工每週已有一天例假。', 'info'); return; }
     setSchedule(prev => {
       const next = { ...prev };
       Object.entries(updates).forEach(([id, days]) => { next[id] = days; });
       return next;
     });
-    toast(`已修正 ${fixedCount} 個格位：每週超過一天例休已改為休假（休）。`, 'success');
+    toast(`已修正 ${fixedCount} 個格位：每週指定一天例假，其餘休息改為休假。`, 'success');
   }, [visibleEmployees, schedule, setSchedule, toast]);
   // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
   const handleDownloadTemplate = () => {
