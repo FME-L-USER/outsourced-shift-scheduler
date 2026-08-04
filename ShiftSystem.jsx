@@ -620,59 +620,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     return () => clearInterval(id);
   }, [lockUntil]);
 
-  // 驗證碼
-  const genCaptcha = () => {
-    const arr = new Uint32Array(1);
-    crypto.getRandomValues(arr);
-    return String(1000 + (arr[0] % 9000));
-  };
-  const [captcha, setCaptcha] = useState(genCaptcha);
-  const [captchaInput, setCaptchaInput] = useState('');
-  const captchaRef = useRef(null);
 
-  const refreshCaptcha = () => {
-    setCaptcha(genCaptcha());
-    setCaptchaInput('');
-  };
-
-  useEffect(() => {
-    const canvas = captchaRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-    // 背景
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(0, 0, W, H);
-    // 干擾線
-    for (let i = 0; i < 4; i++) {
-      ctx.strokeStyle = `hsl(${Math.floor(Math.random()*360)},50%,70%)`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(Math.random()*W, Math.random()*H);
-      ctx.lineTo(Math.random()*W, Math.random()*H);
-      ctx.stroke();
-    }
-    // 干擾點
-    for (let i = 0; i < 30; i++) {
-      ctx.fillStyle = `hsl(${Math.floor(Math.random()*360)},40%,75%)`;
-      ctx.fillRect(Math.random()*W, Math.random()*H, 2, 2);
-    }
-    // 數字
-    const colors = ['#1d4ed8','#0f766e','#7c3aed','#b45309'];
-    captcha.split('').forEach((ch, i) => {
-      const x = 18 + i * 28;
-      const y = 28 + (Math.random() * 6 - 3);
-      const angle = (Math.random() * 20 - 10) * Math.PI / 180;
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-      ctx.font = `bold ${22 + Math.floor(Math.random()*4)}px monospace`;
-      ctx.fillStyle = colors[i % colors.length];
-      ctx.fillText(ch, 0, 0);
-      ctx.restore();
-    });
-  }, [captcha, identity]);
 
   // 申請表單狀態
   const [regForm, setRegForm] = useState({ username: '', password: '', confirm: '', name: '', warehouse: '', vendor: '' });
@@ -693,7 +641,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
   };
 
-  const switchIdentity = v => { setIdentity(v); setUsername(''); setPassword(''); setError(''); setCaptchaInput(''); refreshCaptcha(); };
+  const switchIdentity = v => { setIdentity(v); setUsername(''); setPassword(''); setError(''); };
 
   // 登入失敗鎖定：以 sessionStorage 記錄各帳號失敗次數
   const getLockData  = (u) => { try { return JSON.parse(localStorage.getItem('_sms_lock_' + u) || '{"count":0,"until":0}'); } catch { return {count:0,until:0}; } };
@@ -711,12 +659,6 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     e.preventDefault();
     setError('');
 
-    // 驗證碼校驗
-    if (captchaInput.trim() !== captcha) {
-      setError('驗證碼錯誤，請重新輸入');
-      refreshCaptcha();
-      return;
-    }
 
     const uKey = username.trim().toLowerCase();
 
@@ -724,8 +666,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     const lockData = getLockData(uKey);
     if (lockData.until > Date.now()) {
       setLockUntil(lockData.until);
-      refreshCaptcha();
-      return;
+            return;
     }
 
     // 委外人員：首次用員編登入，之後用自訂密碼
@@ -743,8 +684,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       if (!emp) {
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
-        refreshCaptcha();
-        return;
+                return;
       }
       const storedPwd = workerPwds[emp.empId];
       let pwdOk = false;
@@ -757,8 +697,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       if (!pwdOk) {
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
-        refreshCaptcha();
-        return;
+                return;
       }
       clearLock(uKey);
       onLogin({
@@ -797,17 +736,15 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
           }, data.token);
           return;
         }
-        if (r.status === 403) { setError(data.error ?? '此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
+        if (r.status === 403) { setError(data.error ?? '此帳號審核中，請等候管理員核准後再登入。'); return; }
         const rf = recordFail(uKey);
         setError(rf.locked
           ? '登入失敗次數過多，帳號已鎖定 15 分鐘'
           : (data.error ?? `帳號或密碼錯誤（已失敗 ${rf.count}/5 次）`));
-        refreshCaptcha();
-        return;
+                return;
       } catch {
         setError('伺服器連線失敗，請稍後再試');
-        refreshCaptcha();
-        return;
+                return;
       }
     }
 
@@ -816,17 +753,15 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     if (!candidate) {
       const r = recordFail(uKey);
       setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
-      refreshCaptcha();
-      return;
+            return;
     }
     const ok = await verifyPwd(password, candidate.password);
     if (!ok) {
       const r = recordFail(uKey);
       setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
-      refreshCaptcha();
-      return;
+            return;
     }
-    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); refreshCaptcha(); return; }
+    if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); return; }
     clearLock(uKey);
     if (!candidate.password.startsWith('pbkdf2:')) {
       const hashed = await hashPwd(password);
@@ -1048,27 +983,6 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                       : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                     }
                   </button>
-                </div>
-              </div>
-
-              {/* 驗證碼 */}
-              <div className="mb-5">
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">驗證碼</label>
-                <div className="flex items-center gap-2 w-full">
-                  <canvas ref={captchaRef} width={130} height={44}
-                    className="shrink-0 rounded-lg border border-[#DDD9D0] cursor-pointer select-none"
-                    title="點擊刷新" onClick={refreshCaptcha} />
-                  <button type="button" onClick={refreshCaptcha}
-                    className="shrink-0 text-slate-400 hover:text-blue-500 transition-colors" title="換一張">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
-                  </button>
-                  <input type="text" value={captchaInput}
-                    onChange={e => setCaptchaInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    maxLength={4} placeholder="請輸入驗證碼"
-                    className="flex-1 min-w-0 px-3 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm text-center tracking-widest
-                               focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition" />
                 </div>
               </div>
 
