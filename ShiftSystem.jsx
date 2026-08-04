@@ -1503,116 +1503,333 @@ function Dashboard() {
     return Object.values(dayData).filter(r => r.present).length;
   }, [attendData, attendDk]);
 
+  // ── derived ──
+  const totalPrevWorking = vendorStats.reduce((a, s) => a + s.prevWorking, 0);
+  const weekDiff         = selectedDayWorking - totalPrevWorking;
+  const totalTempPresent = vendorStats.reduce((a, s) => a + s.tempPresent, 0);
+  const rosterTotal      = visibleEmployees.length;
+  const schedPct         = rosterTotal > 0 ? Math.round(selectedDayWorking / rosterTotal * 100) : 0;
+  const hasAttendData    = Object.keys(attendData[attendDk] ?? {}).length > 0;
+
+  // ── canvas refs ──
+  const donutRef = useRef(null);
+  const barRef   = useRef(null);
+
+  // ── vendor colour map ──
+  const VENDOR_COLORS_MAP = useMemo(() => {
+    const P = ['#3b82f6','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#f97316','#ec4899'];
+    const m = {};
+    vendorStats.forEach((s, i) => { m[s.vendor] = P[i % P.length]; });
+    return m;
+  }, [vendorStats]);
+
+  // ── draw donut ──
+  useEffect(() => {
+    const cv = donutRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1, S = 174;
+    cv.width = S * dpr; cv.height = S * dpr;
+    cv.style.width = `${S}px`; cv.style.height = `${S}px`;
+    const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+    const cxD = S/2, cyD = S/2, rD = 80, riD = 56;
+    const totD = vendorStats.reduce((a, s) => a + s.roster, 0);
+    if (!totD) return;
+    const gapD = 0.016; let aD = -Math.PI / 2;
+    vendorStats.forEach(s => {
+      if (!s.roster) return;
+      const span = (s.roster / totD) * Math.PI * 2 - gapD;
+      ctx.beginPath();
+      ctx.moveTo(cxD + riD * Math.cos(aD + gapD/2), cyD + riD * Math.sin(aD + gapD/2));
+      ctx.arc(cxD, cyD, rD, aD + gapD/2, aD + gapD/2 + span);
+      ctx.arc(cxD, cyD, riD, aD + gapD/2 + span, aD + gapD/2, true);
+      ctx.closePath();
+      ctx.fillStyle = VENDOR_COLORS_MAP[s.vendor] || '#94a3b8';
+      ctx.fill();
+      aD += (s.roster / totD) * Math.PI * 2;
+    });
+    ctx.beginPath(); ctx.arc(cxD, cyD, riD - 1, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+  }, [vendorStats, VENDOR_COLORS_MAP]);
+
+  // ── draw stacked bar ──
+  useEffect(() => {
+    const cv = barRef.current;
+    if (!cv || GROUP_COLS.length === 0) return;
+    function drawBar() {
+      const W = Math.max((cv.parentElement?.clientWidth || 400) - 36, 200);
+      const H = 240;
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = W * dpr; cv.height = H * dpr;
+      cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+      const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+      const pL=36, pR=10, pT=18, pB=36;
+      const cW = W-pL-pR, cH = H-pT-pB;
+      const gTotals = GROUP_COLS.map(gc => vendorStats.reduce((s, v) => s + (v.groups[gc.label] ?? 0), 0));
+      const maxV = Math.max(...gTotals, 1);
+      const scaleMax = Math.ceil(maxV / 10) * 10 + 5;
+      for (let tick = 0; tick <= scaleMax; tick += 10) {
+        const y = pT + cH - (tick / scaleMax) * cH;
+        ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W-pR, y);
+        ctx.strokeStyle = 'rgba(0,0,0,0.05)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#94a3b8'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+        ctx.fillText(tick, pL - 5, y + 3.5);
+      }
+      const bW = Math.min(cW / GROUP_COLS.length * 0.50, 64);
+      GROUP_COLS.forEach((gc, gi) => {
+        const x = pL + (gi + 0.5) * cW / GROUP_COLS.length - bW / 2;
+        let yBase = pT + cH;
+        vendorStats.forEach(s => {
+          const val = s.groups[gc.label] ?? 0; if (!val) return;
+          const bH = (val / scaleMax) * cH; yBase -= bH;
+          ctx.fillStyle = VENDOR_COLORS_MAP[s.vendor] || '#94a3b8';
+          ctx.fillRect(x, yBase, bW, bH);
+          if (bH >= 16) {
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
+            ctx.fillText(val, x + bW/2, yBase + bH/2 + 3.5);
+          }
+        });
+        const tot = gTotals[gi];
+        const topY = pT + cH - (tot / scaleMax) * cH;
+        ctx.fillStyle = '#334155'; ctx.font = '600 11px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText(tot, x + bW/2, topY - 6);
+        ctx.fillStyle = '#64748b'; ctx.font = '10.5px system-ui';
+        ctx.fillText(gc.label, pL + (gi + 0.5) * cW / GROUP_COLS.length, H - 10);
+      });
+    }
+    drawBar();
+    const obs = new ResizeObserver(() => drawBar());
+    if (cv.parentElement) obs.observe(cv.parentElement);
+    return () => obs.disconnect();
+  }, [vendorStats, GROUP_COLS, VENDOR_COLORS_MAP]);
+
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* Header + 日期選擇器 */}
+    <div className="p-4 md:p-6 space-y-4">
+
+      {/* ── Date selector ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h2 className="text-xl font-bold text-slate-800">儀表板</h2>
+        <h2 className="text-lg font-bold text-slate-800">儀表板</h2>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-slate-500">查詢日期：</span>
           <select value={dashYear} onChange={e => setDashYear(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm bg-white text-slate-700">
             {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}年</option>)}
           </select>
           <select value={dashMonth} onChange={e => setDashMonth(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm bg-white text-slate-700">
             {Array.from({length:12},(_,i)=>i+1).map(m => <option key={m} value={m}>{m}月</option>)}
           </select>
           <select value={safeDay} onChange={e => setDashDay(+e.target.value)}
-            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm bg-white text-slate-700">
             {Array.from({length:daysInDashMonth},(_,i)=>i+1).map(d => <option key={d} value={d}>{d}日</option>)}
           </select>
           {!isToday && (
             <button onClick={() => { setDashYear(today.getFullYear()); setDashMonth(today.getMonth()+1); setDashDay(today.getDate()); }}
-              className="px-2.5 py-1.5 bg-blue-100 text-blue-700 border border-teal-200 rounded-lg text-xs hover:bg-blue-200">
+              className="px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-xs hover:bg-blue-100 transition-colors">
               回今日
             </button>
           )}
-          {isToday && <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">今日</span>}
+          {isToday && <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full font-medium">今日</span>}
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: '長期在職人數',           value: visibleEmployees.length,                           color: 'bg-teal-50 border-teal-200' },
-          { label: `${dashMonth}/${safeDay} 出勤總人數`,   value: actualPresent,                      color: 'bg-blue-50 border-blue-200',
-            sub: actualPresent === 0 ? '點名表未填寫' : null },
-          { label: `${dashMonth}/${safeDay} 長期（今日出勤）`, value: selectedDayWorking,             color: 'bg-green-50 border-green-200' },
-          { label: `${dashMonth}/${safeDay} 臨時（今日出勤）`, value: Math.max(0, actualPresent - selectedDayWorking), color: 'bg-amber-50 border-amber-200',
-            sub: actualPresent === 0 ? '點名表未填寫' : null },
-        ].map(c => (
-          <div key={c.label} className={`rounded-xl border p-4 ${c.color}`}>
-            <div className="text-xl font-semibold text-slate-700 mb-2">{c.label}</div>
-            <div className="text-4xl font-bold text-slate-800">{c.value}</div>
-            {c.sub && <div className="text-xs text-slate-400 mt-1">{c.sub}</div>}
+      {/* ── KPI row ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+
+        {/* KPI 1: 在職 */}
+        <div className="relative bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="absolute inset-y-0 left-0 w-[3px] bg-blue-500" />
+          <div className="pl-5 pr-4 pt-4 pb-4">
+            <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center mb-2.5">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M10 10a4 4 0 100-8 4 4 0 000 8zm-7 8a7 7 0 0114 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+            </div>
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">長期在職總人數</div>
+            <div className="text-4xl font-bold text-slate-800 tracking-tight tabular-nums mb-2 leading-none">{rosterTotal}</div>
+            <div className="flex items-center justify-between gap-1">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700">在職中</span>
+              <span className="text-[11px] text-slate-400">{vendorStats.length} 廠商</span>
+            </div>
           </div>
-        ))}
-      </div>
-
-      {/* Vendor Stats + Donut Chart */}
-      <div className="flex flex-col md:flex-row gap-4 items-start">
-      {/* Vendor Stats Table */}
-      <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex-1 min-w-0 w-full">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-slate-700">
-            各廠商人力
-            <span className="ml-2 text-sm font-normal text-slate-400">
-              {dashYear}/{dashMonth}/{safeDay}{isToday ? '（今日）' : ''}
-            </span>
-          </h3>
-          <span className="text-xs text-slate-400">前周同日：{prevWeekDate.month}/{prevWeekDate.day}</span>
         </div>
 
+        {/* KPI 2: 排班 */}
+        <div className="relative bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="absolute inset-y-0 left-0 w-[3px] bg-cyan-500" />
+          <div className="pl-5 pr-4 pt-4 pb-4">
+            <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center mb-2.5">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><rect x="2" y="4" width="16" height="13" rx="2" stroke="currentColor" strokeWidth="1.6"/><path d="M6 4V2m8 2V2M2 9h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+            </div>
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">今日應出勤（排班）</div>
+            <div className="text-4xl font-bold text-slate-800 tracking-tight tabular-nums mb-2 leading-none">{selectedDayWorking}</div>
+            <div className="flex items-center justify-between gap-1">
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${weekDiff >= 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-600'}`}>
+                {weekDiff >= 0 ? '↑' : '↓'} {Math.abs(weekDiff)} 較上週
+              </span>
+              <span className="text-[11px] text-slate-400">佔在職 {schedPct}%</span>
+            </div>
+            <div className="mt-2 h-1 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-cyan-500 rounded-full" style={{width:`${schedPct}%`}} />
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 3: 長期到班 */}
+        <div className="relative bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="absolute inset-y-0 left-0 w-[3px] bg-teal-400" />
+          <div className="pl-5 pr-4 pt-4 pb-4">
+            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center mb-2.5">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M10 5v5l3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.6"/></svg>
+            </div>
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">今日實際到班（長期）</div>
+            {hasAttendData
+              ? <div className="text-4xl font-bold text-slate-800 tracking-tight tabular-nums mb-2 leading-none">{actualPresent}</div>
+              : <div className="text-2xl font-semibold text-slate-300 mb-2 leading-none">— —</div>
+            }
+            <div className="flex items-center justify-between gap-1">
+              {hasAttendData
+                ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700">✓ 已點名</span>
+                : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">⚠ 點名未填</span>
+              }
+              <span className="text-[11px] text-slate-400">排班 {selectedDayWorking} 人</span>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 4: 臨時到班 */}
+        <div className="relative bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="absolute inset-y-0 left-0 w-[3px] bg-amber-400" />
+          <div className="pl-5 pr-4 pt-4 pb-4">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center mb-2.5">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.6"/><path d="M10 6v4h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+            </div>
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">今日實際到班（臨時）</div>
+            {hasAttendData
+              ? <div className="text-4xl font-bold text-slate-800 tracking-tight tabular-nums mb-2 leading-none">{totalTempPresent}</div>
+              : <div className="text-2xl font-semibold text-slate-300 mb-2 leading-none">— —</div>
+            }
+            <div className="flex items-center justify-between gap-1">
+              {hasAttendData
+                ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700">✓ 已點名</span>
+                : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">⚠ 點名未填</span>
+              }
+              <span className="text-[11px] text-slate-400">臨時人力統計</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Charts row ── */}
+      <div className="grid grid-cols-1 md:grid-cols-[288px_1fr] gap-3.5">
+
+        {/* Donut chart — 各廠商在職 */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+          <div className="px-5 pt-4 pb-0">
+            <div className="text-sm font-bold text-slate-800">各廠商在職人力分布</div>
+            <div className="text-xs text-slate-400 mt-0.5">今日在職 {rosterTotal} 人</div>
+          </div>
+          <div className="px-5 pb-5 pt-3 flex flex-col items-center">
+            <div className="relative w-[174px] h-[174px] flex-shrink-0">
+              <canvas ref={donutRef} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-[30px] font-bold text-slate-800 leading-none tracking-tight tabular-nums">{rosterTotal}</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wide mt-1">總人數</span>
+              </div>
+            </div>
+            <div className="w-full mt-3 space-y-1.5">
+              {vendorStats.map(s => (
+                <div key={s.vendor} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
+                    <span className="text-slate-500 truncate">{s.vendor}</span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700 tabular-nums">{s.roster}</span>
+                    <span className="text-slate-400 ml-1">{rosterTotal > 0 ? (s.roster/rosterTotal*100).toFixed(1) : 0}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Stacked bar chart — 各組別排班 */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+          <div className="px-5 pt-4 pb-0">
+            <div className="text-sm font-bold text-slate-800">各組別排班人力結構（{dashMonth}/{safeDay}{isToday ? ' · 今日' : ''}）</div>
+            <div className="text-xs text-slate-400 mt-0.5">排班出勤 {selectedDayWorking} 人</div>
+          </div>
+          <div className="px-5 pb-4 pt-3">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+              {vendorStats.map(s => (
+                <span key={s.vendor} className="flex items-center gap-1 text-xs text-slate-500">
+                  <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
+                  {s.vendor}
+                </span>
+              ))}
+            </div>
+            <canvas ref={barRef} style={{width:'100%',display:'block'}} />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Vendor detail table ── */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 pt-4 pb-3">
+          <div className="text-sm font-bold text-slate-800">各廠商人力明細</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            {dashYear}/{dashMonth}/{safeDay}{isToday ? '（今日）' : ''}　　前周同日：{prevWeekDate.month}/{prevWeekDate.day}
+          </div>
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse" style={{ minWidth: 580, fontVariantNumeric: 'tabular-nums' }}>
-            <colgroup>
-              <col style={{ width: 80 }} />
-              <col style={{ width: 56 }} />
-              <col style={{ width: 56 }} />
-              {GROUP_COLS.map(gc => <col key={gc.label} style={{ width: 88 }} />)}
-              <col style={{ width: 60 }} />
-              <col style={{ width: 60 }} />
-              <col style={{ width: 60 }} />
-            </colgroup>
+          <table className="w-full border-collapse" style={{minWidth: 560, fontVariantNumeric: 'tabular-nums'}}>
             <thead>
-              <tr className="border-b-2 border-slate-200">
-                <th className="text-left pb-2 text-xs font-semibold text-slate-500">廠商</th>
-                <th className="text-right pb-2 text-xs font-semibold text-slate-500">在職</th>
-                <th className="text-right pb-2 text-xs font-semibold text-blue-500">排班</th>
+              <tr className="bg-slate-50 border-t border-b-2 border-slate-200">
+                <th className="text-left px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">廠商</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">在職</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-blue-500">排班</th>
                 {GROUP_COLS.map(gc => (
-                  <th key={gc.label} className="text-right pb-2 text-xs font-semibold text-slate-400 pl-2">{gc.label}</th>
+                  <th key={gc.label} className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{gc.label}</th>
                 ))}
-                <th className="text-right pb-2 text-xs font-semibold text-teal-600 pl-2">到班(長)</th>
-                <th className="text-right pb-2 text-xs font-semibold text-teal-700 pl-2">到班(臨)</th>
-                <th className="text-right pb-2 text-xs font-semibold text-slate-500">前周差</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600">到班（長）</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500">到班（臨）</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">前周差</th>
               </tr>
             </thead>
             <tbody>
               {vendorStats.map((s, i) => {
-                const diffColor = s.diff > 0 ? 'text-teal-700' : s.diff < 0 ? 'text-red-500' : 'text-slate-300';
-                const diffLabel = s.diff > 0 ? `+${s.diff}` : s.diff < 0 ? `${s.diff}` : '–';
+                const diffColor = s.diff > 0 ? 'text-green-700 font-semibold' : s.diff < 0 ? 'text-red-500 font-semibold' : 'text-slate-300';
+                const diffLabel = s.diff > 0 ? `+${s.diff}` : s.diff < 0 ? `${s.diff}` : '—';
                 return (
                   <tr key={s.vendor}
-                    className={`hover:bg-[#F5F2EC] transition-colors ${i > 0 ? 'border-t border-slate-100' : ''}`}>
-                    <td className="py-2.5 text-sm font-medium text-slate-700">{s.vendor}</td>
-                    <td className="py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{s.working}</td>
+                    className={`hover:bg-blue-50/40 transition-colors ${i > 0 ? 'border-t border-slate-100' : ''} ${i % 2 === 1 ? 'bg-slate-50/50' : ''}`}>
+                    <td className="px-3 py-2.5 text-sm font-medium text-slate-700">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{background: VENDOR_COLORS_MAP[s.vendor]}} />
+                      {s.vendor}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm text-slate-500">{s.roster}</td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold text-blue-600">{s.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = s.groups[gc.label] ?? 0;
                       return (
-                        <td key={gc.label} className="py-2.5 text-right text-sm pl-2">
-                          {cnt > 0 ? <span className="text-slate-700">{cnt}</span> : <span className="text-slate-300">–</span>}
+                        <td key={gc.label} className="px-3 py-2.5 text-right text-sm">
+                          {cnt > 0 ? <span className="text-slate-700">{cnt}</span> : <span className="text-slate-300">—</span>}
                         </td>
                       );
                     })}
-                    <td className="py-2.5 text-right text-sm pl-2">
-                      {s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">–</span>}
+                    <td className="px-3 py-2.5 text-right text-sm">
+                      {hasAttendData
+                        ? (s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
                     </td>
-                    <td className="py-2.5 text-right text-sm pl-2">
-                      {s.tempPresent > 0 ? <span className="font-semibold text-teal-700">{s.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                    <td className="px-3 py-2.5 text-right text-sm">
+                      {hasAttendData
+                        ? (s.tempPresent > 0 ? <span className="font-semibold text-orange-500">{s.tempPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
                     </td>
-                    <td className={`py-2.5 text-right text-sm font-bold ${diffColor}`}>{diffLabel}</td>
+                    <td className={`px-3 py-2.5 text-right text-sm ${diffColor}`}>{diffLabel}</td>
                   </tr>
                 );
               })}
@@ -1625,28 +1842,34 @@ function Dashboard() {
                   longPresent: vendorStats.reduce((a, s) => a + s.longPresent, 0),
                   tempPresent: vendorStats.reduce((a, s) => a + s.tempPresent, 0),
                 };
-                const totalDiffColor = total.diff > 0 ? 'text-teal-700' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
-                const totalDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '–';
+                const tDiffColor = total.diff > 0 ? 'text-green-700' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
+                const tDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '—';
                 return (
-                  <tr className="border-t-2 border-[#DDD9D0] bg-[#F5F2EC]">
-                    <td className="py-2.5 text-xs font-bold text-slate-500 tracking-wide">合計</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
-                    <td className="py-2.5 text-right text-sm font-bold text-teal-700">{total.working}</td>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50">
+                    <td className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wide">合計</td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold text-slate-600">{total.roster}</td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold text-blue-600">{total.working}</td>
                     {GROUP_COLS.map(gc => {
                       const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
                       return (
-                        <td key={gc.label} className="py-2.5 text-right text-sm font-bold pl-2">
-                          {cnt > 0 ? <span className="text-slate-600">{cnt}</span> : <span className="text-slate-300">–</span>}
+                        <td key={gc.label} className="px-3 py-2.5 text-right text-sm font-bold">
+                          {cnt > 0 ? <span className="text-slate-600">{cnt}</span> : <span className="text-slate-300">—</span>}
                         </td>
                       );
                     })}
-                    <td className="py-2.5 text-right text-sm font-bold pl-2">
-                      {total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">–</span>}
+                    <td className="px-3 py-2.5 text-right text-sm font-bold">
+                      {hasAttendData
+                        ? (total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="text-slate-300">—</span>
+                      }
                     </td>
-                    <td className="py-2.5 text-right text-sm font-bold pl-2">
-                      {total.tempPresent > 0 ? <span className="text-teal-700">{total.tempPresent}</span> : <span className="text-slate-300">–</span>}
+                    <td className="px-3 py-2.5 text-right text-sm font-bold">
+                      {hasAttendData
+                        ? (total.tempPresent > 0 ? <span className="text-orange-500">{total.tempPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="text-slate-300">—</span>
+                      }
                     </td>
-                    <td className={`py-2.5 text-right text-sm font-bold ${totalDiffColor}`}>{totalDiffLabel}</td>
+                    <td className={`px-3 py-2.5 text-right text-sm font-bold ${tDiffColor}`}>{tDiffLabel}</td>
                   </tr>
                 );
               })()}
@@ -1654,71 +1877,6 @@ function Dashboard() {
           </table>
         </div>
       </div>
-
-      {/* Donut Chart — 出勤比例 */}
-      {(() => {
-        const COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
-        const total = vendorStats.reduce((a, s) => a + (s.longPresent ?? 0), 0);
-        if (total === 0) return (
-          <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex flex-col items-center justify-center w-full md:w-56 md:flex-shrink-0">
-            <h3 className="font-semibold text-slate-700 text-sm mb-3 self-start">
-              出勤比例
-              <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
-            </h3>
-            <p className="text-xs text-slate-400 mt-4 text-center">點名表未填寫</p>
-          </div>
-        );
-        const R = 70, cx = 96, cy = 96, stroke = 26;
-        const circ = 2 * Math.PI * R;
-        let offset = 0;
-        const slices = vendorStats.filter(s => (s.longPresent ?? 0) > 0).map((s, i) => {
-          const val  = s.longPresent ?? 0;
-          const pct  = val / total;
-          const dash = pct * circ;
-          const gap  = circ - dash;
-          const seg  = { vendor: s.vendor, val, pct, dash, gap, offset, color: COLORS[i % COLORS.length] };
-          offset += dash;
-          return seg;
-        });
-        return (
-          <div className="bg-white rounded-xl border border-[#DDD9D0] p-5 flex flex-col w-full md:w-56 md:flex-shrink-0">
-            <h3 className="font-semibold text-slate-700 text-sm mb-3">
-              出勤比例
-              <span className="ml-1.5 text-xs font-normal text-slate-400">{dashMonth}/{safeDay}</span>
-            </h3>
-            <div className="flex justify-center">
-              <svg width={192} height={192} viewBox="0 0 192 192">
-                <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f1f5f9" strokeWidth={stroke} />
-                {slices.map(seg => (
-                  <circle key={seg.vendor} cx={cx} cy={cy} r={R} fill="none"
-                    stroke={seg.color} strokeWidth={stroke}
-                    strokeDasharray={`${seg.dash} ${seg.gap}`}
-                    strokeDashoffset={-seg.offset}
-                    style={{ transform: 'rotate(-90deg)', transformOrigin: `${cx}px ${cy}px` }} />
-                ))}
-                <text x={cx} y={cy - 6} textAnchor="middle" fontSize="22" fontWeight="700" fill="#1e293b">{total}</text>
-                <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#94a3b8">今日出勤</text>
-              </svg>
-            </div>
-            <div className="mt-2 space-y-1.5">
-              {slices.map(seg => (
-                <div key={seg.vendor} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: seg.color }} />
-                    <span className="text-slate-600 truncate">{seg.vendor}</span>
-                  </div>
-                  <span className="ml-2 font-semibold text-slate-700 flex-shrink-0">
-                    {seg.val}
-                    <span className="font-normal text-slate-400 ml-0.5">({Math.round(seg.pct * 100)}%)</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      </div>{/* end flex wrapper */}
 
     </div>
   );
