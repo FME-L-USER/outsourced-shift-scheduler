@@ -1801,6 +1801,7 @@ function Dashboard() {
                   <th key={gc.label} className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{gc.label}</th>
                 ))}
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600">到班（長）</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600">到班率（長）</th>
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500">到班（臨）</th>
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">前周差</th>
               </tr>
@@ -1829,6 +1830,14 @@ function Dashboard() {
                     <td className="px-3 py-2.5 text-right text-sm">
                       {hasAttendData
                         ? (s.longPresent > 0 ? <span className="font-semibold text-teal-600">{s.longPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm">
+                      {hasAttendData
+                        ? (s.working > 0
+                            ? <span className="font-semibold text-teal-600">{Math.round(s.longPresent / s.working * 100)}%</span>
+                            : <span className="text-slate-300">—</span>)
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
@@ -1869,6 +1878,14 @@ function Dashboard() {
                     <td className="px-3 py-2.5 text-right text-sm font-bold">
                       {hasAttendData
                         ? (total.longPresent > 0 ? <span className="text-teal-600">{total.longPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="text-slate-300">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold">
+                      {hasAttendData
+                        ? (total.working > 0
+                            ? <span className="text-teal-600">{Math.round(total.longPresent / total.working * 100)}%</span>
+                            : <span className="text-slate-300">—</span>)
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
