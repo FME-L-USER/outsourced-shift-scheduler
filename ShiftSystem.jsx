@@ -7073,14 +7073,7 @@ export default function App() {
         const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
         const localEmps  = LS.get('sms_employees', []);
 
-        // 本地員工數多於 DB → 代表有尚未入庫的匯入資料（例如之前 PUT 失敗）
-        // 保留本地資料（React 已從 localStorage 初始化），立即回寫 DB
-        if (localEmps.length > serverEmps.length) {
-          writeLocalToServer();
-          return;
-        }
-
-        // DB 資料不少於本地 → 以 DB 為準（正常情況）
+        // 出勤、班表、共用設定：一律以 DB 為準（多人協作資料來源唯一）
         if (serverEmps.length > 0)              setEmployees(serverEmps);
         if (state?.vendors?.length > 0)                setVendors(state.vendors);
         if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
@@ -7096,8 +7089,10 @@ export default function App() {
         if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
 
-        // DB 無員工（含 state=null）且本地有員工 → 寫回 DB
-        if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
+        // 本地員工數多於 DB → 可能有尚未入庫的匯入資料，回寫 DB（但不中斷上方已載入的資料）
+        if (localEmps.length > serverEmps.length) writeLocalToServer();
+        // DB 無員工且本地有員工 → 寫回 DB
+        else if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
       }
     } catch (e) {
       console.warn('無法從伺服器載入狀態:', e.message);
