@@ -1402,18 +1402,21 @@ function Dashboard() {
         map[v] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
         GROUP_COLS.forEach(gc => { map[v].groups[gc.label] = 0; });
       }
-      if (!map[v].tempPresent) map[v].tempPresent = 0;
+      if (!map[v].tempPresent)  map[v].tempPresent  = 0;
+      if (!map[v].tempExpected) map[v].tempExpected = 0;
+      map[v].tempExpected++;
       if (e.present) map[v].tempPresent++;
     });
     return Object.entries(map).map(([vendor, s]) => ({
       vendor,
-      roster:      s.roster,
-      working:     s.working,
-      prevWorking: s.prevWorking,
-      diff:        s.working - s.prevWorking,
-      groups:      s.groups,
-      longPresent: s.longPresent ?? 0,
-      tempPresent: s.tempPresent ?? 0,
+      roster:       s.roster,
+      working:      s.working,
+      prevWorking:  s.prevWorking,
+      diff:         s.working - s.prevWorking,
+      groups:       s.groups,
+      longPresent:  s.longPresent  ?? 0,
+      tempPresent:  s.tempPresent  ?? 0,
+      tempExpected: s.tempExpected ?? 0,
     }));
   }, [visibleEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
 
@@ -1717,6 +1720,8 @@ function Dashboard() {
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600">到班（長）</th>
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-teal-600">到班率（長）</th>
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500">到班（臨）</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-400">應到（臨）</th>
+                <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-orange-500">到班率（臨）</th>
                 <th className="text-right px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">前周差</th>
               </tr>
             </thead>
@@ -1761,6 +1766,20 @@ function Dashboard() {
                         : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
                       }
                     </td>
+                    <td className="px-3 py-2.5 text-right text-sm">
+                      {hasAttendData
+                        ? (s.tempExpected > 0 ? <span className="text-orange-400">{s.tempExpected}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm">
+                      {hasAttendData
+                        ? (s.tempExpected > 0
+                            ? <span className="font-semibold text-orange-500">{Math.round(s.tempPresent / s.tempExpected * 100)}%</span>
+                            : <span className="text-slate-300">—</span>)
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">未填</span>
+                      }
+                    </td>
                     <td className={`px-3 py-2.5 text-right text-sm ${diffColor}`}>{diffLabel}</td>
                   </tr>
                 );
@@ -1771,8 +1790,9 @@ function Dashboard() {
                   roster:      vendorStats.reduce((a, s) => a + s.roster,      0),
                   working:     vendorStats.reduce((a, s) => a + s.working,     0),
                   diff:        vendorStats.reduce((a, s) => a + s.diff,        0),
-                  longPresent: vendorStats.reduce((a, s) => a + s.longPresent, 0),
-                  tempPresent: vendorStats.reduce((a, s) => a + s.tempPresent, 0),
+                  longPresent:  vendorStats.reduce((a, s) => a + s.longPresent,  0),
+                  tempPresent:  vendorStats.reduce((a, s) => a + s.tempPresent,  0),
+                  tempExpected: vendorStats.reduce((a, s) => a + s.tempExpected, 0),
                 };
                 const tDiffColor = total.diff > 0 ? 'text-green-700' : total.diff < 0 ? 'text-red-500' : 'text-slate-300';
                 const tDiffLabel = total.diff > 0 ? `+${total.diff}` : total.diff < 0 ? `${total.diff}` : '—';
@@ -1806,6 +1826,20 @@ function Dashboard() {
                     <td className="px-3 py-2.5 text-right text-sm font-bold">
                       {hasAttendData
                         ? (total.tempPresent > 0 ? <span className="text-orange-500">{total.tempPresent}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="text-slate-300">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold">
+                      {hasAttendData
+                        ? (total.tempExpected > 0 ? <span className="text-orange-400">{total.tempExpected}</span> : <span className="text-slate-300">—</span>)
+                        : <span className="text-slate-300">—</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm font-bold">
+                      {hasAttendData
+                        ? (total.tempExpected > 0
+                            ? <span className="text-orange-500">{Math.round(total.tempPresent / total.tempExpected * 100)}%</span>
+                            : <span className="text-slate-300">—</span>)
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
