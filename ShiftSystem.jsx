@@ -7202,8 +7202,11 @@ export default function App() {
           .then(r => r.ok ? r.json() : null)
           .then(att => {
             if (!att) return;
-            if (att.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
-            if (att.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
+            // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
+            if (att.attendData && Object.keys(att.attendData).length > 0)
+              setAttendData(prev => ({ ...att.attendData, ...prev }));
+            if (att.extras    && Object.keys(att.extras).length > 0)
+              setExtras(prev => ({ ...att.extras, ...prev }));
           }).catch(() => {});
       } else {
         fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
