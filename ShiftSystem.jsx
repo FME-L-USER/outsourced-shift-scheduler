@@ -7189,6 +7189,7 @@ export default function App() {
         if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
         if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
         if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
+        if (s.attendSettings)                setAttendSettings(s.attendSettings);
       };
       if (role === ROLES.WORKER) {
         fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
