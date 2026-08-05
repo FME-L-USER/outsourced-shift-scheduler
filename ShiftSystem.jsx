@@ -1132,10 +1132,11 @@ function WarehouseDeptBar() {
     selectedGroup,     setSelectedGroup,
   } = useApp();
 
-  // 倉別可見範圍：ADMIN 看全部；AREA 只看 allowedWarehouses（空陣列 = 尚未指派，不顯示）；其他角色維持原邏輯
+  // 倉別可見範圍：ADMIN/VENDOR 看全部；AREA 只看 allowedWarehouses（空陣列 = 尚未指派，不顯示）
   const isAdmin = currentUser?.role === ROLES.ADMIN;
+  const isVendor = currentUser?.role === ROLES.VENDOR;
   const allowedWh = currentUser?.allowedWarehouses ?? [];
-  const visibleWarehouses = isAdmin
+  const visibleWarehouses = (isAdmin || isVendor)
     ? warehouses
     : allowedWh.length > 0
       ? warehouses.filter(w => allowedWh.includes(w.id))
