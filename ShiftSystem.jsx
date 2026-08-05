@@ -726,10 +726,15 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         const data = await r.json().catch(() => ({}));
         if (r.ok && data.token) {
           clearLock(uKey);
-          const apiRole = data.user.role === 'admin' ? ROLES.ADMIN : ROLES.AREA;
+          const apiRole = data.user.role === 'admin' ? ROLES.ADMIN
+                        : data.user.role === 'vendor' ? ROLES.VENDOR
+                        : ROLES.AREA;
+          const apiVendors = apiRole === ROLES.VENDOR
+            ? (data.user.vendors ?? [])
+            : vendors.map(v => v.name);
           onLogin({
             id: `api_${data.user.id}`, username: data.user.username, name: data.user.username,
-            role: apiRole, vendors: vendors.map(v => v.name),
+            role: apiRole, vendors: apiVendors,
             permissions: getDefaultPermissions(apiRole),
             allowedWarehouses: data.user.allowedWarehouses || [],
             approved: true, _apiAuth: true,
@@ -763,12 +768,27 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     }
     if (candidate.approved === false) { setError('此帳號審核中，請等候管理員核准後再登入。'); return; }
     clearLock(uKey);
+    // 確保密碼已升級為 pbkdf2
+    let finalCandidate = candidate;
     if (!candidate.password.startsWith('pbkdf2:')) {
       const hashed = await hashPwd(password);
-      onLogin({ ...candidate, password: hashed });
-    } else {
-      onLogin(candidate);
+      finalCandidate = { ...candidate, password: hashed };
     }
+    // 嘗試取得 server-side JWT（讓廠商幹部能直接存取 /api/attendance）
+    try {
+      const vr = await fetch('/api/auth/vendor-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: finalCandidate.username, passwordHash: finalCandidate.password }),
+      });
+      if (vr.ok) {
+        const vd = await vr.json();
+        onLogin({ ...finalCandidate, vendors: vd.user?.vendors ?? finalCandidate.vendors ?? [] }, vd.token);
+        return;
+      }
+    } catch (_) {}
+    // API 不可用時 fallback 至本地登入（無 JWT）
+    onLogin(finalCandidate);
   };
 
   const handleRegister = async e => {
@@ -6468,9 +6488,30 @@ function AccountManagement() {
     toast('帳號已刪除', 'info');
   };
 
-  const handleApprove = id => {
+  const syncVendorToDB = async (u) => {
+    const token = localStorage.getItem('sms_jwt');
+    if (!token) return;
+    try {
+      await fetch('/api/auth/vendor-register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: u.id,
+          username: u.username,
+          password_hash: u.password,
+          name: u.name,
+          vendors: u.vendors ?? [],
+          allowed_warehouses: u.allowedWarehouses ?? [],
+        }),
+      });
+    } catch (_) {}
+  };
+
+  const handleApprove = async id => {
+    const target = users.find(u => u.id === id);
     setUsers(prev => prev.map(u => u.id === id ? { ...u, approved: true } : u));
     toast('帳號已核准', 'success');
+    if (target?.role === ROLES.VENDOR) await syncVendorToDB({ ...target, approved: true });
   };
 
   const handleReject = id => {
@@ -6576,6 +6617,7 @@ function AccountManagement() {
     };
     setUsers(prev => [...prev, newUser]);
     toast(`已升級 ${emp.name}（${emp.empId}）為委外幹部`, 'success');
+    await syncVendorToDB(newUser);
   };
 
   const handleDowngradeToWorker = (emp) => {
@@ -7391,11 +7433,16 @@ export default function App() {
       .then(r => r.ok ? r.json() : null)
       .then(apiUser => {
         if (!apiUser) { localStorage.removeItem(JWT_KEY); return; }
-        const role = apiUser.role === 'admin' ? ROLES.ADMIN : ROLES.AREA;
+        const role = apiUser.role === 'admin' ? ROLES.ADMIN
+                   : apiUser.role === 'vendor' ? ROLES.VENDOR
+                   : ROLES.AREA;
         const allowedWh = apiUser.allowedWarehouses || [];
+        const userVendors = role === ROLES.VENDOR
+          ? (apiUser.vendors ?? [])
+          : vendors.map(v => v.name);
         setCurrentUser({
           id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.username,
-          role, vendors: vendors.map(v => v.name),
+          role, vendors: userVendors,
           permissions: getDefaultPermissions(role),
           allowedWarehouses: allowedWh,
           approved: true, _apiAuth: true,

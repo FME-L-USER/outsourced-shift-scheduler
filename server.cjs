@@ -5,6 +5,7 @@ const { Pool }   = require('pg');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const path       = require('path');
+const nodeCrypto = require('crypto');
 
 const app  = express();
 app.use(express.json({ limit: '10mb' }));
@@ -76,6 +77,7 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login         TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_warehouses TEXT[] NOT NULL DEFAULT '{}'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vendors           TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_state (
       id         VARCHAR(50) PRIMARY KEY,
@@ -345,7 +347,7 @@ async function verifyAD(username, password) {
 // ── JWT 工具 ──────────────────────────────────────────────
 function issueToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms, allowedWarehouses: user.allowed_warehouses || [] },
+    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms, allowedWarehouses: user.allowed_warehouses || [], vendors: user.vendors || [] },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
@@ -360,6 +362,7 @@ function safeUser(u) {
     page_perms:        u.page_perms        || [],
     fn_perms:          u.fn_perms          || [],
     allowedWarehouses: u.allowed_warehouses || [],
+    vendors:           u.vendors           || [],
     approved:          u.approved,
     last_login:        u.last_login,
   };
@@ -473,7 +476,7 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = String(req.params.id).trim();
   if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
-  const { role, approved, page_perms, fn_perms, allowed_warehouses } = req.body ?? {};
+  const { role, approved, page_perms, fn_perms, allowed_warehouses, vendors } = req.body ?? {};
 
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (!existing[0]) return res.status(404).json({ error: '找不到此帳號' });
@@ -487,6 +490,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (page_perms         !== undefined) { vals.push(page_perms);         sets.push(`page_perms=$${vals.length}`); }
   if (fn_perms           !== undefined) { vals.push(fn_perms);           sets.push(`fn_perms=$${vals.length}`); }
   if (allowed_warehouses !== undefined) { vals.push(allowed_warehouses); sets.push(`allowed_warehouses=$${vals.length}`); }
+  if (vendors           !== undefined) { vals.push(vendors);            sets.push(`vendors=$${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: '無可更新欄位' });
 
   vals.push(id);
@@ -552,6 +556,53 @@ app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/auth/vendor-register （admin only）─────────
+// 管理員核准廠商帳號或升級委外幹部時，將帳號寫入 DB
+app.post('/api/auth/vendor-register', requireAuth, requireAdmin, async (req, res) => {
+  const { id, username, password_hash, name, vendors, allowed_warehouses } = req.body ?? {};
+  if (!username || !password_hash) return res.status(400).json({ error: '缺少必要欄位' });
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, role, display_name, vendors, allowed_warehouses, approved, created_at)
+       VALUES ($1, $2, $3, 'vendor', $4, $5, $6, true, NOW())
+       ON CONFLICT (username) DO UPDATE
+         SET password_hash=$3, role='vendor', display_name=$4,
+             vendors=$5, allowed_warehouses=$6, approved=true`,
+      [id || username, username, password_hash, name || username,
+       vendors || [], allowed_warehouses || []]
+    );
+    const { rows } = await pool.query('SELECT * FROM users WHERE username=$1', [username]);
+    res.json({ ok: true, user: safeUser(rows[0]) });
+  } catch (e) {
+    console.error('vendor-register error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── POST /api/auth/vendor-login ──────────────────────────
+// 廠商幹部以本地 pbkdf2 密碼登入，伺服器端驗證後發 JWT
+app.post('/api/auth/vendor-login', async (req, res) => {
+  const { username, passwordHash } = req.body ?? {};
+  if (!username || !passwordHash) return res.status(400).json({ error: '缺少帳號或密碼' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM users WHERE username=$1 AND role='vendor' AND approved=true`, [username]
+    );
+    if (!rows[0]) return res.status(401).json({ error: '帳號不存在' });
+    const user = rows[0];
+    const stored = user.password_hash;
+    if (!stored || !stored.startsWith('pbkdf2:'))
+      return res.status(401).json({ error: '密碼格式不符，請重新設定' });
+    // passwordHash 是前端已完成 PBKDF2 的完整字串（pbkdf2:saltHex:hashHex），直接比對
+    if (stored !== passwordHash) return res.status(401).json({ error: '密碼錯誤' });
+    await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
+    return res.json({ token: issueToken(user), user: safeUser(user) });
+  } catch (e) {
+    console.error('vendor-login error:', e.message);
+    return res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 // ── GET /api/attendance （admin / area / vendor 可讀）─────
 app.get('/api/attendance', requireAuth, async (req, res) => {
   const role = req.user?.role;
@@ -567,7 +618,67 @@ app.put('/api/attendance', requireAuth, async (req, res) => {
   const role = req.user?.role;
   if (!['admin','area','vendor'].includes(role))
     return res.status(403).json({ error: '無存取權限' });
-  const { attendData, extras } = req.body ?? {};
+
+  let { attendData, extras } = req.body ?? {};
+  attendData = attendData ?? {};
+  extras     = extras     ?? {};
+
+  // vendor scope：只允許寫入自己廠商員工的資料
+  if (role === 'vendor') {
+    const allowedVendors = req.user.vendors ?? [];
+    if (allowedVendors.length === 0) return res.status(403).json({ error: '無廠商歸屬' });
+
+    // 從 DB 取得所有員工，篩出屬於此 vendor 的 ID 集合
+    const { rows: stateRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const employees = stateRows[0]?.data?.employees ?? [];
+    const allowedIds = new Set(
+      employees.filter(e => allowedVendors.includes(e.vendor)).map(e => e.id)
+    );
+
+    // 過濾 attendData：每個日期只保留 allowedIds 的 key
+    const filteredAttend = {};
+    for (const [date, dayMap] of Object.entries(attendData)) {
+      const filtered = {};
+      for (const [empId, val] of Object.entries(dayMap)) {
+        if (allowedIds.has(empId)) filtered[empId] = val;
+      }
+      if (Object.keys(filtered).length > 0) filteredAttend[date] = filtered;
+    }
+
+    // 過濾 extras：每個日期只保留屬於此 vendor 的臨時人員
+    const filteredExtras = {};
+    for (const [date, list] of Object.entries(extras)) {
+      const filtered = (list ?? []).filter(e => allowedVendors.includes(e.vendor));
+      if (filtered.length > 0) filteredExtras[date] = filtered;
+    }
+
+    attendData = filteredAttend;
+    extras     = filteredExtras;
+  }
+
+  // 讀取現有資料，做員工層級 merge（避免不同廠商寫同一天時互蓋）
+  const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const curAttend = curRows[0]?.data?.attendData ?? {};
+  const curExtras = curRows[0]?.data?.extras     ?? {};
+
+  const mergedAttend = { ...curAttend };
+  for (const [date, dayMap] of Object.entries(attendData)) {
+    mergedAttend[date] = { ...(curAttend[date] ?? {}), ...dayMap };
+  }
+
+  const mergedExtras = { ...curExtras };
+  if (role === 'vendor') {
+    const allowedVendorSet = new Set(req.user.vendors ?? []);
+    for (const [date, list] of Object.entries(extras)) {
+      const others = (curExtras[date] ?? []).filter(e => !allowedVendorSet.has(e.vendor));
+      mergedExtras[date] = [...others, ...list];
+    }
+  } else {
+    for (const [date, list] of Object.entries(extras)) {
+      mergedExtras[date] = list;
+    }
+  }
+
   await pool.query(
     `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
      ON CONFLICT (id) DO UPDATE
@@ -575,7 +686,7 @@ app.put('/api/attendance', requireAuth, async (req, res) => {
              || jsonb_build_object('attendData', $1::jsonb->'attendData',
                                    'extras',     $1::jsonb->'extras'),
            updated_at = NOW()`,
-    [JSON.stringify({ attendData: attendData ?? {}, extras: extras ?? {} })]
+    [JSON.stringify({ attendData: mergedAttend, extras: mergedExtras })]
   );
   res.json({ ok: true });
 });
