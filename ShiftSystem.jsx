@@ -1385,7 +1385,7 @@ function Dashboard() {
       }
       map[emp.vendor].roster++;
       const code = schedule[emp.id]?.[dk] ?? 'V';
-      const isWorking = code === 'V';
+      const isWorking = !['休','例','國'].includes(code);
       if (isWorking) {
         map[emp.vendor].working++;
         const g = emp.group ?? '';
