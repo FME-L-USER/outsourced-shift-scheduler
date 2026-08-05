@@ -4033,7 +4033,7 @@ function ReportPane({ generateReport, groupOptions, attendDate, groupFilter }) {
 }
 
 function Attendance() {
-  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras } = useApp();
+  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
   const toast = useToast();
 
   const todayStr = (() => {
@@ -4044,11 +4044,8 @@ function Attendance() {
   const [subTab, setSubTab] = useState('attend');
   const [attendDate, setAttendDate] = useState(todayStr);
   const [groupFilter, setGroupFilter] = useState('');
-  const [attendSettings, setAttendSettings] = useState(() => LS.get('sms_attend_settings', DEFAULT_ATTEND_SETTINGS));
   const [addModal, setAddModal] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
-
-  useEffect(() => { LS.set('sms_attend_settings', attendSettings); }, [attendSettings]);
 
   const groupOptions = useMemo(() => {
     const fromShiftType = employees.map(e => e.shiftType).filter(Boolean);
@@ -7007,6 +7004,7 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(() => LS.get('sms_month',      today.getMonth() + 1));
   const [attendData, setAttendData] = useState(() => LS.get('sms_attendance', {}));
   const [extras,     setExtras]     = useState(() => LS.get('sms_attend_extras', {}));
+  const [attendSettings, setAttendSettings] = useState(() => LS.get('sms_attend_settings', DEFAULT_ATTEND_SETTINGS));
 
   const [schedule, setSchedule] = useState(() => {
     const saved = LS.get('sms_schedule', null);
@@ -7155,6 +7153,7 @@ export default function App() {
         if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
         if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
+        if (state?.attendSettings)                     setAttendSettings(state.attendSettings);
 
         // 本地員工數多於 DB → 可能有尚未入庫的匯入資料，回寫 DB（但不中斷上方已載入的資料）
         if (localEmps.length > serverEmps.length) writeLocalToServer();
@@ -7168,7 +7167,7 @@ export default function App() {
     }
   }, [setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
-      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
+      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders, setAttendSettings]);
 
   // ── 切回前景自動同步（另一位同事更新後，本機切回分頁即可看到最新資料）──
   useEffect(() => {
@@ -7271,7 +7270,7 @@ export default function App() {
   latestStateRef.current = {
     employees, vendors, warehouses, schedule, systemLocked,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
-    attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+    attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
   };
 
   // ── 手動立即存檔（讀 latestStateRef，無 stale closure 問題） ──
@@ -7297,7 +7296,7 @@ export default function App() {
     const body = JSON.stringify({
       employees, vendors, warehouses, schedule, systemLocked,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
-      attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders,
+      attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     });
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
     if (forceSaveRef.current) {
@@ -7315,7 +7314,7 @@ export default function App() {
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
-      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders]);
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings]);
 
   // ── vendor 出勤資料同步（PUT /api/attendance，2s debounce）──
   const vendorAttendDebRef = useRef(null);
@@ -7445,6 +7444,7 @@ export default function App() {
     shiftTypesByWh, setShiftTypesByWh,
     shiftCodeRows, setShiftCodeRows,
     shiftCodeHeaders, setShiftCodeHeaders,
+    attendSettings, setAttendSettings,
     currentUser,
     saveNow,
     triggerForceSave,
