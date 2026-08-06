@@ -4102,9 +4102,9 @@ function Attendance() {
     }
   }, [currentUser, setAttendData, setExtras, toast]);
 
-  // 30 秒自動輪詢（點名表開啟期間）
+  // 10 秒自動輪詢（點名表開啟期間）
   useEffect(() => {
-    const id = setInterval(() => syncFromServer(true), 30000);
+    const id = setInterval(() => syncFromServer(true), 10000);
     return () => clearInterval(id);
   }, [syncFromServer]);
 
