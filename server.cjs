@@ -514,8 +514,13 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
 
 // ── GET /api/state ────────────────────────────────────────
 app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
-  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
-  res.json(rows[0]?.data ?? null);
+  try {
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    res.json(rows[0]?.data ?? null);
+  } catch (e) {
+    console.error('GET /api/state DB error:', e.message);
+    res.status(503).json({ error: 'db_unavailable' });
+  }
 });
 
 // ── GET /api/schedule （所有登入角色可讀，供 worker/vendor 取得班表）─
@@ -546,14 +551,24 @@ app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   const incoming = req.body;
   // 移除 attendData / extras，避免覆蓋 vendor 透過 /api/attendance 存入的出勤紀錄
   const { attendData: _a, extras: _e, ...rest } = incoming;
-  await pool.query(
-    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
-     ON CONFLICT (id) DO UPDATE
-       SET data = app_state.data || $1::jsonb,
-           updated_at = NOW()`,
-    [JSON.stringify(rest)]
-  );
-  res.json({ ok: true });
+  // 防呆：employees/vendors/warehouses 同時為空陣列時，拒絕寫入（避免空白本機快取覆蓋 DB）
+  const hasEmps    = Array.isArray(rest.employees)  && rest.employees.length  > 0;
+  const hasVendors = Array.isArray(rest.vendors)     && rest.vendors.length    > 0;
+  const hasWhs     = Array.isArray(rest.warehouses)  && rest.warehouses.length > 0;
+  if (!hasEmps && !hasVendors && !hasWhs) return res.json({ ok: true });
+  try {
+    await pool.query(
+      `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE
+         SET data = app_state.data || $1::jsonb,
+             updated_at = NOW()`,
+      [JSON.stringify(rest)]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('PUT /api/state DB error:', e.message);
+    res.status(503).json({ error: 'db_unavailable' });
+  }
 });
 
 // ── POST /api/auth/vendor-register （admin only）─────────

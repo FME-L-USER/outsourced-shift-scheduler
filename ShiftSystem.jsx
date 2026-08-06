@@ -7260,6 +7260,8 @@ export default function App() {
         const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
         if (!r.ok) return;
         const state = await r.json();
+        // server 回傳 null 代表 DB 初始化尚未完成或連線暫時失敗，不繼續任何讀寫操作
+        if (!state) return;
 
         const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
         const localEmps  = LS.get('sms_employees', []);
@@ -7294,10 +7296,11 @@ export default function App() {
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
         if (state?.attendSettings)                     setAttendSettings(state.attendSettings);
 
-        // 本地員工數多於 DB → 可能有尚未入庫的匯入資料，回寫 DB（但不中斷上方已載入的資料）
-        if (localEmps.length > serverEmps.length) writeLocalToServer();
-        // DB 無員工且本地有員工 → 寫回 DB
-        else if (serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
+        // 本地員工數多於 DB 且 DB 有基本資料（vendors/warehouses 存在）→ 可能有尚未入庫的匯入資料，回寫 DB
+        const dbHasBaseData = (state?.vendors?.length > 0) || (state?.warehouses?.length > 0);
+        if (dbHasBaseData && localEmps.length > serverEmps.length) writeLocalToServer();
+        // DB 無員工且本地有員工 → 寫回 DB（但 DB 必須已有 vendors/warehouses，否則本地資料不完整不寫回）
+        else if (dbHasBaseData && serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
       }
     } catch (e) {
       console.warn('無法從伺服器載入狀態:', e.message);
