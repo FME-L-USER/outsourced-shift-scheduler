@@ -1365,14 +1365,14 @@ function Dashboard() {
 
   const visibleEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
-      ? employees.filter(e => currentUser.vendors.includes(e.vendor) && e.status === '在職')
-      : employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status === '在職');
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor) && e.status !== '離職')
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
   // 儀表板用：不過濾 vendor 角色，讓各廠商長期人員都能算到
   const dashEmployees = useMemo(() => {
-    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status === '在職');
+    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
