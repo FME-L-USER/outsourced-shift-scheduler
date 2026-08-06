@@ -7411,11 +7411,12 @@ export default function App() {
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings]);
 
-  // ── vendor 出勤資料同步（PUT /api/attendance，2s debounce）──
+  // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor 皆適用）──
   const vendorAttendDebRef = useRef(null);
   useEffect(() => {
     if (!serverSyncedRef.current) return;
-    if (currentUser?.role !== ROLES.VENDOR) return;
+    const role = currentUser?.role;
+    if (role !== ROLES.VENDOR && role !== ROLES.ADMIN && role !== ROLES.AREA) return;
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
