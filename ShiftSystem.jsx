@@ -507,7 +507,7 @@ function filterByScope(list, warehouses, selectedWarehouse, selectedDept, select
     if (selectedGroup) list = list.filter(e => e.group === selectedGroup);
   } else if (selectedWarehouse) {
     const wh = warehouses.find(w => w.id === selectedWarehouse);
-    if (wh) {
+    if (wh && (wh.departments ?? []).length > 0) {
       const deptNames = new Set((wh.departments ?? []).map(d => d.name));
       const whVendors = new Set((wh.departments ?? []).flatMap(d => d.vendors));
       list = list.filter(e => {
@@ -515,6 +515,7 @@ function filterByScope(list, warehouses, selectedWarehouse, selectedDept, select
         return whVendors.has(e.vendor);
       });
     }
+    // 倉庫未設定課別時不過濾（顯示全部員工）
   }
   return list;
 }
