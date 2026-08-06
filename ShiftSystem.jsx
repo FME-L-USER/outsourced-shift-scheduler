@@ -1418,14 +1418,20 @@ function Dashboard() {
       }
       const codePW = schedule[emp.id]?.[dkPW] ?? 'V';
       if (codePW === 'V') map[emp.vendor].prevWorking++;
-      // 長期到班：點名表勾選
-      if (attendData[attendDkPad]?.[emp.id]?.present) {
-        map[emp.vendor].longPresent++;
-        const g = emp.group ?? '';
-        GROUP_COLS.forEach(gc => {
-          if (gc.match(g)) map[emp.vendor].groupPresent[gc.label]++;
-        });
-      }
+    });
+    // 長期到班：掃描 attendData，不限於 dashEmployees 範圍（避免 scope/status 差異導致漏計）
+    const dayAttend = attendData[attendDkPad] ?? {};
+    Object.entries(dayAttend).forEach(([empId, rec]) => {
+      if (!rec?.present) return;
+      const emp = employees.find(e => e.id === empId);
+      if (!emp?.vendor) return;
+      const v = emp.vendor;
+      if (!map[v]) return; // 廠商不在 dashEmployees 範圍，略過
+      map[v].longPresent++;
+      const g = emp.group ?? '';
+      GROUP_COLS.forEach(gc => {
+        if (gc.match(g)) map[v].groupPresent[gc.label]++;
+      });
     });
     // 臨時到班：extras 依廠商計算，依倉別/課別/組別篩選（用 dashEmployees 中出現的廠商作為倉別依據）
     const scopeVendors = new Set(dashEmployees.map(e => e.vendor));
@@ -1457,7 +1463,7 @@ function Dashboard() {
       tempPresent:  s.tempPresent  ?? 0,
       tempExpected: s.tempExpected ?? 0,
     }));
-  }, [dashEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup, selectedWarehouse]);
+  }, [dashEmployees, employees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup, selectedWarehouse]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
