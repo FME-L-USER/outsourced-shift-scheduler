@@ -2076,8 +2076,8 @@ function ScheduleTable() {
     if (!rangeMode) return null;
     const s = parseLocal(scheduleRange.start);
     const e = parseLocal(scheduleRange.end);
-    const len = Math.round((e - s) / 86400000); // 區間天數
-    const shift = viewOffset * len;
+    const len = Math.round((e - s) / 86400000); // 首尾天數差（不含尾）
+    const shift = viewOffset * (len + 1); // +1：含頭含尾的完整天數，避免下一期與前一期重疊
     const vs = new Date(s); vs.setDate(vs.getDate() + shift);
     const ve = new Date(e); ve.setDate(ve.getDate() + shift);
     const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
@@ -3415,8 +3415,8 @@ function Reports() {
     if (!rangeMode) return null;
     const s = parseLocal(scheduleRange.start);
     const e = parseLocal(scheduleRange.end);
-    const len = Math.round((e - s) / 86400000);
-    const shift = viewOffset * len;
+    const len = Math.round((e - s) / 86400000); // 首尾天數差（不含尾）
+    const shift = viewOffset * (len + 1); // +1：含頭含尾的完整天數，避免下一期與前一期重疊
     const vs = new Date(s); vs.setDate(vs.getDate() + shift);
     const ve = new Date(e); ve.setDate(ve.getDate() + shift);
     const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
