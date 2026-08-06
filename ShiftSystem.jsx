@@ -176,6 +176,7 @@ const SEED_VENDORS = Object.entries(VENDOR_MAP).map(([code, name]) => ({
 const NATIONAL_HOLIDAYS = [
   // 114年 (2025)
   { year: 2025, month: 1,  day: 1,  name: '元旦' },
+  { year: 2025, month: 1,  day: 27, name: '小年夜' },
   { year: 2025, month: 1,  day: 28, name: '農曆除夕' },
   { year: 2025, month: 1,  day: 29, name: '春節' },
   { year: 2025, month: 1,  day: 30, name: '春節' },
@@ -188,10 +189,11 @@ const NATIONAL_HOLIDAYS = [
   { year: 2025, month: 10, day: 10, name: '國慶日' },
   // 115年 (2026)
   { year: 2026, month: 1,  day: 1,  name: '元旦' },
-  { year: 2026, month: 1,  day: 17, name: '農曆除夕' },
-  { year: 2026, month: 1,  day: 18, name: '春節' },
-  { year: 2026, month: 1,  day: 19, name: '春節' },
-  { year: 2026, month: 1,  day: 20, name: '春節' },
+  { year: 2026, month: 2,  day: 15, name: '小年夜' },
+  { year: 2026, month: 2,  day: 16, name: '農曆除夕' },
+  { year: 2026, month: 2,  day: 17, name: '春節' },
+  { year: 2026, month: 2,  day: 18, name: '春節' },
+  { year: 2026, month: 2,  day: 19, name: '春節' },
   { year: 2026, month: 2,  day: 28, name: '二二八和平紀念日' },
   { year: 2026, month: 4,  day: 3,  name: '兒童節' },
   { year: 2026, month: 4,  day: 5,  name: '清明節' },
@@ -1978,6 +1980,7 @@ function ScheduleTable() {
   // 假日名稱 → 代號表欄位名稱對照
   const HOLIDAY_COL_MAP = {
     '元旦':           '元旦',
+    '小年夜':         '小年夜',
     '農曆除夕':       '除夕',
     '二二八和平紀念日': '228紀念日',
     '兒童節':         '兒童節',
