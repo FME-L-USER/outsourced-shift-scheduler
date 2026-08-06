@@ -4067,6 +4067,39 @@ function Attendance() {
   const [groupFilter, setGroupFilter] = useState('');
   const [addModal, setAddModal] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
+
+  const syncFromServer = useCallback(async (silent = false) => {
+    const token = localStorage.getItem('sms_jwt');
+    if (!token) return;
+    if (!silent) setSyncing(true);
+    try {
+      const isVendor = currentUser?.role === ROLES.VENDOR;
+      const url = isVendor ? '/api/attendance' : '/api/state';
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return;
+      const data = await r.json();
+      const newAttend = isVendor ? (data.attendData ?? {}) : (data?.attendData ?? {});
+      const newExtras = isVendor ? (data.extras    ?? {}) : (data?.extras    ?? {});
+      if (Object.keys(newAttend).length > 0)
+        setAttendData(prev => ({ ...newAttend, ...prev }));
+      if (Object.keys(newExtras).length > 0)
+        setExtras(prev => ({ ...newExtras, ...prev }));
+      setLastSync(new Date());
+      if (!silent) toast('出勤資料已同步', 'success');
+    } catch (_) {
+      if (!silent) toast('同步失敗，請檢查網路', 'error');
+    } finally {
+      if (!silent) setSyncing(false);
+    }
+  }, [currentUser, setAttendData, setExtras, toast]);
+
+  // 30 秒自動輪詢（點名表開啟期間）
+  useEffect(() => {
+    const id = setInterval(() => syncFromServer(true), 30000);
+    return () => clearInterval(id);
+  }, [syncFromServer]);
 
   const groupOptions = useMemo(() => {
     const fromShiftType = employees.map(e => e.shiftType).filter(Boolean);
@@ -4352,6 +4385,14 @@ function Attendance() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-sm text-slate-500">實到 <span className="font-bold text-teal-700">{presentCount}</span>/{totalCount}人</span>
+          <button onClick={() => syncFromServer(false)} disabled={syncing}
+            title={lastSync ? `上次同步：${lastSync.toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}` : '點擊同步最新出勤資料'}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors
+              ${syncing
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : 'bg-white hover:bg-teal-50 text-teal-700 border-teal-300 hover:border-teal-500'}`}>
+            {syncing ? '⏳ 同步中…' : '🔄 同步'}
+          </button>
           <button onClick={() => setAddModal(true)}
             className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
             👤 手動新增
@@ -4811,7 +4852,14 @@ function Attendance() {
 
   return (
     <div className="p-6 space-y-4 max-w-4xl">
-      <h2 className="text-xl font-bold text-slate-800">點名表</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-800">點名表</h2>
+        {lastSync && (
+          <span className="text-xs text-slate-400">
+            🔄 {lastSync.toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit',second:'2-digit'})} 已同步
+          </span>
+        )}
+      </div>
 
       <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
         <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
