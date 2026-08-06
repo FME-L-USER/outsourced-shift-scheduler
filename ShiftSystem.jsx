@@ -4083,7 +4083,14 @@ function Attendance() {
       const newAttend = isVendor ? (data.attendData ?? {}) : (data?.attendData ?? {});
       const newExtras = isVendor ? (data.extras    ?? {}) : (data?.extras    ?? {});
       if (Object.keys(newAttend).length > 0)
-        setAttendData(prev => ({ ...prev, ...newAttend }));
+        setAttendData(prev => {
+          const merged = { ...prev };
+          for (const [date, dayMap] of Object.entries(newAttend)) {
+            if (Object.keys(dayMap).length > 0)
+              merged[date] = { ...(prev[date] ?? {}), ...dayMap };
+          }
+          return merged;
+        });
       if (Object.keys(newExtras).length > 0)
         setExtras(prev => ({ ...prev, ...newExtras }));
       setLastSync(new Date());
@@ -7239,8 +7246,21 @@ export default function App() {
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
         if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
         if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
-        if (state?.attendData)             setAttendData(state.attendData);
-        if (state?.extras)                 setExtras(state.extras);
+        if (state?.attendData && Object.keys(state.attendData).length > 0) setAttendData(prev => {
+          const merged = { ...prev };
+          for (const [date, dayMap] of Object.entries(state.attendData)) {
+            if (Object.keys(dayMap).length > 0)
+              merged[date] = { ...(prev[date] ?? {}), ...dayMap };
+          }
+          return merged;
+        });
+        if (state?.extras && Object.keys(state.extras).length > 0) setExtras(prev => {
+          const merged = { ...prev };
+          for (const [date, list] of Object.entries(state.extras)) {
+            if (list?.length > 0) merged[date] = list;
+          }
+          return merged;
+        });
         if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
         if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);

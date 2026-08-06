@@ -661,9 +661,14 @@ app.put('/api/attendance', requireAuth, async (req, res) => {
   const curAttend = curRows[0]?.data?.attendData ?? {};
   const curExtras = curRows[0]?.data?.extras     ?? {};
 
+  // 空 attendData → 不覆蓋 DB（避免桌機初始化時把空物件寫進 DB，導致其他裝置 init 被清空）
+  if (Object.keys(attendData).length === 0 && Object.keys(extras).length === 0)
+    return res.json({ ok: true });
+
   const mergedAttend = { ...curAttend };
   for (const [date, dayMap] of Object.entries(attendData)) {
-    mergedAttend[date] = { ...(curAttend[date] ?? {}), ...dayMap };
+    if (Object.keys(dayMap).length > 0)
+      mergedAttend[date] = { ...(curAttend[date] ?? {}), ...dayMap };
   }
 
   const mergedExtras = { ...curExtras };
