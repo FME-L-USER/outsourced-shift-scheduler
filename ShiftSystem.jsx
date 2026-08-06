@@ -4083,9 +4083,9 @@ function Attendance() {
       const newAttend = isVendor ? (data.attendData ?? {}) : (data?.attendData ?? {});
       const newExtras = isVendor ? (data.extras    ?? {}) : (data?.extras    ?? {});
       if (Object.keys(newAttend).length > 0)
-        setAttendData(prev => ({ ...newAttend, ...prev }));
+        setAttendData(prev => ({ ...prev, ...newAttend }));
       if (Object.keys(newExtras).length > 0)
-        setExtras(prev => ({ ...newExtras, ...prev }));
+        setExtras(prev => ({ ...prev, ...newExtras }));
       setLastSync(new Date());
       if (!silent) toast('出勤資料已同步', 'success');
     } catch (_) {
