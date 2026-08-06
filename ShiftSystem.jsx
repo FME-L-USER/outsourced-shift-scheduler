@@ -3564,7 +3564,7 @@ function Reports() {
       return s;
     };
     const cr  = (r, c) => colLetter(c) + (r + 1);
-    const ec  = (r, c) => { const k = cr(r,c); if (!ws[k]) ws[k] = {t:'z',v:null}; return ws[k]; };
+    const ec  = (r, c) => { const k = cr(r,c); if (!ws[k]) ws[k] = {t:'s',v:''}; return ws[k]; };
     const sty = (r, c, s) => { ec(r,c).s = s; };
 
     const F    = '微軟正黑體';
