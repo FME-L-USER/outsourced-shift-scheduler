@@ -1363,14 +1363,14 @@ function Dashboard() {
 
   const visibleEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
-      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor) && e.status === '在職')
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status === '在職');
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
   // 儀表板用：不過濾 vendor 角色，讓各廠商長期人員都能算到
   const dashEmployees = useMemo(() => {
-    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status === '在職');
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
   }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
 
@@ -1401,8 +1401,8 @@ function Dashboard() {
     const map = {};
     dashEmployees.forEach(emp => {
       if (!map[emp.vendor]) {
-        map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {}, longPresent: 0 };
-        GROUP_COLS.forEach(gc => { map[emp.vendor].groups[gc.label] = 0; });
+        map[emp.vendor] = { roster: 0, working: 0, prevWorking: 0, groups: {}, groupPresent: {}, longPresent: 0 };
+        GROUP_COLS.forEach(gc => { map[emp.vendor].groups[gc.label] = 0; map[emp.vendor].groupPresent[gc.label] = 0; });
       }
       map[emp.vendor].roster++;
       const code = schedule[emp.id]?.[dk] ?? 'V';
@@ -1417,12 +1417,21 @@ function Dashboard() {
       const codePW = schedule[emp.id]?.[dkPW] ?? 'V';
       if (codePW === 'V') map[emp.vendor].prevWorking++;
       // 長期到班：點名表勾選
-      if (attendData[attendDkPad]?.[emp.id]?.present) map[emp.vendor].longPresent++;
+      if (attendData[attendDkPad]?.[emp.id]?.present) {
+        map[emp.vendor].longPresent++;
+        const g = emp.group ?? '';
+        GROUP_COLS.forEach(gc => {
+          if (gc.match(g)) map[emp.vendor].groupPresent[gc.label]++;
+        });
+      }
     });
-    // 臨時到班：extras 依廠商計算，依選擇的組別篩選
-    const dayExtras = (extras[attendDkPad] ?? []).filter(e =>
-      !selectedGroup || !e.group || e.group === selectedGroup
-    );
+    // 臨時到班：extras 依廠商計算，依倉別/課別/組別篩選（用 dashEmployees 中出現的廠商作為倉別依據）
+    const scopeVendors = new Set(dashEmployees.map(e => e.vendor));
+    const dayExtras = (extras[attendDkPad] ?? []).filter(e => {
+      const vendorOk = !selectedWarehouse || scopeVendors.has(e.vendor);
+      const groupOk  = !selectedGroup || !e.group || e.group === selectedGroup;
+      return vendorOk && groupOk;
+    });
     dayExtras.forEach(e => {
       const v = e.vendor || '未分配';
       if (!map[v]) {
@@ -1441,20 +1450,22 @@ function Dashboard() {
       prevWorking:  s.prevWorking,
       diff:         s.working - s.prevWorking,
       groups:       s.groups,
+      groupPresent: s.groupPresent,
       longPresent:  s.longPresent  ?? 0,
       tempPresent:  s.tempPresent  ?? 0,
       tempExpected: s.tempExpected ?? 0,
     }));
-  }, [dashEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup]);
+  }, [dashEmployees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup, selectedWarehouse]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
-  // 點名表實到人數（來源：attendData）
+  // 點名表實到人數（來源：attendData，限當前範圍在職員工）
   const attendDk = `${dashYear}-${String(dashMonth).padStart(2,'0')}-${String(safeDay).padStart(2,'0')}`;
   const actualPresent = useMemo(() => {
     const dayData = attendData[attendDk] ?? {};
-    return Object.values(dayData).filter(r => r.present).length;
-  }, [attendData, attendDk]);
+    const scopeIds = new Set(dashEmployees.map(e => e.id));
+    return Object.entries(dayData).filter(([id, r]) => scopeIds.has(id) && r.present).length;
+  }, [attendData, attendDk, dashEmployees]);
 
   // ── derived ──
   const totalPrevWorking = vendorStats.reduce((a, s) => a + s.prevWorking, 0);
@@ -1804,7 +1815,7 @@ function Dashboard() {
                     </td>
                     <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{s.working}</td>
                     {GROUP_COLS.map(gc => {
-                      const cnt = s.groups[gc.label] ?? 0;
+                      const cnt = s.groupPresent?.[gc.label] ?? 0;
                       return (
                         <td key={gc.label} className="px-3 py-2.5 text-center text-sm">
                           {cnt > 0 ? <span className="text-slate-700">{cnt}</span> : <span className="text-slate-300">—</span>}
@@ -1879,7 +1890,7 @@ function Dashboard() {
                     <td className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wide">合計</td>
                     <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-600">{total.working}</td>
                     {GROUP_COLS.map(gc => {
-                      const cnt = vendorStats.reduce((a, s) => a + (s.groups[gc.label] ?? 0), 0);
+                      const cnt = vendorStats.reduce((a, s) => a + (s.groupPresent?.[gc.label] ?? 0), 0);
                       return (
                         <td key={gc.label} className="px-3 py-2.5 text-center text-sm font-bold">
                           {cnt > 0 ? <span className="text-slate-600">{cnt}</span> : <span className="text-slate-300">—</span>}
