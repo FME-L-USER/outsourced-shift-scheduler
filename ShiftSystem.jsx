@@ -4093,8 +4093,16 @@ function Attendance() {
         });
       if (Object.keys(newExtras).length > 0)
         setExtras(prev => ({ ...prev, ...newExtras }));
+      // 非 vendor 同時更新員工/廠商/倉別等維護資料（儀表板在職人數來源）
+      if (!isVendor) {
+        if (Array.isArray(data?.employees) && data.employees.length > 0) setEmployees(data.employees);
+        if (Array.isArray(data?.vendors)   && data.vendors.length   > 0) setVendors(data.vendors);
+        if (Array.isArray(data?.warehouses)&& data.warehouses.length> 0) setWarehouses(data.warehouses);
+        if (data?.schedule && Object.keys(data.schedule).length > 0)     setSchedule(data.schedule);
+        if (data?.attendSettings) setAttendSettings(data.attendSettings);
+      }
       setLastSync(new Date());
-      if (!silent) toast('出勤資料已同步', 'success');
+      if (!silent) toast('資料已同步', 'success');
     } catch (_) {
       if (!silent) toast('同步失敗，請檢查網路', 'error');
     } finally {
