@@ -6517,6 +6517,7 @@ function AccountManagement() {
   const [apiUsers,       setApiUsers]       = useState([]);
   const [apiUsersLoaded, setApiUsersLoaded] = useState(false);
   const [savingWhFor,    setSavingWhFor]    = useState(null);
+  const [savingRoleFor,  setSavingRoleFor]  = useState(null);
 
   useEffect(() => {
     if (!currentUser?._apiAuth) return;
@@ -6527,6 +6528,31 @@ function AccountManagement() {
       .then(data => { if (Array.isArray(data)) { setApiUsers(data); setApiUsersLoaded(true); } })
       .catch(() => {});
   }, [currentUser]);
+
+  const updateApiUserRole = async (userId, newRole) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setSavingRoleFor(userId);
+    try {
+      const r = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+        toast(`${updated.username} 已${newRole === 'admin' ? '升級為管理員' : '降級為日翊'}`, 'success');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast(d.error ?? '操作失敗', 'error');
+      }
+    } catch {
+      toast('操作失敗', 'error');
+    } finally {
+      setSavingRoleFor(null);
+    }
+  };
 
   const updateApiUserWh = async (userId, newWh) => {
     const token = localStorage.getItem(JWT_KEY);
@@ -6894,6 +6920,25 @@ function AccountManagement() {
                   })}
                   {u.role === ROLES.ADMIN && <span className="text-xs text-slate-400 italic">管理員可使用全部倉別</span>}
                   {savingWhFor === u.id && <span className="text-xs text-slate-400">儲存中…</span>}
+                </div>
+                {/* 角色升降級 */}
+                <div className="shrink-0 flex items-center gap-2">
+                  {savingRoleFor === u.id
+                    ? <span className="text-xs text-slate-400">處理中…</span>
+                    : u.role === ROLES.AREA
+                      ? <button
+                          onClick={() => updateApiUserRole(u.id, 'admin')}
+                          className="px-2.5 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+                          升級為管理員
+                        </button>
+                      : u.role === ROLES.ADMIN && u.username !== 'grace'
+                        ? <button
+                            onClick={() => updateApiUserRole(u.id, 'area')}
+                            className="px-2.5 py-1 text-xs border border-slate-300 text-slate-500 rounded-lg hover:bg-slate-100 transition-colors">
+                            降為日翊
+                          </button>
+                        : null
+                  }
                 </div>
               </div>
             ))}
