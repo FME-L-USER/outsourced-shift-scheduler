@@ -1420,16 +1420,21 @@ function Dashboard() {
       const codePW = schedule[emp.id]?.[dkPW] ?? 'V';
       if (codePW === 'V') map[emp.vendor].prevWorking++;
     });
-    // 長期到班：掃描 attendData，不限於 dashEmployees 範圍（避免 scope/status 差異導致漏計）
+    // 長期到班：以 dashEmployees 為基準建立 id→vendor/group 查找表，確保型別一致
+    const dashEmpVendor = {};
+    const dashEmpGroup  = {};
+    dashEmployees.forEach(e => {
+      const k = String(e.id);
+      dashEmpVendor[k] = e.vendor;
+      dashEmpGroup[k]  = e.group ?? '';
+    });
     const dayAttend = attendData[attendDkPad] ?? {};
     Object.entries(dayAttend).forEach(([empId, rec]) => {
       if (!rec?.present) return;
-      const emp = employees.find(e => e.id === empId);
-      if (!emp?.vendor) return;
-      const v = emp.vendor;
-      if (!map[v]) return; // 廠商不在 dashEmployees 範圍，略過
+      const v = dashEmpVendor[empId];
+      if (!v || !map[v]) return;
       map[v].longPresent++;
-      const g = emp.group ?? '';
+      const g = dashEmpGroup[empId];
       GROUP_COLS.forEach(gc => {
         if (gc.match(g)) map[v].groupPresent[gc.label]++;
       });
