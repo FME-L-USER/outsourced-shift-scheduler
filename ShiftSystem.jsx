@@ -1760,6 +1760,23 @@ function Dashboard() {
 
       </div>
 
+      {/* ── Vendor attendance rate chart ── */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+        <div className="px-5 pt-4 pb-0">
+          <div className="text-sm font-bold text-slate-800">各廠商到班率（{dashMonth}/{safeDay}{isToday ? ' · 今日' : ''}）</div>
+          <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-3">
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm" style={{background:'#0d9488'}} /> 長期到班率</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm" style={{background:'#f97316'}} /> 臨時到班率</span>
+          </div>
+        </div>
+        <div className="px-5 pb-4 pt-3">
+          {!hasAttendData && (
+            <div className="flex items-center justify-center h-20 text-xs text-slate-400">尚未填寫點名</div>
+          )}
+          {hasAttendData && <canvas ref={barRef} style={{width:'100%',display:'block'}} />}
+        </div>
+      </div>
+
       {/* ── Vendor detail table ── */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="px-5 pt-4 pb-3">
