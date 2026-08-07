@@ -1565,13 +1565,17 @@ function Dashboard() {
         // long-term rate bar (teal)
         const longRate = s.working > 0 ? s.longPresent / s.working : 0;
         const longW = longRate * cW;
-        ctx.fillStyle = '#0d9488';
-        roundRect(ctx, pL, cy - bH - gap/2, longW, bH, 3); ctx.fill();
+        if (longW > 0) {
+          ctx.fillStyle = '#0d9488';
+          roundRect(ctx, pL, cy - bH - gap/2, longW, bH, 3); ctx.fill();
+        }
         // temp rate bar (orange)
         const tempRate = s.tempExpected > 0 ? s.tempPresent / s.tempExpected : 0;
         const tempW = tempRate * cW;
-        ctx.fillStyle = '#f97316';
-        roundRect(ctx, pL, cy + gap/2, tempW, bH, 3); ctx.fill();
+        if (tempW > 0) {
+          ctx.fillStyle = '#f97316';
+          roundRect(ctx, pL, cy + gap/2, tempW, bH, 3); ctx.fill();
+        }
         // labels
         ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'left';
         if (s.working > 0) {
