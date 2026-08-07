@@ -595,10 +595,23 @@ app.post('/api/auth/vendor-register', requireAuth, requireAdmin, async (req, res
 });
 
 // ── POST /api/auth/vendor-login ──────────────────────────
-// 廠商幹部以本地 pbkdf2 密碼登入，伺服器端驗證後發 JWT
+// 廠商幹部登入：支援兩種模式
+//   password     — 明文密碼，server 以 PBKDF2 驗證（DB 帳號直接登入）
+//   passwordHash — 前端已雜湊的完整字串，直接比對（舊模式向後相容）
+const verifyPbkdf2 = (plain, stored) => new Promise((resolve, reject) => {
+  if (!stored || !stored.startsWith('pbkdf2:')) return resolve(false);
+  const [, saltHex, hashHex] = stored.split(':');
+  const salt = Buffer.from(saltHex, 'hex');
+  nodeCrypto.pbkdf2(plain, salt, 200000, 32, 'sha256', (err, derived) => {
+    if (err) return reject(err);
+    resolve(derived.toString('hex') === hashHex);
+  });
+});
+
 app.post('/api/auth/vendor-login', async (req, res) => {
-  const { username, passwordHash } = req.body ?? {};
-  if (!username || !passwordHash) return res.status(400).json({ error: '缺少帳號或密碼' });
+  const { username, password, passwordHash } = req.body ?? {};
+  if (!username || (!password && !passwordHash))
+    return res.status(400).json({ error: '缺少帳號或密碼' });
   try {
     const { rows } = await pool.query(
       `SELECT * FROM users WHERE username=$1 AND role='vendor' AND approved=true`, [username]
@@ -608,8 +621,13 @@ app.post('/api/auth/vendor-login', async (req, res) => {
     const stored = user.password_hash;
     if (!stored || !stored.startsWith('pbkdf2:'))
       return res.status(401).json({ error: '密碼格式不符，請重新設定' });
-    // passwordHash 是前端已完成 PBKDF2 的完整字串（pbkdf2:saltHex:hashHex），直接比對
-    if (stored !== passwordHash) return res.status(401).json({ error: '密碼錯誤' });
+    let ok = false;
+    if (password) {
+      ok = await verifyPbkdf2(password, stored);
+    } else {
+      ok = (stored === passwordHash);
+    }
+    if (!ok) return res.status(401).json({ error: '密碼錯誤' });
     await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
     return res.json({ token: issueToken(user), user: safeUser(user) });
   } catch (e) {

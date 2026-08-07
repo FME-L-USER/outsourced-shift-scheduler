@@ -756,9 +756,31 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       }
     }
 
-    // 廠商幹部：本地帳號驗證
+    // 廠商幹部：本地帳號驗證；若本地找不到則直接向後端驗證（DB 帳號）
     const candidate = users.find(u => u.username === username && u.role === ROLES.VENDOR);
     if (!candidate) {
+      // 嘗試透過後端以明文密碼驗證（帳號僅存在 DB，未同步到本地 state）
+      try {
+        const dr = await fetch('/api/auth/vendor-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (dr.ok) {
+          const dd = await dr.json();
+          clearLock(uKey);
+          const apiRole = ROLES.VENDOR;
+          onLogin({
+            id: `api_${dd.user.id}`, username: dd.user.username,
+            name: dd.user.name || dd.user.username,
+            role: apiRole, vendors: dd.user.vendors ?? [],
+            permissions: getDefaultPermissions(apiRole),
+            allowedWarehouses: dd.user.allowedWarehouses || [],
+            approved: true, _apiAuth: true,
+          }, dd.token);
+          return;
+        }
+      } catch (_) {}
       const r = recordFail(uKey);
       setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
             return;
