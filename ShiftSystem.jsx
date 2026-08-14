@@ -7255,6 +7255,11 @@ export default function App() {
           shiftTypesByWh:     localShiftTypesByWh,
           shiftCodeRows:      LS.get('sms_shiftcode_rows', []),
           shiftCodeHeaders:   LS.get('sms_shiftcode_headers', []),
+          users: (() => {
+            const saved = LS.get('sms_users', []);
+            const pwds  = LS.get('sms_user_pwds', {});
+            return saved.map(u => ({ ...u, password: pwds[u.id] ?? u.password ?? '' }));
+          })(),
         }),
       }).catch(e => console.warn('本地回寫失敗:', e.message));
     };
@@ -7346,6 +7351,7 @@ export default function App() {
         if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
         if (state?.attendSettings)                     setAttendSettings(state.attendSettings);
+        if (Array.isArray(state?.users) && state.users.length > 0) setUsers(state.users);
 
         // 本地員工數多於 DB 且 DB 有基本資料（vendors/warehouses 存在）→ 可能有尚未入庫的匯入資料，回寫 DB
         const dbHasBaseData = (state?.vendors?.length > 0) || (state?.warehouses?.length > 0);
@@ -7361,7 +7367,7 @@ export default function App() {
     }
   }, [setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
-      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders, setAttendSettings]);
+      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders, setAttendSettings, setUsers]);
 
   // ── 背景同步核心（visibilitychange & 定期輪詢共用）──
   const syncFromServerBackground = useCallback(() => {
@@ -7409,11 +7415,12 @@ export default function App() {
           if (state.extras)      setExtras(state.extras);
           if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
           if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+          if (Array.isArray(state.users) && state.users.length > 0) setUsers(state.users);
         }).catch(() => {});
     }
   }, [currentUser, setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
-      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
+      setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders, setUsers]);
 
   // ── 切回前景自動同步 ──
   useEffect(() => {
@@ -7483,6 +7490,7 @@ export default function App() {
     employees, vendors, warehouses, schedule, systemLocked,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
+    users,
   };
 
   // ── 手動立即存檔（讀 latestStateRef，無 stale closure 問題） ──
@@ -7509,6 +7517,7 @@ export default function App() {
       employees, vendors, warehouses, schedule, systemLocked,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
+      users,
     });
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
     if (forceSaveRef.current) {
@@ -7526,7 +7535,7 @@ export default function App() {
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
-      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings]);
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users]);
 
   // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor 皆適用）──
   const vendorAttendDebRef = useRef(null);
