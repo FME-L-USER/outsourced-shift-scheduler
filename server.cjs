@@ -733,6 +733,43 @@ app.put('/api/attendance', requireAuth, async (req, res) => {
 // ── GET /api/health ───────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// ── POST /api/auth/worker-login ──────────────────────────
+// 委外人員登入：從 app_state 讀取 workerPwds 驗證
+//   首次登入（無存 hash）→ 密碼必須等於員編
+//   已設密碼 → PBKDF2 驗證
+app.post('/api/auth/worker-login', async (req, res) => {
+  const { empId, password } = req.body ?? {};
+  if (!empId || !password)
+    return res.status(400).json({ error: '缺少員編或密碼' });
+  try {
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const data = rows[0]?.data ?? {};
+    const employees  = data.employees  ?? [];
+    const workerPwds = data.workerPwds ?? {};
+
+    const emp = employees.find(e => String(e.empId ?? '').trim() === String(empId).trim());
+    if (!emp) return res.status(401).json({ error: '員工編號不存在' });
+
+    const stored = workerPwds[emp.empId];
+    let ok = false;
+    if (stored) {
+      ok = await verifyPbkdf2(password, stored);
+    } else {
+      // 首次登入：密碼必須等於員編
+      ok = (password === String(emp.empId).trim());
+    }
+    if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+    res.json({
+      ok: true,
+      firstLogin: !stored,
+      emp: { id: emp.id, empId: emp.empId, name: emp.name, vendor: emp.vendor ?? '' },
+    });
+  } catch (e) {
+    console.error('worker-login error:', e.message);
+    return res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 // ── GET /api/workers (公開，供委外人員登入驗證用) ─────────
 // 回傳 id / empId / name / vendor，不含排班/薪資等敏感資料
 app.get('/api/workers', async (_req, res) => {

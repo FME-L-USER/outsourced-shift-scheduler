@@ -691,6 +691,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       }
       const storedPwd = workerPwds[emp.empId];
       let pwdOk = false;
+      let isFirstLogin = !storedPwd;
       if (storedPwd) {
         pwdOk = await verifyPwd(password, storedPwd);
       } else {
@@ -698,6 +699,31 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         pwdOk = (password === emp.empId);
       }
       if (!pwdOk) {
+        // 本地驗證失敗（可能此裝置 workerPwds 尚未同步）→ 嘗試後端
+        try {
+          const wr = await fetch('/api/auth/worker-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ empId: emp.empId, password }),
+          });
+          if (wr.ok) {
+            const wd = await wr.json();
+            clearLock(uKey);
+            onLogin({
+              id: 'worker_' + wd.emp.id,
+              username: wd.emp.empId,
+              password,
+              name: wd.emp.name,
+              role: ROLES.WORKER,
+              vendors: wd.emp.vendor ? [wd.emp.vendor] : [],
+              empId: wd.emp.empId,
+              employeeId: wd.emp.id,
+              approved: true,
+              mustChangePassword: wd.firstLogin,
+            });
+            return;
+          }
+        } catch (_) {}
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
                 return;
@@ -713,7 +739,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         empId: emp.empId,
         employeeId: emp.id,
         approved: true,
-        mustChangePassword: !storedPwd,  // 首次登入強制改密碼
+        mustChangePassword: isFirstLogin,
       });
       return;
     }
