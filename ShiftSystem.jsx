@@ -4435,7 +4435,7 @@ function Attendance() {
   };
 
   // ── 點名分頁
-  const AttendPane = () => (
+  const attendPane = (
     <div className="space-y-4">
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
         <div>
@@ -4930,7 +4930,7 @@ function Attendance() {
       </div>
 
       <div>
-        {subTab === 'attend' && <AttendPane />}
+        {subTab === 'attend' && attendPane}
         {subTab === 'stats'  && <StatsPane />}
         {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} groupFilter={groupFilter} />}
         {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
