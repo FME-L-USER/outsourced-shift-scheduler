@@ -6498,6 +6498,14 @@ function AccountManagement() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [refreshApiUsers]);
 
+  // 定期輪詢（30 秒），確保停留在帳號管理頁也能同步其他裝置的角色變更
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshApiUsers();
+    }, 30000);
+    return () => clearInterval(id);
+  }, [refreshApiUsers]);
+
   const updateApiUserRole = async (userId, newRole) => {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
@@ -7355,62 +7363,76 @@ export default function App() {
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
       setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders, setAttendSettings]);
 
-  // ── 切回前景自動同步（另一位同事更新後，本機切回分頁即可看到最新資料）──
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (!serverSyncedRef.current) return;
-      const token = localStorage.getItem(JWT_KEY);
-      if (!token) return;
-      const role = currentUser?.role;
-      const applySchedule = s => {
-        if (!s) return;
-        if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
-        if (s.vendors?.length > 0)    setVendors(s.vendors);
-        if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
-        if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
-        if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
-        if (s.openHolidays)            setOpenHolidays(s.openHolidays);
-        if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
-        if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
-        if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
-        if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
-        if (s.attendSettings)                setAttendSettings(s.attendSettings);
-      };
-      if (role === ROLES.WORKER) {
-        fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
-      } else if (role === ROLES.VENDOR) {
-        fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
-        fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.json() : null)
-          .then(att => {
-            if (!att) return;
-            // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
-            if (att.attendData && Object.keys(att.attendData).length > 0)
-              setAttendData(prev => ({ ...att.attendData, ...prev }));
-            if (att.extras    && Object.keys(att.extras).length > 0)
-              setExtras(prev => ({ ...att.extras, ...prev }));
-          }).catch(() => {});
-      } else {
-        fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.json() : null)
-          .then(state => {
-            if (!state) return;
-            applySchedule(state);
-            if (state.attendData)  setAttendData(state.attendData);
-            if (state.extras)      setExtras(state.extras);
-            if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
-            if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
-          }).catch(() => {});
-      }
+  // ── 背景同步核心（visibilitychange & 定期輪詢共用）──
+  const syncFromServerBackground = useCallback(() => {
+    if (!serverSyncedRef.current) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    const role = currentUser?.role;
+    const applySchedule = s => {
+      if (!s) return;
+      if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
+      if (s.vendors?.length > 0)    setVendors(s.vendors);
+      if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
+      if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+      if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
+      if (s.openHolidays)            setOpenHolidays(s.openHolidays);
+      if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+      if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+      if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
+      if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
+      if (s.attendSettings)                setAttendSettings(s.attendSettings);
     };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    if (role === ROLES.WORKER) {
+      fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+    } else if (role === ROLES.VENDOR) {
+      fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+      fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(att => {
+          if (!att) return;
+          // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
+          if (att.attendData && Object.keys(att.attendData).length > 0)
+            setAttendData(prev => ({ ...att.attendData, ...prev }));
+          if (att.extras    && Object.keys(att.extras).length > 0)
+            setExtras(prev => ({ ...att.extras, ...prev }));
+        }).catch(() => {});
+    } else {
+      fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(state => {
+          if (!state) return;
+          applySchedule(state);
+          if (state.attendData)  setAttendData(state.attendData);
+          if (state.extras)      setExtras(state.extras);
+          if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
+          if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
+        }).catch(() => {});
+    }
   }, [currentUser, setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
       setAttendData, setExtras, setShiftTypesByWh, setShiftCodeRows, setShiftCodeHeaders]);
+
+  // ── 切回前景自動同步 ──
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      syncFromServerBackground();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [syncFromServerBackground]);
+
+  // ── 定期背景輪詢（30 秒）：確保長時間停留在同一分頁也能同步其他裝置的變更 ──
+  useEffect(() => {
+    if (!currentUser) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') syncFromServerBackground();
+    }, 30000);
+    return () => clearInterval(id);
+  }, [currentUser, syncFromServerBackground]);
 
   // ── Persist to localStorage ──
   const storageWarn = useCallback(() => {
