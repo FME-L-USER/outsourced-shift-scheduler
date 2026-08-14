@@ -609,6 +609,14 @@ const verifyPbkdf2 = (plain, stored) => new Promise((resolve, reject) => {
   });
 });
 
+const hashPbkdf2 = (plain) => new Promise((resolve, reject) => {
+  const salt = nodeCrypto.randomBytes(16);
+  nodeCrypto.pbkdf2(plain, salt, 200000, 32, 'sha256', (err, derived) => {
+    if (err) return reject(err);
+    resolve(`pbkdf2:${salt.toString('hex')}:${derived.toString('hex')}`);
+  });
+});
+
 app.post('/api/auth/vendor-login', async (req, res) => {
   const { username, password, passwordHash } = req.body ?? {};
   if (!username || (!password && !passwordHash))
@@ -617,20 +625,48 @@ app.post('/api/auth/vendor-login', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT * FROM users WHERE username=$1 AND role='vendor' AND approved=true`, [username]
     );
-    if (!rows[0]) return res.status(401).json({ error: '帳號不存在' });
-    const user = rows[0];
+    let user = rows[0];
+    if (!user) {
+      // 帳號不在 users 表：嘗試從 app_state 找（升級流程未成功寫入 DB 的情況）
+      const { rows: stateRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+      const stateUsers = stateRows[0]?.data?.users ?? [];
+      const su = stateUsers.find(u => String(u.username ?? '').trim() === String(username).trim() && u.role === 'vendor');
+      if (!su) return res.status(401).json({ error: '帳號不存在' });
+      // 找到後自動補建 DB 記錄
+      const defaultHash = await hashPbkdf2(username);
+      await pool.query(
+        `INSERT INTO users (id, username, password_hash, role, display_name, vendors, allowed_warehouses, approved, created_at)
+         VALUES ($1, $2, $3, 'vendor', $4, $5, $6, true, NOW())
+         ON CONFLICT (username) DO UPDATE
+           SET password_hash=$3, role='vendor', display_name=$4,
+               vendors=$5, allowed_warehouses=$6, approved=true`,
+        [su.id || su.username, su.username, defaultHash, su.name || su.username,
+         su.vendors || [], su.allowedWarehouses || []]
+      );
+      const { rows: newRows } = await pool.query('SELECT * FROM users WHERE username=$1', [username]);
+      user = newRows[0];
+      if (!user) return res.status(500).json({ error: '帳號建立失敗' });
+    }
     const stored = user.password_hash;
-    if (!stored || !stored.startsWith('pbkdf2:'))
-      return res.status(401).json({ error: '密碼格式不符，請重新設定' });
     let ok = false;
-    if (password) {
+    let firstLogin = false;
+    if (!stored || !stored.startsWith('pbkdf2:')) {
+      // 無密碼設定（帳號升級但未設密碼）：允許用帳號名稱當首次登入密碼
+      ok = (password && password === user.username);
+      firstLogin = true;
+    } else if (password) {
       ok = await verifyPbkdf2(password, stored);
     } else {
       ok = (stored === passwordHash);
     }
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
-    await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
-    return res.json({ token: issueToken(user), user: safeUser(user) });
+    if (firstLogin && password) {
+      const newHash = await hashPbkdf2(password);
+      await pool.query('UPDATE users SET password_hash=$1, last_login=NOW() WHERE id=$2', [newHash, user.id]);
+    } else {
+      await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
+    }
+    return res.json({ token: issueToken(user), user: safeUser(user), mustChangePassword: firstLogin });
   } catch (e) {
     console.error('vendor-login error:', e.message);
     return res.status(500).json({ error: '伺服器錯誤' });

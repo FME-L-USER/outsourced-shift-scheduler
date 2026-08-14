@@ -802,7 +802,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             role: apiRole, vendors: dd.user.vendors ?? [],
             permissions: getDefaultPermissions(apiRole),
             allowedWarehouses: dd.user.allowedWarehouses || [],
-            approved: true, _apiAuth: true,
+            approved: true, _apiAuth: true, mustChangePassword: !!dd.mustChangePassword,
           }, dd.token);
           return;
         }
@@ -829,7 +829,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             role: ROLES.VENDOR, vendors: dd.user.vendors ?? [],
             permissions: getDefaultPermissions(ROLES.VENDOR),
             allowedWarehouses: dd.user.allowedWarehouses || [],
-            approved: true, _apiAuth: true,
+            approved: true, _apiAuth: true, mustChangePassword: !!dd.mustChangePassword,
           }, dd.token);
           return;
         }
