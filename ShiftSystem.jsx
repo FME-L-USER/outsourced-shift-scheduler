@@ -7287,7 +7287,7 @@ export default function App() {
       const isWorker = currentUser?.role === ROLES.WORKER;
 
       if (isWorker) {
-        // worker 只能讀取班表資料（GET /api/schedule）
+        // worker 只能讀取班表資料（GET /api/schedule），唯讀不觸發 auto-save
         const r = await fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } });
         if (r.ok) {
           const s = await r.json();
@@ -7302,8 +7302,9 @@ export default function App() {
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
         }
+        // worker 不寫入 DB，不啟用 auto-save
       } else if (isVendor) {
-        // vendor 讀取班表 + 出勤資料
+        // vendor 讀取班表 + 出勤資料，不寫入 /api/state
         const [rs, ra] = await Promise.all([
           fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } }),
           fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } }),
@@ -7326,11 +7327,14 @@ export default function App() {
           if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
           if (att?.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
         }
+        // vendor auto-save 只涉及 /api/attendance，允許啟用
+        serverSyncedRef.current = true;
       } else {
         const r = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
-        if (!r.ok) return;
+        // HTTP 失敗（503 等）：不啟用 auto-save，避免種子/空資料覆蓋 DB
+        if (!r.ok) { console.warn('loadServerState: HTTP', r.status); return; }
         const state = await r.json();
-        // server 回傳 null 代表 DB 初始化尚未完成或連線暫時失敗，不繼續任何讀寫操作
+        // server 回傳 null 代表 DB 尚未初始化，不啟用 auto-save
         if (!state) return;
 
         const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
@@ -7371,11 +7375,12 @@ export default function App() {
         if (dbHasBaseData && localEmps.length > serverEmps.length) writeLocalToServer();
         // DB 無員工且本地有員工 → 寫回 DB（但 DB 必須已有 vendors/warehouses，否則本地資料不完整不寫回）
         else if (dbHasBaseData && serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
+        // 成功讀取 DB 狀態後才啟用 auto-save
+        else serverSyncedRef.current = true;
       }
     } catch (e) {
+      // 例外（網路中斷等）：不啟用 auto-save
       console.warn('無法從伺服器載入狀態:', e.message);
-    } finally {
-      serverSyncedRef.current = true;
     }
   }, [setEmployees, setVendors, setWarehouses, setSchedule, setSystemLocked,
       setScheduleRange, setOpenHolidays, setVendorHolidayOpen, setVendorCompanyNames,
