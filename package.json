@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "dompurify": "^3.4.13",
     "express": "^4.21.0",
     "file-saver": "^2.0.5",
     "html2pdf.js": "^0.14.0",
