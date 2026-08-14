@@ -787,6 +787,27 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     }
     const ok = await verifyPwd(password, candidate.password);
     if (!ok) {
+      // 本地 hash 驗證失敗（可能密碼存在 DB、或 sync 後 hash 不完整）→ 再嘗試後端
+      try {
+        const dr = await fetch('/api/auth/vendor-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (dr.ok) {
+          const dd = await dr.json();
+          clearLock(uKey);
+          onLogin({
+            id: `api_${dd.user.id}`, username: dd.user.username,
+            name: dd.user.name || dd.user.username,
+            role: ROLES.VENDOR, vendors: dd.user.vendors ?? [],
+            permissions: getDefaultPermissions(ROLES.VENDOR),
+            allowedWarehouses: dd.user.allowedWarehouses || [],
+            approved: true, _apiAuth: true,
+          }, dd.token);
+          return;
+        }
+      } catch (_) {}
       const r = recordFail(uKey);
       setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `帳號或密碼錯誤（已失敗 ${r.count}/5 次）`);
             return;
