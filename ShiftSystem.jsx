@@ -6479,7 +6479,7 @@ function AccountManagement() {
   const [savingWhFor,    setSavingWhFor]    = useState(null);
   const [savingRoleFor,  setSavingRoleFor]  = useState(null);
 
-  useEffect(() => {
+  const refreshApiUsers = useCallback(() => {
     if (!currentUser?._apiAuth) return;
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
@@ -6488,6 +6488,15 @@ function AccountManagement() {
       .then(data => { if (Array.isArray(data)) { setApiUsers(data); setApiUsersLoaded(true); } })
       .catch(() => {});
   }, [currentUser]);
+
+  useEffect(() => { refreshApiUsers(); }, [refreshApiUsers]);
+
+  // 切回前景時重新拉取（跨裝置角色變更同步）
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refreshApiUsers(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshApiUsers]);
 
   const updateApiUserRole = async (userId, newRole) => {
     const token = localStorage.getItem(JWT_KEY);
