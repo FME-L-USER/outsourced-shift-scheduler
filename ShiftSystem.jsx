@@ -4098,6 +4098,265 @@ function ReportPane({ generateReport, groupOptions, attendDate, groupFilter }) {
   );
 }
 
+function ImportPane({ todayStr, groupFilter }) {
+  const { selectedGroup, setExtras, attendSettings } = useApp();
+  const toast = useToast();
+  const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
+  const activeGroup = selectedGroup || groupFilter;
+
+  const [importStart, setImportStart] = useState(todayStr);
+  const [importEnd,   setImportEnd]   = useState(todayStr);
+  const [parsedRows,  setParsedRows]  = useState(null);
+  const [fileName,    setFileName]    = useState('');
+  const [importing,   setImporting]   = useState(false);
+
+  const parseRocDate = (raw) => {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    if (s.includes('/')) {
+      const parts = s.split('/');
+      if (parts.length === 3) {
+        const [y, m, d] = parts.map(Number);
+        const wy = y < 1000 ? y + 1911 : y;
+        return `${wy}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      }
+    }
+    if (!isNaN(Number(s))) {
+      const serial = Number(s);
+      const epoch = new Date(1899, 11, 30);
+      const dt = new Date(epoch.getTime() + serial * 86400000);
+      return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    }
+    return null;
+  };
+
+  const findColIdx = (headers, keywords) =>
+    headers.findIndex(h => keywords.some(k => String(h ?? '').includes(k)));
+
+  const handleFile = (e) => {
+    if (!activeGroup) { toast('請先在上方選擇組別後再上傳', 'error'); e.target.value = ''; return; }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setParsedRows(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (rows.length < 2) { toast('檔案無資料', 'error'); return; }
+        let headerIdx = 0;
+        for (let i = 0; i < Math.min(5, rows.length); i++) {
+          const r = rows[i].map(String);
+          if (r.some(c => ['報到日期','報名狀態','姓名','名字','廠商','公司'].some(k => c.includes(k)))) {
+            headerIdx = i; break;
+          }
+        }
+        const headers = rows[headerIdx].map(String);
+        const dateCol   = findColIdx(headers, ['報到日期']);
+        const statusCol = findColIdx(headers, ['報名狀態']);
+        const nameCol   = findColIdx(headers, ['姓名', '名字']);
+        const vendorCol = findColIdx(headers, ['廠商', '公司']);
+        if (dateCol < 0 || nameCol < 0) { toast('找不到必要欄位（報到日期、姓名）', 'error'); return; }
+        const result = [];
+        for (let i = headerIdx + 1; i < rows.length; i++) {
+          const row = rows[i];
+          const dateStr = parseRocDate(row[dateCol]);
+          if (!dateStr) continue;
+          if (dateStr < importStart || dateStr > importEnd) continue;
+          const status = statusCol >= 0 ? String(row[statusCol] ?? '').trim() : '成功';
+          if (status !== '成功') continue;
+          const name = String(row[nameCol] ?? '').trim();
+          const vendor = vendorCol >= 0 ? String(row[vendorCol] ?? '').trim() : '';
+          if (!name) continue;
+          result.push({ date: dateStr, name, vendor });
+        }
+        setParsedRows(result);
+        if (result.length === 0) toast('符合條件的資料為 0 筆，請確認狀態欄位是否標示「成功」', 'error');
+        else toast(`成功解析 ${result.length} 筆資料`, 'success');
+      } catch (err) { toast('解析失敗：' + err.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  const handleImport = () => {
+    if (!activeGroup) { toast('請先在上方選擇組別', 'error'); return; }
+    if (!parsedRows || parsedRows.length === 0) { toast('無可匯入資料', 'error'); return; }
+    setImporting(true);
+    setExtras(prev => {
+      const next = { ...prev };
+      for (let dk = importStart; dk <= importEnd; ) {
+        if (next[dk]) next[dk] = next[dk].filter(e => !e._isImport);
+        const d = new Date(dk); d.setDate(d.getDate() + 1);
+        dk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      }
+      parsedRows.forEach(r => {
+        if (!next[r.date]) next[r.date] = [];
+        next[r.date].push({
+          id: 'imp_' + r.date + '_' + r.name + '_' + Math.random().toString(36).slice(2,6),
+          name: r.name, vendor: r.vendor, group: activeGroup, note: '臨時人員',
+          present: false, lateEarly: defaultStatus, timeNote: '', absType: '', _isImport: true,
+        });
+      });
+      return next;
+    });
+    toast(`已匯入 ${parsedRows.length} 筆臨時人員`, 'success');
+    setParsedRows(null); setFileName(''); setImporting(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+        <h3 className="font-semibold text-slate-700 mb-1">匯入派工表</h3>
+        <p className="text-xs text-slate-400 mb-5">
+          支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。
+        </p>
+        <div className="flex gap-3 flex-wrap items-end">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">匯入起日</label>
+            <input type="date" value={importStart} onChange={e => setImportStart(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">匯入迄日</label>
+            <input type="date" value={importEnd} onChange={e => setImportEnd(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-teal-50 text-blue-700 border border-teal-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          <span>{activeGroup ? '✅' : '⚠️'}</span>
+          <span>{activeGroup ? `匯入組別：${activeGroup}` : '請先在上方篩選列選擇組別'}</span>
+        </div>
+        <div className="mt-3">
+          <label className="block text-xs font-medium text-slate-600 mb-2">上傳派工表檔案</label>
+          <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-4 transition-colors
+            ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-teal-50 cursor-pointer' : 'border-slate-200 bg-[#F5F2EC] cursor-not-allowed opacity-60'}`}>
+            <span className="text-2xl">📂</span>
+            <div>
+              <div className="text-sm font-medium text-slate-700">{fileName ? fileName : '點擊選擇 Excel 檔案'}</div>
+              <div className="text-xs text-slate-400 mt-0.5">支援 .xlsx</div>
+            </div>
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+          </label>
+        </div>
+      </div>
+      {parsedRows !== null && (
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-slate-700">解析結果預覽</h3>
+            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${parsedRows.length > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+              共 {parsedRows.length} 筆
+            </span>
+          </div>
+          {parsedRows.length > 0 && (
+            <>
+              <div className="overflow-x-auto rounded-lg border border-slate-100 mb-4 max-h-60">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#F5F2EC] sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-slate-500 font-medium">報到日期</th>
+                      <th className="px-3 py-2 text-left text-slate-500 font-medium">姓名</th>
+                      <th className="px-3 py-2 text-left text-slate-500 font-medium">廠商</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {parsedRows.slice(0, 50).map((r, i) => (
+                      <tr key={i} className="hover:bg-[#F5F2EC]">
+                        <td className="px-3 py-2 text-slate-600">{r.date}</td>
+                        <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
+                        <td className="px-3 py-2 text-slate-500">{r.vendor || '—'}</td>
+                      </tr>
+                    ))}
+                    {parsedRows.length > 50 && (
+                      <tr><td colSpan={3} className="px-3 py-2 text-center text-slate-400">... 僅顯示前 50 筆</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
+                ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
+              </div>
+              <button onClick={handleImport} disabled={importing}
+                className="w-full py-2.5 bg-[#1a2f5e] hover:bg-[#1e3870] disabled:opacity-50 text-white rounded-xl font-medium text-sm">
+                ✅ 確認匯入 {parsedRows.length} 筆臨時人員
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 text-xs text-slate-500 space-y-1">
+        <div className="font-medium text-slate-600 mb-2">📋 必備欄位說明</div>
+        <div>• <span className="font-medium">報到日期</span>：民國年格式（113/07/15）自動轉換西元年</div>
+        <div>• <span className="font-medium">報名狀態</span>：只匯入標示「成功」的資料</div>
+        <div>• <span className="font-medium">姓名／名字</span>：人員名稱（必填）</div>
+        <div>• <span className="font-medium">廠商／公司</span>：派工單位</div>
+      </div>
+    </div>
+  );
+}
+
+function StatsPane({ attendDate, groupFilter, totalCount, presentCount, absentCount, attendRate, groupOptions, exportStats }) {
+  const [rDate,  setRDate]  = useState(attendDate);
+  const [rGroup, setRGroup] = useState(groupFilter);
+  return (
+    <div className="space-y-5">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+        <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
+        <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="text-center p-3 bg-[#F5F2EC] rounded-xl">
+            <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
+            <div className="text-xs text-slate-500 mt-1">應到總計</div>
+          </div>
+          <div className="text-center p-3 bg-teal-50 rounded-xl">
+            <div className="text-2xl font-bold text-teal-700">{presentCount}</div>
+            <div className="text-xs text-slate-500 mt-1">實到人數</div>
+          </div>
+          <div className="text-center p-3 bg-rose-50 rounded-xl">
+            <div className="text-2xl font-bold text-rose-500">{absentCount}</div>
+            <div className="text-xs text-slate-500 mt-1">缺勤人數</div>
+          </div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs text-slate-500 mb-1">
+            <span>到班率</span>
+            <span className="font-semibold text-teal-700">{attendRate}%</span>
+          </div>
+          <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+            <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
+          </div>
+        </div>
+      </div>
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+        <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">報表日期</label>
+            <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">報表組別</label>
+            <select value={rGroup} onChange={e => setRGroup(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
+              <option value="">全選</option>
+              {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <button onClick={() => exportStats(rDate, rGroup)}
+            className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
+            📥 下載 Excel
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」與「請假與異常名單」兩個分頁</p>
+      </div>
+    </div>
+  );
+}
+
 function Attendance() {
   const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
   const toast = useToast();
@@ -4605,310 +4864,11 @@ function Attendance() {
     </div>
   );
 
-  // ── 統計分頁
-  const StatsPane = () => {
-    const [rDate, setRDate] = useState(attendDate);
-    const [rGroup, setRGroup] = useState(groupFilter);
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
-          <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="text-center p-3 bg-[#F5F2EC] rounded-xl">
-              <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
-              <div className="text-xs text-slate-500 mt-1">應到總計</div>
-            </div>
-            <div className="text-center p-3 bg-teal-50 rounded-xl">
-              <div className="text-2xl font-bold text-teal-700">{presentCount}</div>
-              <div className="text-xs text-slate-500 mt-1">實到人數</div>
-            </div>
-            <div className="text-center p-3 bg-rose-50 rounded-xl">
-              <div className="text-2xl font-bold text-rose-500">{absentCount}</div>
-              <div className="text-xs text-slate-500 mt-1">缺勤人數</div>
-            </div>
-          </div>
-          <div>
-            <div className="flex justify-between text-xs text-slate-500 mb-1">
-              <span>到班率</span>
-              <span className="font-semibold text-teal-700">{attendRate}%</span>
-            </div>
-            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: `${attendRate}%` }} />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">報表日期</label>
-              <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">報表組別</label>
-              <select value={rGroup} onChange={e => setRGroup(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm min-w-[160px]">
-                <option value="">全選</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <button onClick={() => exportStats(rDate, rGroup)}
-              className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
-              📥 下載 Excel
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」與「請假與異常名單」兩個分頁</p>
-        </div>
-      </div>
-    );
-  };
 
   // (ReportPane is defined at module level)
 
   // (MaintPane is defined at module level)
 
-  // ── 匯入分頁
-  const ImportPane = () => {
-    const [importStart, setImportStart] = useState(todayStr);
-    const [importEnd, setImportEnd] = useState(todayStr);
-    const [parsedRows, setParsedRows] = useState(null); // null = not yet parsed
-    const [fileName, setFileName] = useState('');
-    const [importing, setImporting] = useState(false);
-
-    const parseRocDate = (raw) => {
-      if (raw == null) return null;
-      const s = String(raw).trim();
-      if (!s) return null;
-      if (s.includes('/')) {
-        const parts = s.split('/');
-        if (parts.length === 3) {
-          const [y, m, d] = parts.map(Number);
-          const wy = y < 1000 ? y + 1911 : y;
-          return `${wy}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        }
-      }
-      // Excel serial date number
-      if (!isNaN(Number(s))) {
-        const serial = Number(s);
-        const epoch = new Date(1899, 11, 30);
-        const dt = new Date(epoch.getTime() + serial * 86400000);
-        return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      }
-      return null;
-    };
-
-    const findColIdx = (headers, keywords) =>
-      headers.findIndex(h => keywords.some(k => String(h ?? '').includes(k)));
-
-    // 使用頂部已選的組別（selectedGroup 優先，其次 groupFilter）
-    const activeGroup = selectedGroup || groupFilter;
-
-    const handleFile = (e) => {
-      if (!activeGroup) {
-        toast('請先在上方選擇組別後再上傳', 'error');
-        e.target.value = '';
-        return;
-      }
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setFileName(file.name);
-      setParsedRows(null);
-
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        try {
-          const wb = XLSX.read(ev.target.result, { type: 'array' });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-          if (rows.length < 2) { toast('檔案無資料', 'error'); return; }
-
-          // 尋找標題列（第一列含關鍵字的）
-          let headerIdx = 0;
-          for (let i = 0; i < Math.min(5, rows.length); i++) {
-            const r = rows[i].map(String);
-            if (r.some(c => ['報到日期','報名狀態','姓名','名字','廠商','公司'].some(k => c.includes(k)))) {
-              headerIdx = i; break;
-            }
-          }
-          const headers = rows[headerIdx].map(String);
-          const dateCol   = findColIdx(headers, ['報到日期']);
-          const statusCol = findColIdx(headers, ['報名狀態']);
-          const nameCol   = findColIdx(headers, ['姓名', '名字']);
-          const vendorCol = findColIdx(headers, ['廠商', '公司']);
-
-          if (dateCol < 0 || nameCol < 0) {
-            toast('找不到必要欄位（報到日期、姓名）', 'error'); return;
-          }
-
-          const result = [];
-          for (let i = headerIdx + 1; i < rows.length; i++) {
-            const row = rows[i];
-            const dateStr = parseRocDate(row[dateCol]);
-            if (!dateStr) continue;
-            if (dateStr < importStart || dateStr > importEnd) continue;
-            const status = statusCol >= 0 ? String(row[statusCol] ?? '').trim() : '成功';
-            if (status !== '成功') continue;
-            const name = String(row[nameCol] ?? '').trim();
-            const vendor = vendorCol >= 0 ? String(row[vendorCol] ?? '').trim() : '';
-            if (!name) continue;
-            result.push({ date: dateStr, name, vendor });
-          }
-
-          setParsedRows(result);
-          if (result.length === 0) toast('符合條件的資料為 0 筆，請確認狀態欄位是否標示「成功」', 'error');
-          else toast(`成功解析 ${result.length} 筆資料`, 'success');
-        } catch (err) {
-          toast('解析失敗：' + err.message, 'error');
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      e.target.value = '';
-    };
-
-    const handleImport = () => {
-      if (!activeGroup) { toast('請先在上方選擇組別', 'error'); return; }
-      if (!parsedRows || parsedRows.length === 0) { toast('無可匯入資料', 'error'); return; }
-      setImporting(true);
-
-      setExtras(prev => {
-        const next = { ...prev };
-        // 清除日期區間內舊的匯入臨時資料
-        for (let dk = importStart; dk <= importEnd; ) {
-          if (next[dk]) {
-            next[dk] = next[dk].filter(e => !e._isImport);
-          }
-          const d = new Date(dk);
-          d.setDate(d.getDate() + 1);
-          dk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        }
-        // 寫入新資料
-        parsedRows.forEach(r => {
-          if (!next[r.date]) next[r.date] = [];
-          next[r.date].push({
-            id: 'imp_' + r.date + '_' + r.name + '_' + Math.random().toString(36).slice(2,6),
-            name: r.name,
-            vendor: r.vendor,
-            group: activeGroup,
-            note: '臨時人員',
-            present: false,
-            lateEarly: defaultStatus,
-            timeNote: '', absType: '',
-            _isImport: true,
-          });
-        });
-        return next;
-      });
-
-      toast(`已匯入 ${parsedRows.length} 筆臨時人員`, 'success');
-      setParsedRows(null);
-      setFileName('');
-      setImporting(false);
-    };
-
-    return (
-      <div className="space-y-5">
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-          <h3 className="font-semibold text-slate-700 mb-1">匯入派工表</h3>
-          <p className="text-xs text-slate-400 mb-5">
-            支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。
-          </p>
-
-          <div className="flex gap-3 flex-wrap items-end">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">匯入起日</label>
-              <input type="date" value={importStart} onChange={e => setImportStart(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">匯入迄日</label>
-              <input type="date" value={importEnd} onChange={e => setImportEnd(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-
-          {/* 目前選擇的組別提示 */}
-          <div className={`mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${activeGroup ? 'bg-teal-50 text-blue-700 border border-teal-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-            <span>{activeGroup ? '✅' : '⚠️'}</span>
-            <span>{activeGroup ? `匯入組別：${activeGroup}` : '請先在上方篩選列選擇組別'}</span>
-          </div>
-
-          <div className="mt-3">
-            <label className="block text-xs font-medium text-slate-600 mb-2">上傳派工表檔案</label>
-            <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-4 transition-colors
-              ${activeGroup ? 'border-blue-300 hover:border-blue-500 hover:bg-teal-50 cursor-pointer' : 'border-slate-200 bg-[#F5F2EC] cursor-not-allowed opacity-60'}`}>
-              <span className="text-2xl">📂</span>
-              <div>
-                <div className="text-sm font-medium text-slate-700">
-                  {fileName ? fileName : '點擊選擇 Excel 檔案'}
-                </div>
-                <div className="text-xs text-slate-400 mt-0.5">支援 .xlsx</div>
-              </div>
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
-            </label>
-          </div>
-        </div>
-
-        {/* 解析結果預覽 */}
-        {parsedRows !== null && (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-slate-700">解析結果預覽</h3>
-              <span className={`text-sm font-semibold px-3 py-1 rounded-full ${parsedRows.length > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                共 {parsedRows.length} 筆
-              </span>
-            </div>
-
-            {parsedRows.length > 0 && (
-              <>
-                <div className="overflow-x-auto rounded-lg border border-slate-100 mb-4 max-h-60">
-                  <table className="w-full text-xs">
-                    <thead className="bg-[#F5F2EC] sticky top-0">
-                      <tr>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">報到日期</th>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">姓名</th>
-                        <th className="px-3 py-2 text-left text-slate-500 font-medium">廠商</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {parsedRows.slice(0, 50).map((r, i) => (
-                        <tr key={i} className="hover:bg-[#F5F2EC]">
-                          <td className="px-3 py-2 text-slate-600">{r.date}</td>
-                          <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.vendor || '—'}</td>
-                        </tr>
-                      ))}
-                      {parsedRows.length > 50 && (
-                        <tr><td colSpan={3} className="px-3 py-2 text-center text-slate-400">... 僅顯示前 50 筆</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
-                  ⚠️ 匯入將覆蓋「{activeGroup}」於 {importStart} ～ {importEnd} 期間的舊有臨時人員資料，長期人員不受影響。
-                </div>
-                <button onClick={handleImport} disabled={importing}
-                  className="w-full py-2.5 bg-[#1a2f5e] hover:bg-[#1e3870] disabled:opacity-50 text-white rounded-xl font-medium text-sm">
-                  ✅ 確認匯入 {parsedRows.length} 筆臨時人員
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* 說明 */}
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 text-xs text-slate-500 space-y-1">
-          <div className="font-medium text-slate-600 mb-2">📋 必備欄位說明</div>
-          <div>• <span className="font-medium">報到日期</span>：民國年格式（113/07/15）自動轉換西元年</div>
-          <div>• <span className="font-medium">報名狀態</span>：只匯入標示「成功」的資料</div>
-          <div>• <span className="font-medium">姓名／名字</span>：人員名稱（必填）</div>
-          <div>• <span className="font-medium">廠商／公司</span>：派工單位</div>
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="p-6 space-y-4 max-w-4xl">
@@ -4931,10 +4891,10 @@ function Attendance() {
 
       <div>
         {subTab === 'attend' && attendPane}
-        {subTab === 'stats'  && <StatsPane />}
+        {subTab === 'stats'  && <StatsPane attendDate={attendDate} groupFilter={groupFilter} totalCount={totalCount} presentCount={presentCount} absentCount={absentCount} attendRate={attendRate} groupOptions={groupOptions} exportStats={exportStats} />}
         {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} groupFilter={groupFilter} />}
         {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
-        {subTab === 'import' && <ImportPane />}
+        {subTab === 'import' && <ImportPane todayStr={todayStr} groupFilter={groupFilter} />}
       </div>
 
       {addModal && (
