@@ -26,7 +26,7 @@ import React, {
   style.id = 'sms-tokens';
   style.textContent = `
     :root {
-      --sms-bg:           #FAF7F2;
+      --sms-bg:           #FFFFFF;
       --sms-surface:      #FFFFFF;
       --sms-surface-2:    #F5F2EC;
       --sms-teal:         #1a2f5e;
