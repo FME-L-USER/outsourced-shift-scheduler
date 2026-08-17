@@ -2232,6 +2232,15 @@ function ScheduleTable() {
 
   const isEditable = useCallback((dk) => {
     if (systemLocked) return false;
+    // worker 必須有 scheduleRange 才能編輯，且僅限範圍內日期
+    if (currentUser?.role === ROLES.WORKER) {
+      if (!scheduleRange.start || !scheduleRange.end) return false;
+      const [y,m,d] = dk.split('-').map(Number);
+      const date = new Date(y, m-1, d);
+      const rs = parseLocal(scheduleRange.start);
+      const re = parseLocal(scheduleRange.end);
+      return date >= rs && date <= re;
+    }
     // 編輯限制僅對原始設定區間，往前/往後查看時仍可編輯
     if (scheduleRange.start && scheduleRange.end) {
       const [y,m,d] = dk.split('-').map(Number);
@@ -2241,7 +2250,7 @@ function ScheduleTable() {
       if (date < rs || date > re) return false;
     }
     return true;
-  }, [systemLocked, scheduleRange, viewRange]);
+  }, [systemLocked, scheduleRange, viewRange, currentUser]);
 
   const handleCellClick = useCallback((empId, dk) => {
     if (!isEditable(dk)) {

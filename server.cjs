@@ -547,10 +547,32 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 
 // ── PUT /api/state ────────────────────────────────────────
 // 以 merge 方式更新，保留 attendData / extras（由 PUT /api/attendance 管理）
-app.put('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
+// vendor 角色只允許寫入 schedule 欄位，其餘欄位由 admin/area 管理
+app.put('/api/state', requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  if (role !== 'admin' && role !== 'area' && role !== 'vendor')
+    return res.status(403).json({ error: '無存取權限' });
   const incoming = req.body;
   // 移除 attendData / extras，避免覆蓋 vendor 透過 /api/attendance 存入的出勤紀錄
   const { attendData: _a, extras: _e, ...rest } = incoming;
+  // vendor 僅允許寫入 schedule（班表），避免覆蓋系統設定
+  if (role === 'vendor') {
+    const { schedule } = rest;
+    if (!schedule || Object.keys(schedule).length === 0) return res.json({ ok: true });
+    try {
+      await pool.query(
+        `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
+         ON CONFLICT (id) DO UPDATE
+           SET data = app_state.data || $1::jsonb,
+               updated_at = NOW()`,
+        [JSON.stringify({ schedule })]
+      );
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('PUT /api/state (vendor) DB error:', e.message);
+      return res.status(503).json({ error: 'db_unavailable' });
+    }
+  }
   // 防呆：employees/vendors/warehouses 若為空陣列，從 payload 中移除（不以空值覆蓋 DB）
   // 避免前端種子資料或載入失敗時的空狀態覆蓋 DB 真實資料
   if (Array.isArray(rest.employees)  && rest.employees.length  === 0) delete rest.employees;
