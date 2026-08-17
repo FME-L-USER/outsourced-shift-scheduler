@@ -185,6 +185,7 @@ const NATIONAL_HOLIDAYS = [
   { year: 2025, month: 4,  day: 4,  name: '兒童節' },
   { year: 2025, month: 5,  day: 1,  name: '勞動節' },
   { year: 2025, month: 5,  day: 31, name: '端午節' },
+  { year: 2025, month: 9,  day: 28, name: '教師節' },
   { year: 2025, month: 10, day: 6,  name: '中秋節' },
   { year: 2025, month: 10, day: 10, name: '國慶日' },
   // 115年 (2026)
@@ -200,6 +201,7 @@ const NATIONAL_HOLIDAYS = [
   { year: 2026, month: 5,  day: 1,  name: '勞動節' },
   { year: 2026, month: 6,  day: 19, name: '端午節' },
   { year: 2026, month: 9,  day: 25, name: '中秋節' },
+  { year: 2026, month: 9,  day: 28, name: '教師節' },
   { year: 2026, month: 10, day: 10, name: '國慶日' },
 ];
 
