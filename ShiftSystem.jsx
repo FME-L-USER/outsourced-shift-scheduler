@@ -129,11 +129,11 @@ const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worke
 const JWT_KEY = 'sms_jwt';
 
 const SHIFT_CODES = {
-  V:  { label: 'V',  color: 'bg-green-100 text-green-800',   meaning: '上班' },
-  例: { label: '例', color: 'bg-yellow-100 text-yellow-800',  meaning: '例休' },
-  休: { label: '休', color: 'bg-orange-100 text-orange-800',  meaning: '休假' },
-  國: { label: '國', color: 'bg-blue-100 text-blue-800',     meaning: '國定假日' },
-  '': { label: '',   color: 'bg-white text-gray-400',         meaning: '空白' },
+  V:  { label: 'V',  color: 'bg-green-100 text-green-900',   meaning: '上班' },
+  例: { label: '例', color: 'bg-yellow-100 text-yellow-900',  meaning: '例休' },
+  休: { label: '休', color: 'bg-orange-100 text-orange-900',  meaning: '休假' },
+  國: { label: '國', color: 'bg-blue-100 text-blue-900',     meaning: '國定假日' },
+  '': { label: '',   color: 'bg-white text-gray-500',         meaning: '空白' },
 };
 
 const SHIFT_CYCLE = ['V', '國', '例', '休'];
@@ -3006,7 +3006,7 @@ function ScheduleTable() {
                           onClick={() => handleCellClick(emp.id, dk)}
                           title={holidayLabel ? `國定假日：${holidayLabel}` : displayCode !== code ? `班別代號：${displayCode}` : undefined}
                           className={`text-center py-2 border-r border-slate-100 cursor-pointer
-                                      select-none transition-colors
+                                      select-none transition-colors font-semibold
                                       ${warnDks.has(dk) ? 'bg-pink-200 text-pink-900' : info.color}
                                       ${rangeMode && isMonthStart && month !== dayHeaders[0].month ? 'border-l-2 border-blue-400' : ''}
                                       ${locked ? 'cursor-not-allowed opacity-60' : 'hover:opacity-75'}`}
