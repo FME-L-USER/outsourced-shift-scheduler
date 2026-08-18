@@ -4471,7 +4471,8 @@ function Attendance() {
           const merged = { ...prev };
           for (const [date, dayMap] of Object.entries(newAttend)) {
             if (Object.keys(dayMap).length > 0)
-              merged[date] = { ...(prev[date] ?? {}), ...dayMap };
+              // 本地已編輯的紀錄優先（避免輪詢伺服器舊資料覆蓋尚未存檔的勾選）
+              merged[date] = { ...dayMap, ...(prev[date] ?? {}) };
           }
           return merged;
         });
