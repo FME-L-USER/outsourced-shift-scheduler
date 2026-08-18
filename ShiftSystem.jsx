@@ -2300,6 +2300,18 @@ function ScheduleTable() {
       const isOpenHoliday = openHolidays.includes(`${hy}-${hm}-${hd}`);
       if (!isOpenHoliday) {
         next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
+      } else {
+        // 「國」數量上限 = openHolidays 天數
+        const empSched = schedule[empId] ?? {};
+        const usedNat = openHolidays.filter(key => {
+          const [ky, km, kd] = key.split('-').map(Number);
+          const dkFmt = `${ky}-${String(km).padStart(2,'0')}-${String(kd).padStart(2,'0')}`;
+          return empSched[dkFmt] === '國';
+        }).length;
+        if (usedNat >= openHolidays.length) {
+          toast(`國定假日天數已達上限（${openHolidays.length} 天），無法再新增。`, 'error');
+          return;
+        }
       }
     }
 
