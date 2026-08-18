@@ -2294,6 +2294,15 @@ function ScheduleTable() {
     const idx = SHIFT_CYCLE.indexOf(current);
     let next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
 
+    // 「國」只在該日為開放國定假日時才可選
+    if (next === '國') {
+      const [hy, hm, hd] = dk.split('-').map(Number);
+      const isOpenHoliday = openHolidays.includes(`${hy}-${hm}-${hd}`);
+      if (!isOpenHoliday) {
+        next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
+      }
+    }
+
     // 委外幹部排「國」：依系統設定開放鍵決定
     if (currentUser.role === ROLES.VENDOR && next === '國' && !vendorHolidayOpen) {
       next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
@@ -2332,7 +2341,7 @@ function ScheduleTable() {
       ...prev,
       [empId]: { ...prev[empId], [dk]: next },
     }));
-  }, [schedule, employees, isEditable, currentUser, getWeeklyLeaves, getWeeklyRest, setSchedule, toast]);
+  }, [schedule, employees, isEditable, currentUser, openHolidays, vendorHolidayOpen, getWeeklyLeaves, getWeeklyRest, setSchedule, toast]);
 
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years  = [2024, 2025, 2026, 2027];
@@ -2709,7 +2718,7 @@ function ScheduleTable() {
               const sc = getDisplayCode(emp, code, day, month, year);
               return (sc !== code ? sc : null) ?? holidayLabel ?? code;
             })()
-          : (holidayLabel ?? (SHIFT_CODES[code]?.label || code));
+          : (SHIFT_CODES[code]?.label || code); // 「國」固定顯示「國」
         const isWarn = warnSet.has(dk);
         const bg = isWarn ? WARN_BG : (CODE_BG[code] ?? '#ffffff');
         const fg = isWarn ? WARN_FG : (CODE_FG[code] ?? '#6b7280');
@@ -2998,7 +3007,7 @@ function ScheduleTable() {
                             // 代號表有查到特定代碼時優先顯示，否則顯示假日短名
                             return (sc !== code ? sc : null) ?? holidayLabel ?? code;
                           })()
-                        : (holidayLabel ?? (SHIFT_CODES[code]?.label || code));
+                        : (SHIFT_CODES[code]?.label || code); // 「國」固定顯示「國」，假日名稱只在 tooltip 呈現
                       const info = SHIFT_CODES[code] ?? SHIFT_CODES[''];
                       const locked = !isEditable(dk);
                       const weekBand = Math.floor(colIdx / 7) % 2 === 1;
