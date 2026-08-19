@@ -7703,12 +7703,13 @@ export default function App() {
           ? (apiUser.vendors ?? [])
           : vendors.map(v => v.name);
         setCurrentUser({
-          id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.username,
+          id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.name || apiUser.username,
           role, vendors: userVendors,
           permissions: getDefaultPermissions(role),
           allowedWarehouses: allowedWh,
           approved: true, _apiAuth: true,
         });
+        if (role === ROLES.VENDOR || role === ROLES.WORKER) setCurrentPage('schedule');
         if (allowedWh.length === 1) setSelectedWarehouse(allowedWh[0]);
         loadServerState(token);
       })
@@ -7723,6 +7724,7 @@ export default function App() {
     }
     if (user._apiAuth) {
       setCurrentUser(user);
+      if (user.role === ROLES.VENDOR || user.role === ROLES.WORKER) setCurrentPage('schedule');
       // 若只開放一個倉，登入後自動選取
       if ((user.allowedWarehouses ?? []).length === 1) {
         setSelectedWarehouse(user.allowedWarehouses[0]);
@@ -7732,6 +7734,7 @@ export default function App() {
     const updated = { ...user, loginCount: (user.loginCount ?? 0) + 1 };
     setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
     setCurrentUser(updated);
+    if (user.role === ROLES.VENDOR || user.role === ROLES.WORKER) setCurrentPage('schedule');
     if ((user.allowedWarehouses ?? []).length === 1) {
       setSelectedWarehouse(user.allowedWarehouses[0]);
     }
