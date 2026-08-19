@@ -548,16 +548,16 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 
 // ── PUT /api/state ────────────────────────────────────────
 // 以 merge 方式更新，保留 attendData / extras（由 PUT /api/attendance 管理）
-// vendor 角色只允許寫入 schedule 欄位，其餘欄位由 admin/area 管理
+// vendor/worker 角色只允許寫入 schedule 欄位，其餘欄位由 admin/area 管理
 app.put('/api/state', requireAuth, async (req, res) => {
   const role = req.user?.role;
-  if (role !== 'admin' && role !== 'area' && role !== 'vendor')
+  if (role !== 'admin' && role !== 'area' && role !== 'vendor' && role !== 'worker')
     return res.status(403).json({ error: '無存取權限' });
   const incoming = req.body;
   // 移除 attendData / extras，避免覆蓋 vendor 透過 /api/attendance 存入的出勤紀錄
   const { attendData: _a, extras: _e, ...rest } = incoming;
-  // vendor 僅允許寫入 schedule（班表），避免覆蓋系統設定
-  if (role === 'vendor') {
+  // vendor/worker 僅允許寫入 schedule（班表），避免覆蓋系統設定
+  if (role === 'vendor' || role === 'worker') {
     const { schedule } = rest;
     if (!schedule || Object.keys(schedule).length === 0) return res.json({ ok: true });
     try {
@@ -570,7 +570,7 @@ app.put('/api/state', requireAuth, async (req, res) => {
       );
       return res.json({ ok: true });
     } catch (e) {
-      console.error('PUT /api/state (vendor) DB error:', e.message);
+      console.error('PUT /api/state (vendor/worker) DB error:', e.message);
       return res.status(503).json({ error: 'db_unavailable' });
     }
   }
