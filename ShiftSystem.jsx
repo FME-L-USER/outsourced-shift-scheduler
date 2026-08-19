@@ -7852,7 +7852,7 @@ export default function App() {
           <div className="hidden md:flex">
             <Sidebar
               currentPage={currentPage} onNavigate={setCurrentPage}
-              currentUser={currentUser} onLogout={handleLogout} onSave={saveNow}
+              currentUser={currentUser} onLogout={handleLogout}
               collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(p => !p)}
             />
           </div>
@@ -7860,7 +7860,7 @@ export default function App() {
           {/* Mobile nav */}
           <MobileNav
             currentPage={currentPage} onNavigate={setCurrentPage}
-            currentUser={currentUser} onLogout={handleLogout} onSave={saveNow}
+            currentUser={currentUser} onLogout={handleLogout}
             open={mobileNavOpen} onClose={() => setMobileNavOpen(false)}
           />
 
