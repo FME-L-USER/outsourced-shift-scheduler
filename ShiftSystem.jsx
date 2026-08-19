@@ -857,7 +857,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       });
       if (vr.ok) {
         const vd = await vr.json();
-        onLogin({ ...finalCandidate, vendors: vd.user?.vendors ?? finalCandidate.vendors ?? [] }, vd.token);
+        // 伺服器 vendors 非空時採用，否則保留本地設定（避免 DB 空陣列覆蓋正確的廠商清單）
+        const resolvedVendors = (vd.user?.vendors?.length > 0) ? vd.user.vendors : (finalCandidate.vendors ?? []);
+        onLogin({ ...finalCandidate, name: vd.user?.name || finalCandidate.name, vendors: resolvedVendors }, vd.token);
         return;
       }
     } catch (_) {}

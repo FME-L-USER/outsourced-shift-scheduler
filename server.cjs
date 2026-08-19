@@ -357,6 +357,7 @@ function safeUser(u) {
   return {
     id:                u.id,
     username:          u.username,
+    name:              u.display_name || u.username || '',
     display_name:      u.display_name      || '',
     role:              u.role,
     page_perms:        u.page_perms        || [],
