@@ -1222,10 +1222,11 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 
 function WarehouseDeptBar() {
   const {
-    warehouses, currentUser,
+    warehouses, employees, currentUser,
     selectedWarehouse, setSelectedWarehouse,
     selectedDept,      setSelectedDept,
     selectedGroup,     setSelectedGroup,
+    selectedVendor,    setSelectedVendor,
   } = useApp();
 
   // 倉別可見範圍：ADMIN/VENDOR 看全部；AREA 只看 allowedWarehouses（空陣列 = 尚未指派，不顯示）
@@ -1247,24 +1248,45 @@ function WarehouseDeptBar() {
     setSelectedWarehouse(whId || null);
     setSelectedDept(null);
     setSelectedGroup(null);
+    setSelectedVendor(null);
   };
 
   const handleDeptChange = (deptId) => {
     setSelectedDept(deptId || null);
     setSelectedGroup(null);
+    setSelectedVendor(null);
   };
 
   const handleGroupChange = (g) => {
     setSelectedGroup(g || null);
   };
 
-  const hasFilter = selectedWarehouse || selectedDept || selectedGroup;
+  const handleVendorChange = (v) => {
+    setSelectedVendor(v || null);
+  };
+
+  // 廠商別選項：優先從課別的廠商清單；否則從當前倉別的所有員工推導
+  const vendorOptions = (() => {
+    if (deptObj?.vendors?.length > 0) return deptObj.vendors;
+    if (selectedWarehouse) {
+      const wh = warehouses.find(w => w.id === selectedWarehouse);
+      if (wh) {
+        const whVendors = new Set((wh.departments ?? []).flatMap(d => d.vendors ?? []));
+        if (whVendors.size > 0) return [...whVendors].sort();
+      }
+    }
+    const allV = new Set(employees.map(e => e.vendor).filter(Boolean));
+    return [...allV].sort();
+  })();
+
+  const hasFilter = selectedWarehouse || selectedDept || selectedGroup || selectedVendor;
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
   const filterLabel = [
     selectedWarehouse ? visibleWarehouses.find(w=>w.id===selectedWarehouse)?.name : null,
     selectedDept ? deptObj?.name : null,
     selectedGroup || null,
+    selectedVendor || null,
   ].filter(Boolean).join(' › ') || '全部';
 
   const selects = (
@@ -1291,19 +1313,18 @@ function WarehouseDeptBar() {
         <option value="">全部組別</option>
         {groups.map(g => <option key={g} value={g}>{g}</option>)}
       </select>
+      <span className="text-slate-400">›</span>
+      <span className="text-slate-500 font-medium whitespace-nowrap">廠商：</span>
+      <select value={selectedVendor ?? ''} onChange={e => handleVendorChange(e.target.value)}
+        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <option value="">全部廠商</option>
+        {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+      </select>
       {hasFilter && (
-        <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
+        <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setMobileFilterOpen(false); }}
           className="px-2 py-0.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
           清除篩選
         </button>
-      )}
-      {selectedDept && deptObj?.vendors?.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-slate-400 text-xs">廠商：</span>
-          {deptObj.vendors.map(v => (
-            <span key={v} className="px-1.5 py-0.5 bg-teal-50 text-blue-700 border border-teal-200 rounded-full text-xs">{v}</span>
-          ))}
-        </div>
       )}
     </div>
   );
@@ -1351,8 +1372,16 @@ function WarehouseDeptBar() {
                 {groups.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500 w-12 shrink-0">廠商</span>
+              <select value={selectedVendor ?? ''} onChange={e => handleVendorChange(e.target.value)}
+                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                <option value="">全部廠商</option>
+                {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
             {hasFilter && (
-              <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setMobileFilterOpen(false); }}
+              <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setMobileFilterOpen(false); }}
                 className="self-start px-3 py-1 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
                 清除篩選
               </button>
@@ -2051,6 +2080,7 @@ function ScheduleTable() {
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     systemLocked, scheduleRange, openHolidays, vendorHolidayOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    selectedVendor,
   } = useApp();
   const toast = useToast();
 
@@ -2204,6 +2234,7 @@ function ScheduleTable() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
       list = list.filter(e =>
@@ -2212,7 +2243,7 @@ function ScheduleTable() {
       );
     }
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, nameSearch]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, nameSearch]);
 
   /** 計算當週某代碼出現次數（週一～週日） */
   const getWeeklyCode = useCallback((empId, dk, code) => {
@@ -7248,9 +7279,10 @@ export default function App() {
       departments: (w.departments ?? []).map(d => ({ groups: [], ...d })),
     }));
   });
-  const [selectedWarehouse, setSelectedWarehouse] = useState(() => LS.get('sms_sel_wh',    null));
-  const [selectedDept,      setSelectedDept]      = useState(() => LS.get('sms_sel_dept',  null));
-  const [selectedGroup,     setSelectedGroup]     = useState(() => LS.get('sms_sel_grp',   null));
+  const [selectedWarehouse, setSelectedWarehouse] = useState(() => LS.get('sms_sel_wh',     null));
+  const [selectedDept,      setSelectedDept]      = useState(() => LS.get('sms_sel_dept',   null));
+  const [selectedGroup,     setSelectedGroup]     = useState(() => LS.get('sms_sel_grp',    null));
+  const [selectedVendor,    setSelectedVendor]    = useState(() => LS.get('sms_sel_vendor', null));
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
   const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
@@ -7748,6 +7780,7 @@ export default function App() {
     selectedWarehouse, setSelectedWarehouse,
     selectedDept, setSelectedDept,
     selectedGroup, setSelectedGroup,
+    selectedVendor, setSelectedVendor,
     schedule, setSchedule,
     systemLocked, setSystemLocked,
     scheduleRange, setScheduleRange,
