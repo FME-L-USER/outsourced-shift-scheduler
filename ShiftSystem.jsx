@@ -4510,7 +4510,8 @@ function Attendance() {
           return merged;
         });
       if (Object.keys(newExtras).length > 0)
-        setExtras(prev => ({ ...prev, ...newExtras }));
+        // 本地已有的日期優先（避免輪詢覆蓋尚未存檔的手動新增臨時人員）
+        setExtras(prev => ({ ...newExtras, ...prev }));
       // 非 vendor 同時更新員工/廠商/倉別等維護資料（儀表板在職人數來源）
       if (!isVendor) {
         if (Array.isArray(data?.employees) && data.employees.length > 0) setEmployees(data.employees);
@@ -7529,8 +7530,18 @@ export default function App() {
         .then(state => {
           if (!state) return;
           applySchedule(state);
-          if (state.attendData)  setAttendData(state.attendData);
-          if (state.extras)      setExtras(state.extras);
+          // 本地已有的出勤勾選優先（避免前景切換觸發的同步覆蓋尚未存檔的勾選）
+          if (state.attendData && Object.keys(state.attendData).length > 0)
+            setAttendData(prev => {
+              const merged = { ...prev };
+              for (const [date, dayMap] of Object.entries(state.attendData)) {
+                if (Object.keys(dayMap).length > 0)
+                  merged[date] = { ...dayMap, ...(prev[date] ?? {}) };
+              }
+              return merged;
+            });
+          if (state.extras && Object.keys(state.extras).length > 0)
+            setExtras(prev => ({ ...state.extras, ...prev }));
           if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
           if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
           if (Array.isArray(state.users) && state.users.length > 0) setUsers(state.users);
