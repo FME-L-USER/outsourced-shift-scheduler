@@ -4704,15 +4704,16 @@ function Attendance() {
   // ── 回報文字
   const generateReport = (reportDate, reportGroup) => {
     // 長期 = 清冊人員；臨時 = 手動新增
-    const longEmps = (reportGroup
-      ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
-      : scopedEmps
-    ).filter(e => {
-      let list = currentUser.role === ROLES.VENDOR
-        ? employees.filter(x => currentUser.vendors.includes(x.vendor)) : employees;
-      list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-      return list.some(x => x.id === e.id);
-    });
+    // 統一用 vendor/scope 過濾，再依報告日期排班過濾排休/例/國
+    let longList = currentUser.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    longList = filterByScope(longList, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    if (reportGroup) longList = longList.filter(e => e.shiftType === reportGroup || e.group === reportGroup);
+    const [ry, rm, rd] = reportDate.split('-').map(Number);
+    const reportDk = dateKey(ry, rm, rd);
+    longList = longList.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[reportDk]));
+    const longEmps = longList;
     const tempEmps = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
     const getData = id => attendData[reportDate]?.[id] ?? { present: true };
 
