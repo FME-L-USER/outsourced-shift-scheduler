@@ -722,7 +722,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               employeeId: wd.emp.id,
               approved: true,
               mustChangePassword: wd.firstLogin,
-            });
+            }, wd.token);
             return;
           }
         } catch (_) {}
@@ -731,6 +731,16 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
                 return;
       }
       clearLock(uKey);
+      // 取得 JWT（供出勤自助簽到等需要驗證的功能使用），失敗則沿用離線模式
+      let workerToken;
+      try {
+        const tr = await fetch('/api/auth/worker-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ empId: emp.empId, password }),
+        });
+        if (tr.ok) workerToken = (await tr.json()).token;
+      } catch (_) {}
       onLogin({
         id: 'worker_' + emp.id,
         username: emp.empId,
@@ -742,7 +752,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         employeeId: emp.id,
         approved: true,
         mustChangePassword: isFirstLogin,
-      });
+      }, workerToken);
       return;
     }
 
@@ -1115,6 +1125,7 @@ const NAV_ITEMS = [
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER] },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -4470,6 +4481,76 @@ function StatsPane({ attendDate, groupFilter, totalCount, presentCount, absentCo
   );
 }
 
+const WORKER_PHONE_SLOTS = [
+  { key: 'morning', label: '上午' },
+  { key: 'noon', label: '中午' },
+  { key: 'afternoon', label: '下午' },
+  { key: 'ot', label: '加班' },
+];
+
+function WorkerSelfField({ rec, field, label, checkboxClass, textClass, onSet }) {
+  const nowTimeStr = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+  return (
+    <label className="flex items-center gap-2 cursor-pointer text-base select-none">
+      <input type="checkbox" checked={!!rec[field]}
+        onChange={ev => onSet({ [field]: ev.target.checked, [field + 'At']: ev.target.checked ? nowTimeStr() : '' })}
+        className={`w-6 h-6 cursor-pointer ${checkboxClass}`} />
+      {label}{rec[field] && rec[field + 'At'] && <span className={`text-sm ml-1 ${textClass}`}>{rec[field + 'At']}</span>}
+    </label>
+  );
+}
+
+// ── 委外人員自助簽到／手機控管 ──
+function WorkerSelfCheck() {
+  const { employees, currentUser, attendData, setAttendData } = useApp();
+
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  })();
+
+  const emp = employees.find(e => e.id === currentUser.employeeId);
+  const empId = currentUser.employeeId;
+
+  const rec = attendData[todayStr]?.[empId] ?? {};
+  const setRec = patch => setAttendData(prev => ({
+    ...prev,
+    [todayStr]: { ...(prev[todayStr] ?? {}), [empId]: { ...(prev[todayStr]?.[empId] ?? {}), ...patch } },
+  }));
+
+  if (!emp) {
+    return <div className="p-6 text-sm text-slate-400">找不到您的人員資料，請聯繫管理員。</div>;
+  }
+
+  return (
+    <div className="p-6 max-w-lg mx-auto space-y-4">
+      <div className="text-center">
+        <h2 className="text-xl font-bold text-slate-800">簽到 / 手機控管</h2>
+        <p className="text-sm text-slate-400 mt-1">{emp.name}・{emp.vendor}・{todayStr}</p>
+      </div>
+
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4">
+        <div className="flex items-center gap-6 justify-center">
+          <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
+          <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
+        </div>
+        <div className="flex items-center justify-center border-t border-slate-100 pt-4">
+          <WorkerSelfField rec={rec} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={setRec} />
+        </div>
+        <div className="space-y-2 border-t border-slate-100 pt-4">
+          {WORKER_PHONE_SLOTS.map(slot => (
+            <div key={slot.key} className="flex items-center gap-6 justify-center">
+              <span className="text-sm text-slate-400 w-10 flex-shrink-0 text-right">{slot.label}</span>
+              <WorkerSelfField rec={rec} field={`${slot.key}Taken`} label="領取" checkboxClass="accent-amber-600" textClass="text-amber-600" onSet={setRec} />
+              <WorkerSelfField rec={rec} field={`${slot.key}Returned`} label="歸還" checkboxClass="accent-emerald-600" textClass="text-emerald-600" onSet={setRec} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Attendance() {
   const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
   const toast = useToast();
@@ -4981,6 +5062,123 @@ function Attendance() {
   );
 
 
+  const nowTimeStr = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+
+  const PHONE_BREAK_SLOTS = [
+    { key: 'morning', label: '上午' },
+    { key: 'noon', label: '中午' },
+    { key: 'afternoon', label: '下午' },
+    { key: 'ot', label: '加班' },
+  ];
+
+  const PhoneField = ({ rec, field, label, checkboxClass, textClass, onSet }) => (
+    <label className="flex items-center gap-1.5 cursor-pointer text-sm select-none">
+      <input type="checkbox" checked={!!rec[field]}
+        onChange={ev => onSet({ [field]: ev.target.checked, [field + 'At']: ev.target.checked ? nowTimeStr() : '' })}
+        className={`w-5 h-5 cursor-pointer ${checkboxClass}`} />
+      {label}{rec[field] && rec[field + 'At'] && <span className={`text-xs ml-1 ${textClass}`}>{rec[field + 'At']}</span>}
+    </label>
+  );
+
+  // ── 手機控管分頁
+  const phonePane = (
+    <div className="space-y-4">
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">日期</label>
+          <input type="date" value={attendDate} onChange={e => setAttendDate(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div className="ml-auto text-sm text-slate-500">
+          已繳交手機 <span className="font-bold text-indigo-700">
+            {scopedEmps.filter(e => getRecord(e.id).phoneSubmitted).length + dateExtras.filter(e => e.phoneSubmitted).length}
+          </span>/{totalCount}人
+        </div>
+      </div>
+
+      {Object.keys(vendorGroups).length === 0 && dateExtras.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
+      ) : (() => {
+        const allVendors = [...new Set([
+          ...Object.keys(vendorGroups),
+          ...Object.keys(extrasVendorGroups),
+        ])];
+        return (
+          <div className="space-y-2">
+            {allVendors.map(vName => {
+              const longEmps = vendorGroups[vName] ?? [];
+              const tempEmps = extrasVendorGroups[vName] ?? [];
+              const all = [...longEmps, ...tempEmps];
+              if (all.length === 0) return null;
+              return (
+                <div key={vName} className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between bg-indigo-600 text-white px-4 py-2.5">
+                    <span className="font-semibold flex items-center gap-2">
+                      📱 {vName}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {longEmps.map(emp => {
+                      const rec = getRecord(emp.id);
+                      return (
+                        <div key={emp.id} className="px-3 py-3 flex items-start gap-4 flex-wrap">
+                          <div className="min-w-[100px] flex-shrink-0">
+                            <div className="font-medium text-slate-800 text-sm">{emp.name}</div>
+                            <div className="text-xs text-slate-400">{emp.empId}</div>
+                          </div>
+                          <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
+                            <div className="flex items-center gap-4 flex-wrap">
+                              <PhoneField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={p => setRecord(emp.id, p)} />
+                              <PhoneField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={p => setRecord(emp.id, p)} />
+                            </div>
+                            <div className="flex items-center gap-4 flex-wrap">
+                              <PhoneField rec={rec} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={p => setRecord(emp.id, p)} />
+                            </div>
+                            {PHONE_BREAK_SLOTS.map(slot => (
+                              <div key={slot.key} className="flex items-center gap-4 flex-wrap">
+                                <span className="text-xs text-slate-400 w-8 flex-shrink-0">{slot.label}</span>
+                                <PhoneField rec={rec} field={`${slot.key}Taken`} label="領取" checkboxClass="accent-amber-600" textClass="text-amber-600" onSet={p => setRecord(emp.id, p)} />
+                                <PhoneField rec={rec} field={`${slot.key}Returned`} label="歸還" checkboxClass="accent-emerald-600" textClass="text-emerald-600" onSet={p => setRecord(emp.id, p)} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {tempEmps.map(e => (
+                      <div key={e.id} className="px-3 py-3 flex items-start gap-4 flex-wrap bg-amber-50/40">
+                        <div className="min-w-[100px] flex-shrink-0">
+                          <div className="font-medium text-slate-800 text-sm">{e.name}</div>
+                          <div className="text-xs text-slate-400">{e._isImport ? '派工匯入' : '手動新增'}</div>
+                        </div>
+                        <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <PhoneField rec={e} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={p => setExtraRecord(e.id, p)} />
+                            <PhoneField rec={e} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={p => setExtraRecord(e.id, p)} />
+                          </div>
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <PhoneField rec={e} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={p => setExtraRecord(e.id, p)} />
+                          </div>
+                          {PHONE_BREAK_SLOTS.map(slot => (
+                            <div key={slot.key} className="flex items-center gap-4 flex-wrap">
+                              <span className="text-xs text-slate-400 w-8 flex-shrink-0">{slot.label}</span>
+                              <PhoneField rec={e} field={`${slot.key}Taken`} label="領取" checkboxClass="accent-amber-600" textClass="text-amber-600" onSet={p => setExtraRecord(e.id, p)} />
+                              <PhoneField rec={e} field={`${slot.key}Returned`} label="歸還" checkboxClass="accent-emerald-600" textClass="text-emerald-600" onSet={p => setExtraRecord(e.id, p)} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+    </div>
+  );
+
   // (ReportPane is defined at module level)
 
   // (MaintPane is defined at module level)
@@ -4999,6 +5197,7 @@ function Attendance() {
 
       <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
         <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
+        <AttendSubBtn active={subTab==='phone'}  onClick={() => setSubTab('phone')}  icon="📱" label="手機控管" />
         <AttendSubBtn active={subTab==='stats'}  onClick={() => setSubTab('stats')}  icon="📊" label="統計" />
         <AttendSubBtn active={subTab==='report'} onClick={() => setSubTab('report')} icon="📋" label="回報" />
         <AttendSubBtn active={subTab==='maint'}  onClick={() => setSubTab('maint')}  icon="⚙️" label="維護" />
@@ -5007,6 +5206,7 @@ function Attendance() {
 
       <div>
         {subTab === 'attend' && attendPane}
+        {subTab === 'phone'  && phonePane}
         {subTab === 'stats'  && <StatsPane attendDate={attendDate} groupFilter={groupFilter} totalCount={totalCount} presentCount={presentCount} absentCount={absentCount} attendRate={attendRate} groupOptions={groupOptions} exportStats={exportStats} />}
         {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} groupFilter={groupFilter} />}
         {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
@@ -7387,8 +7587,11 @@ export default function App() {
       const isWorker = currentUser?.role === ROLES.WORKER;
 
       if (isWorker) {
-        // worker 只能讀取班表資料（GET /api/schedule），唯讀不觸發 auto-save
-        const r = await fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } });
+        // worker 讀取班表（GET /api/schedule）+ 自己的出勤/手機控管紀錄（GET /api/attendance，後端已限縮為本人）
+        const [r, ra] = await Promise.all([
+          fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } }),
+          fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
         if (r.ok) {
           const s = await r.json();
           if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
@@ -7402,7 +7605,12 @@ export default function App() {
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
         }
-        // worker 不寫入 DB，不啟用 auto-save
+        if (ra.ok) {
+          const att = await ra.json();
+          if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
+        }
+        // worker 可自助簽到/手機控管（PUT /api/attendance，後端已限縮只能寫自己），啟用 auto-save
+        serverSyncedRef.current = true;
       } else if (isVendor) {
         // vendor 讀取班表 + 出勤資料，不寫入 /api/state
         const [rs, ra] = await Promise.all([
@@ -7511,6 +7719,14 @@ export default function App() {
     if (role === ROLES.WORKER) {
       fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+      fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(att => {
+          if (!att) return;
+          // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
+          if (att.attendData && Object.keys(att.attendData).length > 0)
+            setAttendData(prev => ({ ...att.attendData, ...prev }));
+        }).catch(() => {});
     } else if (role === ROLES.VENDOR) {
       fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
@@ -7668,12 +7884,12 @@ export default function App() {
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
-  // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor 皆適用）──
+  // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor/worker 皆適用）──
   const vendorAttendDebRef = useRef(null);
   useEffect(() => {
     if (!serverSyncedRef.current) return;
     const role = currentUser?.role;
-    if (role !== ROLES.VENDOR && role !== ROLES.ADMIN && role !== ROLES.AREA) return;
+    if (role !== ROLES.VENDOR && role !== ROLES.ADMIN && role !== ROLES.AREA && role !== ROLES.WORKER) return;
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
@@ -7822,6 +8038,7 @@ export default function App() {
     settings:   <Settings />,
     accounts:   <AccountManagement />,
     attendance: <Attendance />,
+    selfCheck:  <WorkerSelfCheck />,
   };
 
   if (!currentUser) {

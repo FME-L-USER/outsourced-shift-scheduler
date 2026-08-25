@@ -347,7 +347,7 @@ async function verifyAD(username, password) {
 // ── JWT 工具 ──────────────────────────────────────────────
 function issueToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms, allowedWarehouses: user.allowed_warehouses || [], vendors: user.vendors || [] },
+    { id: user.id, username: user.username, role: user.role, page_perms: user.page_perms, fn_perms: user.fn_perms, allowedWarehouses: user.allowed_warehouses || [], vendors: user.vendors || [], employeeId: user.employeeId },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
@@ -696,25 +696,45 @@ app.post('/api/auth/vendor-login', async (req, res) => {
   }
 });
 
-// ── GET /api/attendance （admin / area / vendor 可讀）─────
+// ── GET /api/attendance （admin / area / vendor / worker 可讀）─────
 app.get('/api/attendance', requireAuth, async (req, res) => {
   const role = req.user?.role;
-  if (!['admin','area','vendor'].includes(role))
+  if (!['admin','area','vendor','worker'].includes(role))
     return res.status(403).json({ error: '無存取權限' });
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   const data = rows[0]?.data ?? {};
+  // worker 只能看到自己的紀錄
+  if (role === 'worker') {
+    const empId = req.user.employeeId;
+    const filtered = {};
+    for (const [date, dayMap] of Object.entries(data.attendData ?? {})) {
+      if (dayMap?.[empId]) filtered[date] = { [empId]: dayMap[empId] };
+    }
+    return res.json({ attendData: filtered, extras: {} });
+  }
   res.json({ attendData: data.attendData ?? {}, extras: data.extras ?? {} });
 });
 
-// ── PUT /api/attendance （admin / area / vendor 可寫）─────
+// ── PUT /api/attendance （admin / area / vendor / worker 可寫）─────
 app.put('/api/attendance', requireAuth, async (req, res) => {
   const role = req.user?.role;
-  if (!['admin','area','vendor'].includes(role))
+  if (!['admin','area','vendor','worker'].includes(role))
     return res.status(403).json({ error: '無存取權限' });
 
   let { attendData, extras } = req.body ?? {};
   attendData = attendData ?? {};
   extras     = extras     ?? {};
+
+  // worker scope：只允許寫入自己的紀錄，不可新增/修改臨時人員
+  if (role === 'worker') {
+    const empId = req.user.employeeId;
+    const filteredAttend = {};
+    for (const [date, dayMap] of Object.entries(attendData)) {
+      if (dayMap?.[empId]) filteredAttend[date] = { [empId]: dayMap[empId] };
+    }
+    attendData = filteredAttend;
+    extras = {};
+  }
 
   // vendor scope：只允許寫入自己廠商員工的資料
   if (role === 'vendor') {
@@ -818,8 +838,19 @@ app.post('/api/auth/worker-login', async (req, res) => {
       ok = (password === String(emp.empId).trim());
     }
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+    const token = issueToken({
+      id: 'worker_' + emp.id,
+      username: emp.empId,
+      role: 'worker',
+      page_perms: [],
+      fn_perms: [],
+      allowed_warehouses: [],
+      vendors: emp.vendor ? [emp.vendor] : [],
+      employeeId: emp.id,
+    });
     res.json({
       ok: true,
+      token,
       firstLogin: !stored,
       emp: { id: emp.id, empId: emp.empId, name: emp.name, vendor: emp.vendor ?? '' },
     });
