@@ -817,6 +817,8 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 //   首次登入（無存 hash）→ 密碼必須等於員編
 //   已設密碼 → PBKDF2 驗證
 app.post('/api/auth/worker-login', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
   const { empId, password } = req.body ?? {};
   if (!empId || !password)
     return res.status(400).json({ error: '缺少員編或密碼' });
