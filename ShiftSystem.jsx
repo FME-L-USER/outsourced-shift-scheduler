@@ -4505,9 +4505,10 @@ function WorkerSelfCheck() {
   const { employees, currentUser, attendData, setAttendData } = useApp();
   const toast = useToast();
 
+  // 須與 Attendance 元件的 attendDate 格式（補零）一致，否則會存到不同的 attendData key
   const todayStr = (() => {
     const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
 
   const emp = employees.find(e => e.id === currentUser.employeeId);
@@ -4565,7 +4566,7 @@ function WorkerSelfCheck() {
 }
 
 function Attendance() {
-  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
+  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
   const toast = useToast();
 
   const todayStr = (() => {
@@ -4644,6 +4645,7 @@ function Attendance() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
     // 班表當日排休/例/國 → 不出現在點名名單
     // dateKey 格式無補零 (2026-7-16)，attendDate 有補零 (2026-07-16)，需轉換
@@ -4651,10 +4653,11 @@ function Attendance() {
     const attendDk = dateKey(ay, am, ad);
     list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk]));
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, groupFilter, attendDate, schedule]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, groupFilter, attendDate, schedule]);
 
   const dateExtras = (extras[attendDate] ?? []).filter(e =>
-    !selectedGroup || !e.group || e.group === selectedGroup
+    (!selectedGroup || !e.group || e.group === selectedGroup) &&
+    (!selectedVendor || e.vendor === selectedVendor)
   );
 
   const vendorGroups = useMemo(() => {
