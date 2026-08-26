@@ -561,12 +561,35 @@ app.put('/api/state', requireAuth, async (req, res) => {
     const { schedule } = rest;
     if (!schedule || Object.keys(schedule).length === 0) return res.json({ ok: true });
     try {
+      const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+      const curData = curRows[0]?.data ?? {};
+      const employees = curData.employees ?? [];
+
+      // 範圍限制：vendor 只能寫自己廠商員工的班表，worker 只能寫自己
+      let allowedIds;
+      if (role === 'vendor') {
+        const allowedVendors = req.user.vendors ?? [];
+        if (allowedVendors.length === 0) return res.status(403).json({ error: '無廠商歸屬' });
+        allowedIds = new Set(employees.filter(e => allowedVendors.includes(e.vendor)).map(e => e.id));
+      } else {
+        allowedIds = new Set([req.user.employeeId]);
+      }
+
+      // 逐員工、逐日 merge（避免整包快照覆蓋其他人剛存入的異動，造成資料遺失）
+      const curSchedule = curData.schedule ?? {};
+      const mergedSchedule = { ...curSchedule };
+      for (const [empId, days] of Object.entries(schedule)) {
+        if (!allowedIds.has(empId)) continue; // 過濾越權寫入（防止繞過前端直接改別人班表）
+        if (days && Object.keys(days).length > 0)
+          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
+      }
+
       await pool.query(
         `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
          ON CONFLICT (id) DO UPDATE
-           SET data = app_state.data || $1::jsonb,
+           SET data = jsonb_set(app_state.data, '{schedule}', $1::jsonb->'schedule'),
                updated_at = NOW()`,
-        [JSON.stringify({ schedule })]
+        [JSON.stringify({ schedule: mergedSchedule })]
       );
       return res.json({ ok: true });
     } catch (e) {
@@ -580,6 +603,21 @@ app.put('/api/state', requireAuth, async (req, res) => {
   if (Array.isArray(rest.vendors)    && rest.vendors.length    === 0) delete rest.vendors;
   if (Array.isArray(rest.warehouses) && rest.warehouses.length === 0) delete rest.warehouses;
   if (Object.keys(rest).length === 0) return res.json({ ok: true });
+  // schedule：逐員工、逐日 merge（避免 admin/area 多裝置同時存檔時，後存者的舊快照蓋掉先存者剛異動的其他員工資料）
+  if (rest.schedule && Object.keys(rest.schedule).length > 0) {
+    try {
+      const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+      const curSchedule = curRows[0]?.data?.schedule ?? {};
+      const mergedSchedule = { ...curSchedule };
+      for (const [empId, days] of Object.entries(rest.schedule)) {
+        if (days && Object.keys(days).length > 0)
+          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
+      }
+      rest.schedule = mergedSchedule;
+    } catch (e) {
+      console.error('PUT /api/state schedule merge 讀取失敗:', e.message);
+    }
+  }
   try {
     await pool.query(
       `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
@@ -641,6 +679,8 @@ const hashPbkdf2 = (plain) => new Promise((resolve, reject) => {
 });
 
 app.post('/api/auth/vendor-login', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
   const { username, password, passwordHash } = req.body ?? {};
   if (!username || (!password && !passwordHash))
     return res.status(400).json({ error: '缺少帳號或密碼' });
@@ -859,6 +899,32 @@ app.post('/api/auth/worker-login', async (req, res) => {
   } catch (e) {
     console.error('worker-login error:', e.message);
     return res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── PUT /api/auth/worker-password ────────────────────────
+// 委外人員設定/變更密碼：真正寫入伺服器 workerPwds，避免只存在
+// 瀏覽器本機（Teams 等內嵌瀏覽器可能不保留本機資料，每次都被
+// 當成「首次登入」）
+app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
+  if (req.user?.role !== 'worker') return res.status(403).json({ error: '無存取權限' });
+  const { passwordHash } = req.body ?? {};
+  if (!passwordHash || !passwordHash.startsWith('pbkdf2:')) return res.status(400).json({ error: '密碼格式錯誤' });
+  const empId = req.user.username;
+  try {
+    const newHash = passwordHash;
+    await pool.query(
+      `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE
+         SET data = jsonb_set(app_state.data, '{workerPwds}',
+               COALESCE(app_state.data->'workerPwds', '{}'::jsonb) || $1::jsonb->'workerPwds'),
+             updated_at = NOW()`,
+      [JSON.stringify({ workerPwds: { [empId]: newHash } })]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('worker-password error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
   }
 });
 

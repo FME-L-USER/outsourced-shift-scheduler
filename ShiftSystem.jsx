@@ -8074,6 +8074,15 @@ export default function App() {
           if (isWorker) {
             // worker 密碼存入 sms_worker_pwds，不進 users
             setWorkerPwds(prev => ({ ...prev, [updated.empId]: updated.password }));
+            // 同時寫入伺服器，避免只存在本機（Teams 等內嵌瀏覽器可能不保留本機資料）
+            const token = localStorage.getItem(JWT_KEY);
+            if (token) {
+              fetch('/api/auth/worker-password', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ passwordHash: updated.password }),
+              }).catch(() => {});
+            }
           } else {
             setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
           }
