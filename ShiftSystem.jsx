@@ -4503,6 +4503,7 @@ function WorkerSelfField({ rec, field, label, checkboxClass, textClass, onSet })
 // ── 委外人員自助簽到／手機控管 ──
 function WorkerSelfCheck() {
   const { employees, currentUser, attendData, setAttendData } = useApp();
+  const toast = useToast();
 
   const todayStr = (() => {
     const d = new Date();
@@ -4513,10 +4514,22 @@ function WorkerSelfCheck() {
   const empId = currentUser.employeeId;
 
   const rec = attendData[todayStr]?.[empId] ?? {};
-  const setRec = patch => setAttendData(prev => ({
-    ...prev,
-    [todayStr]: { ...(prev[todayStr] ?? {}), [empId]: { ...(prev[todayStr]?.[empId] ?? {}), ...patch } },
-  }));
+  const setRec = patch => {
+    const newRecord = { ...rec, ...patch };
+    setAttendData(prev => ({
+      ...prev,
+      [todayStr]: { ...(prev[todayStr] ?? {}), [empId]: newRecord },
+    }));
+    // 手機瀏覽器切到背景時計時器可能被暫停，直接立即送出，不等共用的 2 秒 debounce
+    const token = localStorage.getItem('sms_jwt');
+    if (!token) return;
+    fetch('/api/attendance', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ attendData: { [todayStr]: { [empId]: newRecord } }, extras: {} }),
+    }).then(r => { if (!r.ok) toast('儲存失敗，請檢查網路後重新勾選', 'error'); })
+      .catch(() => toast('儲存失敗，請檢查網路後重新勾選', 'error'));
+  };
 
   if (!emp) {
     return <div className="p-6 text-sm text-slate-400">找不到您的人員資料，請聯繫管理員。</div>;
