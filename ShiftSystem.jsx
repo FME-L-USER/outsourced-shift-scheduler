@@ -2131,6 +2131,43 @@ function ScheduleTable() {
     return HOLIDAY_COL_MAP[h.name] ?? null;
   }, []);
 
+  // 「國」但當天非實際國定假日（補休調整到其他日期）時，該歸屬哪個假日：
+  // 同月內所有這類「不落在假日當天的國」與同月「實際假日」做最短距離貪婪配對（一對一，不重複），
+  // 避免同月有多個假日時，每一格各自找最近日期導致重複誤判成同一個假日
+  const getAmbiguousHolidayMap = useCallback((empId, month, year) => {
+    const monthHolidays = NATIONAL_HOLIDAYS.filter(h => h.year === year && h.month === month)
+      .map(h => ({ day: h.day, name: h.name }));
+    const result = new Map();
+    if (monthHolidays.length > 0) {
+      const daysInMo = getDaysInMonth(year, month);
+      const ambiguousDays = [];
+      for (let d = 1; d <= daysInMo; d++) {
+        const dk = dateKey(year, month, d);
+        if (schedule[empId]?.[dk] === '國' && !getHolidayColName(year, month, d)) ambiguousDays.push(d);
+      }
+      const remainingDays = [...ambiguousDays];
+      const remainingHols = [...monthHolidays];
+      while (remainingDays.length > 0 && remainingHols.length > 0) {
+        let best = null;
+        remainingDays.forEach(d => {
+          remainingHols.forEach(h => {
+            const dist = Math.abs(h.day - d);
+            if (!best || dist < best.dist) best = { d, h, dist };
+          });
+        });
+        result.set(dateKey(year, month, best.d), best.h.name);
+        remainingDays.splice(remainingDays.indexOf(best.d), 1);
+        remainingHols.splice(remainingHols.indexOf(best.h), 1);
+      }
+      // 假日數量不夠配對時（同月國定假日只有1個但有多天補休），剩下的用最近距離（可重複）
+      remainingDays.forEach(d => {
+        const nearest = monthHolidays.reduce((b, h) => Math.abs(h.day - d) < Math.abs(b.day - d) ? h : b);
+        result.set(dateKey(year, month, d), nearest.name);
+      });
+    }
+    return result;
+  }, [schedule, getHolidayColName]);
+
   // 依員工班別、班表代號、日期 → 代號表實際代號
   // month/year 明確傳入，避免 range mode 跨月時用錯 selectedMonth
   const getDisplayCode = useCallback((emp, rawCode, day, month = selectedMonth, year = selectedYear) => {
@@ -2154,22 +2191,16 @@ function ScheduleTable() {
         const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === colName);
         if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
       }
-      // Fallback：找 NATIONAL_HOLIDAYS 同年月中距此日最近的假日代碼
-      const sameMonthHols = NATIONAL_HOLIDAYS.filter(h => h.year === year && h.month === month);
-      if (sameMonthHols.length > 0) {
-        const nearest = sameMonthHols.reduce((best, h) =>
-          Math.abs(h.day - day) < Math.abs(best.day - day) ? h : best
-        );
-        const fallbackCol = getHolidayColName(year, month, nearest.day);
-        if (fallbackCol) {
-          const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === fallbackCol);
-          if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
-        }
+      // Fallback：非假日當天的「國」（補休調整），用同月貪婪配對決定歸屬哪個假日
+      const assignedName = getAmbiguousHolidayMap(emp.id, month, year).get(dateKey(year, month, day));
+      if (assignedName) {
+        const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === assignedName);
+        if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
       }
       return rawCode;
     }
     return rawCode;
-  }, [shiftTypes, shiftCodeRows, shiftCodeHeaders, getHolidayColName, openHolidays, selectedYear, selectedMonth]);
+  }, [shiftTypes, shiftCodeRows, shiftCodeHeaders, getHolidayColName, getAmbiguousHolidayMap, openHolidays, selectedYear, selectedMonth]);
 
   // 「國」→ 假日短名（不依班別，只依日期與 openHolidays）
   const getHolidayLabel = useCallback((day, month = selectedMonth, year = selectedYear) => {
@@ -2533,8 +2564,18 @@ function ScheduleTable() {
 
         if (dateCols.length === 0) { toast('找不到日期欄位', 'error'); return; }
 
+        // 開放排班日期區間限制（與手動點格子編輯的 isEditable 規則一致）
+        const rangeStart = scheduleRange.start ? parseLocal(scheduleRange.start) : null;
+        const rangeEnd   = scheduleRange.end   ? parseLocal(scheduleRange.end)   : null;
+        const inRange = (month, day) => {
+          if (!rangeStart || !rangeEnd) return true;
+          const d = new Date(getYear(month), month - 1, day);
+          return d >= rangeStart && d <= rangeEnd;
+        };
+
         const updates = {};
         let updatedCells = 0;
+        let skippedOutOfRange = 0;
         const unmatchedIds = [];
         for (let r = dataStart; r < aoa.length; r++) {
           const row = aoa[r];
@@ -2555,6 +2596,7 @@ function ScheduleTable() {
           if (!updates[emp.id]) updates[emp.id] = {};
           const weekExCount = {};
           for (const { col, month, day } of dateCols) {
+            if (!inRange(month, day)) { skippedOutOfRange++; continue; }
             let val = mapVal(row[col]);
             if (val === '例') {
               const d = new Date(getYear(month), month - 1, day);
@@ -2577,6 +2619,11 @@ function ScheduleTable() {
           ? `（未匹配：${unmatchedIds.slice(0, 10).join('、')}${unmatchedIds.length > 10 ? `…等${unmatchedIds.length}筆` : ''}）`
           : '';
 
+        // 若整份檔案的日期都不在開放排班區間內，直接視為匯入失敗
+        if (skippedOutOfRange > 0 && updatedCells === 0) {
+          toast(`匯入失敗：檔案日期不在開放排班區間內（${scheduleRange.start}～${scheduleRange.end}）`, 'error');
+          return;
+        }
         if (Object.keys(updates).length === 0) {
           toast(`找不到符合員工編號的資料${unmatchedDetail}`, 'error');
           return;
@@ -2586,7 +2633,7 @@ function ScheduleTable() {
           Object.entries(updates).forEach(([id, days]) => { next[id] = { ...next[id], ...days }; });
           return next;
         });
-        toast(`匯入完成：${Object.keys(updates).length} 位員工、${updatedCells} 格班表已更新${skippedEmps > 0 ? `，${skippedEmps} 筆員編未匹配${unmatchedDetail}` : ''}`, 'success');
+        toast(`匯入完成：${Object.keys(updates).length} 位員工、${updatedCells} 格班表已更新${skippedOutOfRange > 0 ? `，${skippedOutOfRange} 格超出開放排班區間已略過` : ''}${skippedEmps > 0 ? `，${skippedEmps} 筆員編未匹配${unmatchedDetail}` : ''}`, 'success');
       } catch (err) {
         toast('匯入失敗：' + err.message, 'error');
       }
@@ -3148,7 +3195,7 @@ function fuzzyMatch(headers) {
 
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
+    warehouses, vendors, selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -3182,11 +3229,12 @@ function EmployeeRoster() {
   const vendorOptions = useMemo(() =>
     ['全部', ...new Set(employees.map(e => e.vendor))], [employees]);
 
-  const handleAdd = () => {
-    if (!newEmp.empId || !newEmp.name || !newEmp.vendor) {
+  const handleAdd = (form) => {
+    const data = form ?? newEmp;
+    if (!data.empId || !data.name || !data.vendor) {
       toast('員編、姓名、廠商為必填', 'error'); return;
     }
-    const emp = { ...newEmp, id: 'e' + Date.now() };
+    const emp = { ...data, id: 'e' + Date.now() };
     setEmployees(prev => {
       const next = [...prev, emp];
       setSchedule(s => {
@@ -3379,8 +3427,21 @@ function EmployeeRoster() {
     e.target.value = '';
   };
 
+  const vendorNameOptions = useMemo(() => [...new Set(vendors.map(v => v.name))], [vendors]);
+  const deptOptions = useMemo(() =>
+    [...new Set(warehouses.flatMap(w => (w.departments ?? []).map(d => d.name)).filter(Boolean))],
+    [warehouses]);
+  const groupOptions = useMemo(() =>
+    [...new Set(warehouses.flatMap(w => (w.departments ?? []).flatMap(d => d.groups ?? [])).filter(Boolean))],
+    [warehouses]);
+
   const EmpModal = ({ emp, onSave, onClose, title }) => {
     const [form, setForm] = useState(emp);
+    const selectFields = [
+      { key: 'vendor', label: '廠商', options: vendorNameOptions },
+      { key: 'dept',   label: '課別', options: deptOptions },
+      { key: 'group',  label: '組別', options: groupOptions },
+    ];
     return (
       <Modal onClose={onClose}>
         <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
@@ -3388,9 +3449,6 @@ function EmployeeRoster() {
           {[
             { key: 'empId',  label: '員編' },
             { key: 'name',   label: '姓名' },
-            { key: 'vendor', label: '廠商' },
-            { key: 'dept',   label: '課別' },
-            { key: 'group',  label: '組別' },
           ].map(f => (
             <div key={f.key} className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
@@ -3398,6 +3456,20 @@ function EmployeeRoster() {
                 className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
             </div>
           ))}
+          {selectFields.map(f => {
+            const current = form[f.key] ?? '';
+            const options = current && !f.options.includes(current) ? [current, ...f.options] : f.options;
+            return (
+              <div key={f.key} className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
+                <select value={current} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                  <option value="">請選擇{f.label}</option>
+                  {options.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+            );
+          })}
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">狀態</label>
             <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
@@ -3535,7 +3607,7 @@ function EmployeeRoster() {
       {showAddModal && (
         <EmpModal
           emp={newEmp} title="新增人員" onClose={() => setShowAddModal(false)}
-          onSave={form => { setNewEmp(form); handleAdd(); }}
+          onSave={form => handleAdd(form)}
         />
       )}
       {editTarget && (
