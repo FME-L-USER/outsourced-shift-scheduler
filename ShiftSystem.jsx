@@ -4578,6 +4578,7 @@ function Attendance() {
   const [attendDate, setAttendDate] = useState(todayStr);
   const [groupFilter, setGroupFilter] = useState('');
   const [addModal, setAddModal] = useState(false);
+  const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
@@ -5096,19 +5097,46 @@ function Attendance() {
     </label>
   );
 
+  // ── 手機控管統計
+  const phoneAllPeople = [...scopedEmps.map(e => getRecord(e.id)), ...dateExtras];
+  const phoneSignedInCount = phoneAllPeople.filter(r => r.signedIn).length;
+  const phoneSignedOutCount = phoneAllPeople.filter(r => r.signedOut).length;
+  const phoneSubmittedCount = phoneAllPeople.filter(r => r.phoneSubmitted).length;
+  const phoneIsIncomplete = r => !(r.signedIn && r.phoneSubmitted);
+  const phoneIncompleteCount = phoneAllPeople.filter(phoneIsIncomplete).length;
+
+  const StatTile = ({ label, value, total, color }) => (
+    <div className="flex-1 min-w-[100px] bg-white border border-[#DDD9D0] rounded-xl px-4 py-3">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className={`text-xl font-bold ${color}`}>{value}<span className="text-sm text-slate-400 font-normal">/{total}</span></div>
+    </div>
+  );
+
   // ── 手機控管分頁
   const phonePane = (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <StatTile label="應到人數" value={totalCount} total={totalCount} color="text-slate-700" />
+        <StatTile label="已簽到" value={phoneSignedInCount} total={totalCount} color="text-teal-600" />
+        <StatTile label="已簽退" value={phoneSignedOutCount} total={totalCount} color="text-slate-600" />
+        <StatTile label="已繳交手機" value={phoneSubmittedCount} total={totalCount} color="text-indigo-600" />
+        <StatTile label="尚未完成" value={phoneIncompleteCount} total={totalCount} color={phoneIncompleteCount > 0 ? 'text-rose-600' : 'text-emerald-600'} />
+      </div>
+
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
         <div>
           <label className="block text-xs text-slate-500 mb-1">日期</label>
           <input type="date" value={attendDate} onChange={e => setAttendDate(e.target.value)}
             className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
         </div>
+        <label className="flex items-center gap-1.5 cursor-pointer text-sm text-slate-600 select-none">
+          <input type="checkbox" checked={phoneOnlyIncomplete}
+            onChange={ev => setPhoneOnlyIncomplete(ev.target.checked)}
+            className="w-4 h-4 accent-rose-600 cursor-pointer" />
+          只顯示未完成（未簽到或未繳交手機）
+        </label>
         <div className="ml-auto text-sm text-slate-500">
-          已繳交手機 <span className="font-bold text-indigo-700">
-            {scopedEmps.filter(e => getRecord(e.id).phoneSubmitted).length + dateExtras.filter(e => e.phoneSubmitted).length}
-          </span>/{totalCount}人
+          已繳交手機 <span className="font-bold text-indigo-700">{phoneSubmittedCount}</span>/{totalCount}人
         </div>
       </div>
 
@@ -5122,8 +5150,12 @@ function Attendance() {
         return (
           <div className="space-y-2">
             {allVendors.map(vName => {
-              const longEmps = vendorGroups[vName] ?? [];
-              const tempEmps = extrasVendorGroups[vName] ?? [];
+              let longEmps = vendorGroups[vName] ?? [];
+              let tempEmps = extrasVendorGroups[vName] ?? [];
+              if (phoneOnlyIncomplete) {
+                longEmps = longEmps.filter(emp => phoneIsIncomplete(getRecord(emp.id)));
+                tempEmps = tempEmps.filter(e => phoneIsIncomplete(e));
+              }
               const all = [...longEmps, ...tempEmps];
               if (all.length === 0) return null;
               return (
@@ -5189,6 +5221,9 @@ function Attendance() {
                 </div>
               );
             })}
+            {phoneOnlyIncomplete && phoneIncompleteCount === 0 && (
+              <p className="text-sm text-emerald-600 text-center py-10">🎉 全員已完成簽到與繳交手機</p>
+            )}
           </div>
         );
       })()}

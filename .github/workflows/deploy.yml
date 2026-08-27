@@ -1,5 +1,5 @@
 # generated-by: github-action-n
-# version: 2.1.8
+# version: 2.1.9
 name: Deploy
 
 on:
@@ -27,6 +27,20 @@ jobs:
         id: svc
         run: |
           echo "name=${{ env.SERVICE_NAME }}" >> $GITHUB_OUTPUT
+
+      - name: Set deployer label
+        id: deployer
+        run: |
+          FULL_EMAIL="${{ github.event.head_commit.author.email }}"
+          PREFIX="${FULL_EMAIL%%@*}"
+          LABEL=$(echo "$PREFIX" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63)
+          REPO="${{ github.event.repository.name }}"
+          REPO_LABEL=$(echo "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | cut -c1-63)
+          echo "label=$LABEL" >> $GITHUB_OUTPUT
+          echo "repo=$REPO_LABEL" >> $GITHUB_OUTPUT
+          echo "Deployed by (GitHub actor): ${{ github.actor }}"
+          echo "Deployed by (full email): $FULL_EMAIL"
+          echo "Repo: $REPO"
 
       - name: Check security report
         run: |
@@ -67,7 +81,7 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           source: .
           no_traffic: true
-          flags: --no-invoker-iam-check
+          flags: --no-invoker-iam-check --update-labels=deployed-by=${{ steps.deployer.outputs.label }},repo=${{ steps.deployer.outputs.repo }}
 
       - name: Deploy new service
         id: deploy_new
@@ -78,7 +92,8 @@ jobs:
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           source: .
-          flags: --no-invoker-iam-check
+          no_traffic: true
+          flags: --no-invoker-iam-check --update-labels=deployed-by=${{ steps.deployer.outputs.label }},repo=${{ steps.deployer.outputs.repo }}
 
       - name: Get deployed image digest
         id: image
@@ -137,7 +152,7 @@ jobs:
               COUNT=$(echo "$VULN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('occurrences',[])))" 2>/dev/null || echo "0")
               HIGH=$(echo "$VULN" | python3 -c "import sys,json;d=json.load(sys.stdin);print(sum(1 for o in d.get('occurrences',[]) if o.get('vulnerability',{}).get('severity','') in ['CRITICAL','HIGH','MEDIUM'] or (o.get('vulnerability',{}).get('severity','') in ['LOW','MINIMAL','','SEVERITY_UNSPECIFIED'] and any(p.get('fixedVersion',{}).get('name','') not in ['','none'] for p in o.get('vulnerability',{}).get('packageIssue',[])))))" 2>/dev/null || echo "0")
               WARN=$(echo "$VULN" | python3 -c "import sys,json;d=json.load(sys.stdin);print(sum(1 for o in d.get('occurrences',[]) if o.get('vulnerability',{}).get('severity','') in ['LOW','MINIMAL','','SEVERITY_UNSPECIFIED'] and not any(p.get('fixedVersion',{}).get('name','') not in ['','none'] for p in o.get('vulnerability',{}).get('packageIssue',[]))))" 2>/dev/null || echo "0")
-              echo "Found $COUNT vulnerabilities: $HIGH blocking, $WARN warning-only."
+              echo "Found $COUNT vulnerabilities: $HIGH blocking (critical/high/medium or fixable low), $WARN warning-only (unfixable low)."
               echo "$VULN" | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'  [{o.get(\"vulnerability\",{}).get(\"severity\",\"\")}] {o.get(\"vulnerability\",{}).get(\"shortDescription\",\"\")} {p.get(\"affectedPackage\",\"\")} {p.get(\"affectedVersion\",{}).get(\"name\",\"\")} -> fix: {p.get(\"fixedVersion\",{}).get(\"name\",\"none\")}') for o in d.get('occurrences',[]) for p in o.get('vulnerability',{}).get('packageIssue',[])]" 2>/dev/null || true
               echo "count=$COUNT" >> $GITHUB_OUTPUT
               echo "high=$HIGH" >> $GITHUB_OUTPUT
@@ -149,7 +164,7 @@ jobs:
             echo "SCAN_TIMEOUT=true" >> $GITHUB_ENV
             echo "count=-1" >> $GITHUB_OUTPUT
             echo "high=1" >> $GITHUB_OUTPUT
-            echo "Scan timeout after 900s. Traffic will remain at 0%."
+            echo "Scan timeout after 900s. Treating as failure. Traffic will remain at 0%."
           fi
 
       - name: Open traffic if scan passed
@@ -177,8 +192,10 @@ jobs:
         if: steps.scan.outputs.high != '0'
         run: |
           if [ "${{ env.SCAN_TIMEOUT }}" = "true" ]; then
+            echo "SCAN_ACTION=timeout" >> $GITHUB_ENV
             echo "掃描逾時（15分鐘），掃描異常失敗，請AI協助確認問題。Traffic remains at 0%."
           else
-            echo "Blocking vulnerabilities found. Traffic remains at 0%."
+            echo "SCAN_ACTION=blocked" >> $GITHUB_ENV
+            echo "Blocking vulnerabilities found (critical/high/medium or fixable low). Traffic remains at 0%."
           fi
           exit 1
