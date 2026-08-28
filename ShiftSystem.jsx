@@ -7666,7 +7666,7 @@ export default function App() {
   const saveDebouncerRef = useRef(null);
   const forceSaveRef = useRef(false); // 匯入等重要操作後設 true，下次 effect 立即存
 
-  const loadServerState = useCallback(async (token) => {
+  const loadServerState = useCallback(async (token, roleOverride) => {
     // 將本地 localStorage 全部狀態寫回 DB（用於本地資料比 DB 新的情況）
     const writeLocalToServer = () => {
       const localShiftTypesByWh = {};
@@ -7706,8 +7706,12 @@ export default function App() {
     };
 
     try {
-      const isVendor = currentUser?.role === ROLES.VENDOR;
-      const isWorker = currentUser?.role === ROLES.WORKER;
+      // 角色須由呼叫端傳入：登入當下 setCurrentUser 尚未生效，且本 callback 的 deps
+      // 皆為穩定 setter，會永久捕捉到初次渲染時的 currentUser（null），
+      // 導致 vendor/worker 一律走到 admin 分支打 GET /api/state 被 403，讀不到任何資料
+      const role = roleOverride ?? currentUser?.role;
+      const isVendor = role === ROLES.VENDOR;
+      const isWorker = role === ROLES.WORKER;
 
       if (isWorker) {
         // worker 讀取班表（GET /api/schedule）+ 自己的出勤/手機控管紀錄（GET /api/attendance，後端已限縮為本人）
@@ -8080,6 +8084,7 @@ export default function App() {
         if (!apiUser) { localStorage.removeItem(JWT_KEY); return; }
         const role = apiUser.role === 'admin' ? ROLES.ADMIN
                    : apiUser.role === 'vendor' ? ROLES.VENDOR
+                   : apiUser.role === 'worker' ? ROLES.WORKER
                    : ROLES.AREA;
         const allowedWh = apiUser.allowedWarehouses || [];
         const userVendors = role === ROLES.VENDOR
@@ -8094,7 +8099,7 @@ export default function App() {
         });
         if (role === ROLES.VENDOR || role === ROLES.WORKER) setCurrentPage('schedule');
         if (allowedWh.length === 1) setSelectedWarehouse(allowedWh[0]);
-        loadServerState(token);
+        loadServerState(token, role);
       })
       .catch(() => localStorage.removeItem(JWT_KEY));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -8103,7 +8108,7 @@ export default function App() {
   const handleLogin = useCallback((user, jwtToken) => {
     if (jwtToken) {
       localStorage.setItem(JWT_KEY, jwtToken);
-      loadServerState(jwtToken);
+      loadServerState(jwtToken, user?.role);
     }
     if (user._apiAuth) {
       setCurrentUser(user);
