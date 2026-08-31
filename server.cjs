@@ -130,6 +130,150 @@ async function initDB() {
   await seedDaxiEmployees();
   // 大肚倉/岡山倉員工帳號與清冊種子資料（role=area，可使用所有分頁功能）
   await seedAreaEmployees();
+  // 大溪倉員工（role=area 日翊，2026 更新名單）
+  await seedDaxiAreaEmployees();
+}
+
+// ── 大溪倉人員名單（2026 更新版，role=area 日翊）──────────────────────────────
+// 來源：倉庫人員名單.xlsx。wh='可視全倉' 者為主管，開放全部倉別。
+// 同一人可跨多個課別（清冊會各建一筆），帳號則以 username 去重。
+const DAXI_AREA_EMPLOYEES = [
+  { u: 'una800607', n: '王敏瑜', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'd57633', n: '王歆語', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'a033825385', n: '王語喬', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'x6706889', n: '呂芷軒', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'kiki1123', n: '呂嘉綾', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'lee0929', n: '李育瑄', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'wei', n: '李薇', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'huj102001', n: '林昀安', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'an05566', n: '林明霞', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'a3731703', n: '林羅響', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'cpu1020', n: '邱品惠', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 't48568', n: '邱綉婷', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'car55688', n: '徐輔懋', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'king', n: '高政華', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'yan', n: '張雁婷', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'ry10806005', n: '許佑豪', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'mingli1125', n: '彭明莉', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'lv6868', n: '温惠君', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'qaz1346', n: '黃邱鴻', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'd10813023', n: '黃俊誠', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'kun1201', n: '楊裔堃', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'zmliu', n: '劉姿旻', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'ooxx0105', n: '蔡晏如', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'mini0228', n: '賴韋妏', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'luo', n: '駱佩妏', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'm5426', n: '駱眉綺', wh: '大溪倉', d: '大溪理貨一課' },
+  { u: 'yu0314', n: '方心妤', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'bigcavan', n: '全雅慈', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'jiu120914', n: '江映慈', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'kelly1009', n: '呂羿螢', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'the1053', n: '林玠含', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'avon', n: '林雅芳', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'yilu1983', n: '陳怡茹', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'yung', n: '陳詩永', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'cschen', n: '陳嘉興', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'winnie2023', n: '黃安笛', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'kun1201', n: '楊裔堃', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'liwen1212', n: '董麗雯', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'jz13', n: '劉俊助', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'ning', n: '鄭亦甯', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'zheng1212', n: '鄭喻云', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'hw289', n: '鄭惠雯', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'jiarong84', n: '謝佳蓉', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'upin0122', n: '鍾玉屏', wh: '大溪倉', d: '大溪理貨二課' },
+  { u: 'cami700220', n: '李淑惠', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'judy', n: '林麗雲', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'beyi', n: '洪淑娥', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'papa0130', n: '洪逸樺', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'lin', n: '張秋梅', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'adychang', n: '張綾娟', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'wandychen', n: '陳怡如', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'choeuyi', n: '陳明憶', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'lulu5566', n: '曾郁茹', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'kun1201', n: '楊裔堃', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'angieliau', n: '廖亞仙', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'soda0968', n: '蔡欣如', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'lynn110501', n: '鄭伊伶', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'huei', n: '蕭嘉慧', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'antin', n: '鮑玉婷', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'ebba', n: '鍾惠玲', wh: '大溪倉', d: '倉儲管理課' },
+  { u: 'vcd5240', n: '江衍成', wh: '大溪倉', d: '運務課' },
+  { u: 'elinor3514', n: '吳巧婷', wh: '大溪倉', d: '運務課' },
+  { u: 'duck1027', n: '李淑芬', wh: '大溪倉', d: '運務課' },
+  { u: 'sonialin', n: '林佩菁', wh: '大溪倉', d: '運務課' },
+  { u: 'jia0818', n: '姜佳玟', wh: '大溪倉', d: '運務課' },
+  { u: 'reyi159357', n: '梁景棠', wh: '大溪倉', d: '運務課' },
+  { u: 'scott07', n: '許聖堯', wh: '大溪倉', d: '運務課' },
+  { u: 'ning1225', n: '陳彥寧', wh: '大溪倉', d: '運務課' },
+  { u: 'fang', n: '陳桂芳', wh: '大溪倉', d: '運務課' },
+  { u: 'julie1020', n: '黃馨儀', wh: '大溪倉', d: '運務課' },
+  { u: 'kun1201', n: '楊裔堃', wh: '大溪倉', d: '運務課' },
+  { u: 'akane1527', n: '蔡孟純', wh: '大溪倉', d: '運務課' },
+  { u: 'chinhon', n: '蔡承翰', wh: '大溪倉', d: '運務課' },
+  { u: 'feather', n: '盧嬿羽', wh: '大溪倉', d: '運務課' },
+  { u: 'iwsweet168', n: '簡志富', wh: '大溪倉', d: '運務課' },
+  { u: 'jerry16899', n: '黃則翰', wh: '可視全倉', d: '主管' },
+  { u: 'bin.liu', n: '劉宏斌', wh: '可視全倉', d: '主管' },
+  { u: 'kun1201', n: '楊裔堃', wh: '可視全倉', d: '主管' },
+  { u: 'mgmg.wang', n: '王筱鎂', wh: '可視全倉', d: '主管' },
+  { u: 'vincent', n: '黃文呈', wh: '可視全倉', d: '主管' },
+];
+
+async function seedDaxiAreaEmployees() {
+  const { rows: existingUsers } = await pool.query('SELECT username FROM users');
+  const existingUsernames = new Set(existingUsers.map(r => r.username));
+
+  // 1. 建立帳號（role=area）；已存在者不動，避免覆蓋管理員手動調整過的角色
+  const uniqueUsers = [...new Map(DAXI_AREA_EMPLOYEES.map(e => [e.u, e])).values()];
+  let created = 0;
+  for (const e of uniqueUsers) {
+    if (existingUsernames.has(e.u)) continue;
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
+       VALUES ($1, $2, 'ad_auth_only', 'area', true, $3, '{}', '{}')
+       ON CONFLICT (username) DO NOTHING`,
+      [e.u, e.u, e.n]
+    );
+    created++;
+  }
+  if (created > 0) console.log(`大溪倉員工帳號：新建 ${created} 筆`);
+
+  // 2. 倉別：主管開放全倉，其餘僅大溪倉（wh1）；僅更新尚未設定者，不覆蓋手動調整
+  const supers = [...new Set(DAXI_AREA_EMPLOYEES.filter(e => e.wh === '可視全倉').map(e => e.u))];
+  const normals = [...new Set(DAXI_AREA_EMPLOYEES.filter(e => e.wh !== '可視全倉').map(e => e.u))]
+    .filter(u => !supers.includes(u));
+  if (supers.length)  await pool.query(`UPDATE users SET allowed_warehouses = '{wh1,wh2,wh3}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`, [supers]);
+  if (normals.length) await pool.query(`UPDATE users SET allowed_warehouses = '{wh1}' WHERE username = ANY($1) AND allowed_warehouses = '{}'`, [normals]);
+
+  // 3. 人員清冊：依「帳號＋課別」為單位，新增缺少者並同步課別名稱
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const state = rows[0]?.data;
+  if (!state) return; // app_state 尚未初始化，待管理員首次登入後再寫入
+
+  const existing = Array.isArray(state.employees) ? state.employees : [];
+  const byId = new Map(existing.map(e => [e.id, e]));
+  let added = 0, updated = 0;
+  for (const e of DAXI_AREA_EMPLOYEES) {
+    if (e.wh === '可視全倉') continue; // 主管不列入各課別清冊
+    const id = `emp_${e.u}_${e.d.replace(/[^a-z0-9]/gi, '')}`;
+    const cur = byId.get(id);
+    if (!cur) {
+      byId.set(id, { id, empId: e.u, name: e.n, vendor: '', dept: e.d, group: '', status: '在職' });
+      added++;
+    } else if (cur.dept !== e.d || cur.name !== e.n) {
+      byId.set(id, { ...cur, name: e.n, dept: e.d });
+      updated++;
+    }
+  }
+  if (added === 0 && updated === 0) return;
+
+  const merged = [...byId.values()];
+  await pool.query(
+    `UPDATE app_state SET data = jsonb_set(data, '{employees}', $1::jsonb), updated_at = NOW() WHERE id='main'`,
+    [JSON.stringify(merged)]
+  );
+  console.log(`大溪倉人員清冊：新增 ${added} 筆、更新 ${updated} 筆`);
 }
 
 // ── 大溪倉員工種子資料 ────────────────────────────────────────────────────────
@@ -953,6 +1097,49 @@ app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('worker-password error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── POST /api/auth/reset-password （admin / area）──────────
+// 日翊協助忘記密碼者還原為預設密碼（帳號／員工編號），對方下次登入須設定新密碼。
+// 不接受指定密碼：避免協助者知悉他人最終密碼，也沿用系統既有的首次登入規則。
+app.post('/api/auth/reset-password', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { kind, target } = req.body ?? {};
+  const key = String(target ?? '').trim();
+  if (!key) return res.status(400).json({ error: '缺少帳號或員工編號' });
+
+  try {
+    if (kind === 'vendor') {
+      // 清空 password_hash → 登入時走首次登入流程（密碼＝帳號）並要求改密碼
+      const { rows } = await pool.query(
+        `UPDATE users SET password_hash = '' WHERE username = $1 AND role = 'vendor' RETURNING username`,
+        [key]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: '找不到此廠商幹部帳號' });
+      return res.json({ ok: true, username: rows[0].username, defaultPassword: rows[0].username });
+    }
+
+    if (kind === 'worker') {
+      const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+      const data = rows[0]?.data ?? {};
+      const emp = (data.employees ?? []).find(e => String(e.empId ?? '').trim() === key);
+      if (!emp) return res.status(404).json({ error: '找不到此員工編號' });
+      // 移除已設定的密碼 → 回到首次登入狀態（密碼＝員工編號）
+      await pool.query(
+        `UPDATE app_state
+            SET data = jsonb_set(data, '{workerPwds}',
+                  COALESCE(data->'workerPwds', '{}'::jsonb) - $1),
+                updated_at = NOW()
+          WHERE id = 'main'`,
+        [emp.empId]
+      );
+      return res.json({ ok: true, username: emp.empId, name: emp.name, defaultPassword: emp.empId });
+    }
+
+    return res.status(400).json({ error: '不支援的重設類型' });
+  } catch (e) {
+    console.error('reset-password error:', e.message);
+    return res.status(500).json({ error: '伺服器錯誤' });
   }
 });
 

@@ -776,7 +776,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
           onLogin({
             id: `api_${data.user.id}`, username: data.user.username, name: data.user.username,
             role: apiRole, vendors: apiVendors,
-            permissions: getDefaultPermissions(apiRole),
+            permissions: buildPermsFromPagePerms(apiRole, data.user.page_perms, data.user.allowedWarehouses),
             allowedWarehouses: data.user.allowedWarehouses || [],
             approved: true, _apiAuth: true,
           }, data.token);
@@ -1121,11 +1121,26 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
 // NAVIGATION
 // ─────────────────────────────────────────────
 
+// 解析登入者對應的人員清冊資料：
+// 委外人員以 employeeId 對應；委外幹部若由委外人員升級而來，帳號即為員工編號，
+// 但經後端 API 登入時不會帶回 employeeId，故再以帳號比對員工編號。
+function resolveSelfEmployee(user, employees) {
+  if (!user || !Array.isArray(employees)) return null;
+  const byId = user.employeeId
+    ? employees.find(e => e.id === user.employeeId)
+    : null;
+  if (byId) return byId;
+  const uname = String(user.username ?? '').trim();
+  if (!uname) return null;
+  return employees.find(e => String(e.empId ?? '').trim() === uname) ?? null;
+}
+
 const NAV_ITEMS = [
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
-  { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER] },
+  { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -1164,11 +1179,53 @@ function SaveButton({ onSave, collapsed, mobile = false }) {
   );
 }
 
+// 日翊員工帳號可由管理員逐一設定「可看哪些分頁」，設定值存於 DB 的 page_perms。
+// 空陣列＝未設定，沿用角色預設，避免既有帳號在此功能上線後突然失去所有分頁。
+// 日翊員工帳號的預設分頁權限：預設全選，
+// 但「手機控管」為大肚倉專屬作業，非大肚倉的員工預設不勾選。
+// 未指派倉別者視同不限制（一併給予）。
+const DADU_WH_ID = 'wh2';
+function defaultStaffPageKeys(allowedWarehouses) {
+  const wh = Array.isArray(allowedWarehouses) ? allowedWarehouses : [];
+  const canDadu = wh.length === 0 || wh.includes(DADU_WH_ID);
+  return NAV_ITEMS
+    .filter(n => n.roles.includes(ROLES.AREA))
+    .filter(n => canDadu || n.key !== 'phoneControl')
+    .map(n => n.key);
+}
+
+function buildPermsFromPagePerms(role, pagePerms, allowedWarehouses) {
+  const base = getDefaultPermissions(role);
+  if (role === ROLES.ADMIN) return base; // 管理員永遠全開
+  // 未設定（空陣列）＝採用預設值，而非關閉全部
+  const effective = (Array.isArray(pagePerms) && pagePerms.length > 0)
+    ? pagePerms
+    : defaultStaffPageKeys(allowedWarehouses);
+  const allowed = new Set(effective);
+  const perms = { ...base };
+  NAV_ITEMS.forEach(n => {
+    if (!n.roles.includes(role)) return;
+    const on = allowed.has(n.key);
+    perms[n.key] = { ...(base[n.key] ?? {}), view: on };
+    if (!on) {
+      PAGE_PERMISSIONS.find(pp => pp.key === n.key)
+        ?.features.forEach(f => { perms[n.key][f.key] = false; });
+    }
+  });
+  return perms;
+}
+
+// 可供日翊員工帳號設定的分頁（即 area 角色在選單中看得到的項目）
+const STAFF_PAGE_OPTIONS = () => NAV_ITEMS.filter(n => n.roles.includes(ROLES.AREA));
+
 function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, collapsed, onToggle }) {
+  const { employees: navEmployees } = useApp();
   const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
   const items = NAV_ITEMS.filter(n =>
     n.roles.includes(currentUser.role) &&
-    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false)
+    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false) &&
+    // 簽到/手機控管僅在登入者本身也是清冊內人員時才顯示
+    (!n.needsSelfEmp || !!resolveSelfEmployee(currentUser, navEmployees))
   );
 
   return (
@@ -1405,11 +1462,14 @@ function WarehouseDeptBar() {
 }
 
 function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, open, onClose }) {
+  const { employees: navEmployees } = useApp();  // hook 須在提早 return 之前呼叫
   if (!open) return null;
   const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
   const items = NAV_ITEMS.filter(n =>
     n.roles.includes(currentUser.role) &&
-    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false)
+    (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false) &&
+    // 簽到/手機控管僅在登入者本身也是清冊內人員時才顯示
+    (!n.needsSelfEmp || !!resolveSelfEmployee(currentUser, navEmployees))
   );
   return (
     <>
@@ -2098,6 +2158,9 @@ function ScheduleTable() {
   // 班別設定與代號表從 context 取得（跨裝置同步）
   const { shiftTypesByWh, shiftCodeRows, shiftCodeHeaders } = useApp();
   const isWorker = currentUser.role === ROLES.WORKER;
+  // 匯入／批次修正／存檔／匯出等管理工具僅限日翊（管理員、當區幹部）；
+  // 委外幹部與委外人員只保留唯讀操作（搜尋、顯示記號、列印報表）與點格子編輯班表
+  const isManager = currentUser.role === ROLES.ADMIN || currentUser.role === ROLES.AREA;
   const shiftTypes = shiftTypesByWh[selectedWarehouse ?? 'default'] ?? [];
 
   // 假日名稱 → 代號表欄位名稱對照
@@ -3111,35 +3174,31 @@ function ScheduleTable() {
                 : 'bg-white text-slate-600 border-[#DDD9D0] hover:bg-[#F5F2EC]'}`}>
             {showConverted ? '🔤 顯示代號中' : '🔡 顯示記號'}
           </button>
-          {!isWorker && checkedEmpIds.size > 0 && (
+          {isManager && checkedEmpIds.size > 0 && (
             <button onClick={resetChecked}
               className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 flex items-center gap-1">
               🔄 重排已選（{checkedEmpIds.size}人）
             </button>
           )}
-          {!isWorker && <button onClick={handleDownloadTemplate}
+          {isManager && <button onClick={handleDownloadTemplate}
             className="px-3 py-1.5 bg-[#1e3870] text-white rounded-lg text-sm hover:bg-[#1a2f5e] flex items-center gap-1">
             📋 下載匯入範本
           </button>}
-          {!isWorker && <button onClick={() => importFileRef.current.click()}
+          {isManager && <button onClick={() => importFileRef.current.click()}
             className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 flex items-center gap-1">
             📥 匯入班表
           </button>}
-          {!isWorker && <button onClick={handleFixWeeklyEx}
+          {isManager && <button onClick={handleFixWeeklyEx}
             className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-700 flex items-center gap-1">
             🔧 修正一週一例
           </button>}
-          {!isWorker && <button onClick={handleConvertHolidays}
+          {isManager && <button onClick={handleConvertHolidays}
             title="將每週超出 2 天的休假改標為國定假日（保留例假），每人最多轉換週期內的國定假日天數"
             className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
             🎌 一鍵轉換國
           </button>}
           <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
-          {!isWorker && <button onClick={exportScheduleRaw}
-            className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-1">
-            💾 存檔班表
-          </button>}
-          {!isWorker && <button onClick={exportConverted}
+          {isManager && <button onClick={exportConverted}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
           </button>}
@@ -4739,8 +4798,8 @@ function WorkerSelfCheck() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
 
-  const emp = employees.find(e => e.id === currentUser.employeeId);
-  const empId = currentUser.employeeId;
+  const emp = resolveSelfEmployee(currentUser, employees);
+  const empId = emp?.id;
 
   const rec = attendData[todayStr]?.[empId] ?? {};
   const setRec = patch => {
@@ -4793,16 +4852,32 @@ function WorkerSelfCheck() {
   );
 }
 
-function Attendance() {
-  const { employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
+// phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
+// 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
+function Attendance({ phoneOnly = false }) {
+  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
   const toast = useToast();
+
+  // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
+  const phoneWhInitRef = useRef(false);
+  useEffect(() => {
+    if (!phoneOnly || phoneWhInitRef.current) return;
+    phoneWhInitRef.current = true;
+    const dadu = warehouses.find(w => w.name === '大肚倉');
+    if (dadu && selectedWarehouse !== dadu.id) {
+      setSelectedWarehouse(dadu.id);
+      // 課別/組別屬於原倉別，換倉後需清除，否則會篩不到任何人
+      setSelectedDept(null);
+      setSelectedGroup(null);
+    }
+  }, [phoneOnly, warehouses, selectedWarehouse, setSelectedWarehouse, setSelectedDept, setSelectedGroup]);
 
   const todayStr = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   })();
 
-  const [subTab, setSubTab] = useState('attend');
+  const [subTab, setSubTab] = useState(phoneOnly ? 'phone' : 'attend');
   const [attendDate, setAttendDate] = useState(todayStr);
   const [groupFilter, setGroupFilter] = useState('');
   const [addModal, setAddModal] = useState(false);
@@ -5466,7 +5541,7 @@ function Attendance() {
   return (
     <div className="p-6 space-y-4 max-w-4xl">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-800">點名表</h2>
+        <h2 className="text-xl font-bold text-slate-800">{phoneOnly ? '手機控管' : '點名表'}</h2>
         {lastSync && (
           <span className="text-xs text-slate-400">
             🔄 {lastSync.toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit',second:'2-digit'})} 已同步
@@ -5474,14 +5549,13 @@ function Attendance() {
         )}
       </div>
 
-      <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
+      {!phoneOnly && <div className="flex border-b border-[#DDD9D0] bg-[#F5F2EC] rounded-t-xl overflow-x-auto">
         <AttendSubBtn active={subTab==='attend'} onClick={() => setSubTab('attend')} icon="☑️" label="點名" />
-        <AttendSubBtn active={subTab==='phone'}  onClick={() => setSubTab('phone')}  icon="📱" label="手機控管" />
         <AttendSubBtn active={subTab==='stats'}  onClick={() => setSubTab('stats')}  icon="📊" label="統計" />
         <AttendSubBtn active={subTab==='report'} onClick={() => setSubTab('report')} icon="📋" label="回報" />
         <AttendSubBtn active={subTab==='maint'}  onClick={() => setSubTab('maint')}  icon="⚙️" label="維護" />
         <AttendSubBtn active={subTab==='import'} onClick={() => setSubTab('import')} icon="📂" label="匯入" />
-      </div>
+      </div>}
 
       <div>
         {subTab === 'attend' && attendPane}
@@ -7060,7 +7134,7 @@ function ShiftCodeTable() {
 
 function AccountManagement() {
   const { users, setUsers, vendors, warehouses, currentUser, employees,
-          selectedWarehouse, selectedDept, selectedGroup } = useApp();
+          setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
 
@@ -7147,6 +7221,91 @@ function AccountManagement() {
       toast('更新失敗', 'error');
     } finally {
       setSavingWhFor(null);
+    }
+  };
+
+  // 日翊員工帳號：設定可看哪些分頁（存入 DB 的 page_perms）
+  const [savingPermFor, setSavingPermFor] = useState(null);
+  const [permOpenFor, setPermOpenFor] = useState(null);
+  const updateApiUserPages = async (userId, newPages) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setSavingPermFor(userId);
+    try {
+      const r = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ page_perms: newPages }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+        toast('分頁權限已更新：' + updated.username, 'success');
+      } else {
+        toast('更新失敗', 'error');
+      }
+    } catch {
+      toast('更新失敗', 'error');
+    } finally {
+      setSavingPermFor(null);
+    }
+  };
+
+  // 日翊員工帳號刪除（兩段式確認；grace 與自己的帳號不可刪）
+  // 注意：AD 帳號下次登入時系統會自動重建一筆最低權限(worker)紀錄，
+  //       因此刪除的效果是「撤銷現有角色與權限」，而非永久封鎖登入。
+  const [confirmDelFor, setConfirmDelFor] = useState(null);
+  const [deletingFor, setDeletingFor] = useState(null);
+  const deleteApiUser = async (u) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setDeletingFor(u.id);
+    try {
+      const r = await fetch(`/api/users/${u.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        setApiUsers(prev => prev.filter(x => x.id !== u.id));
+        toast(`已刪除帳號：${u.username}`, 'info');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast(d.error || '刪除失敗', 'error');
+      }
+    } catch {
+      toast('刪除失敗，請檢查網路', 'error');
+    } finally {
+      setDeletingFor(null);
+      setConfirmDelFor(null);
+    }
+  };
+
+  // 協助忘記密碼者還原預設密碼（密碼＝帳號／員工編號，對方登入後須自行設定新密碼）
+  const [resetPwdFor, setResetPwdFor] = useState(null);   // 兩段式確認
+  const [resettingFor, setResettingFor] = useState(null);
+  const resetPassword = async (kind, target, label) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setResettingFor(target);
+    try {
+      const r = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ kind, target }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        // 委外人員密碼同時存在本機快取，一併清除以免舊密碼被誤用
+        if (kind === 'worker') setWorkerPwds(prev => { const n = { ...prev }; delete n[target]; return n; });
+        toast(`${label} 密碼已重設，請以「${d.defaultPassword}」登入並設定新密碼`, 'success');
+      } else {
+        toast(d.error || '密碼重設失敗', 'error');
+      }
+    } catch {
+      toast('密碼重設失敗，請檢查網路', 'error');
+    } finally {
+      setResettingFor(null);
+      setResetPwdFor(null);
     }
   };
 
@@ -7455,6 +7614,22 @@ function AccountManagement() {
                         升級為委外幹部
                       </button>
                     )}
+                    {resettingFor === emp.empId
+                      ? <span className="px-2 py-1 text-xs text-slate-400">重設中…</span>
+                      : resetPwdFor === emp.empId
+                        ? <span className="flex items-center gap-1">
+                            <button onClick={() => resetPassword('worker', emp.empId, emp.name)}
+                              className="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700">
+                              確定重設
+                            </button>
+                            <button onClick={() => setResetPwdFor(null)}
+                              className="px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                          </span>
+                        : <button onClick={() => setResetPwdFor(emp.empId)}
+                            title="還原為預設密碼（＝員工編號），對方登入後須自行設定新密碼"
+                            className="px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded">
+                            重設密碼
+                          </button>}
                   </div>
                 </div>
               );
@@ -7518,6 +7693,99 @@ function AccountManagement() {
                           </button>
                         : null
                   }
+
+                  {/* 刪除帳號：grace 與自己的帳號不提供 */}
+                  {u.username !== 'grace' && u.username !== currentUser.username && (
+                    deletingFor === u.id
+                      ? <span className="text-xs text-slate-400">刪除中…</span>
+                      : confirmDelFor === u.id
+                        ? <span className="flex items-center gap-1">
+                            <span className="text-xs text-red-600">確定刪除？</span>
+                            <button onClick={() => deleteApiUser(u)}
+                              className="px-2 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700">
+                              確定
+                            </button>
+                            <button onClick={() => setConfirmDelFor(null)}
+                              className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100">
+                              取消
+                            </button>
+                          </span>
+                        : <button onClick={() => setConfirmDelFor(u.id)}
+                            title="刪除後該帳號的角色與權限一併清除；下次以 AD 登入時會重建為最低權限帳號"
+                            className="px-2.5 py-1 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50">
+                            刪除
+                          </button>
+                  )}
+                </div>
+
+                {/* 分頁權限（管理員全開不可調整） */}
+                <div className="w-full">
+                  {u.role === ROLES.ADMIN ? (
+                    <span className="text-xs text-slate-400 italic">管理員擁有全部分頁權限，無法調整</span>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setPermOpenFor(permOpenFor === u.id ? null : u.id)}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                        {permOpenFor === u.id ? '▲ 收合分頁權限' : '▼ 分頁權限'}
+                        <span className="text-slate-400 ml-1">
+                          ({(() => {
+                            const eff = (u.page_perms?.length ?? 0) > 0
+                              ? u.page_perms
+                              : defaultStaffPageKeys(u.allowedWarehouses);
+                            const isDefault = (u.page_perms?.length ?? 0) === 0;
+                            return `${eff.length}/${STAFF_PAGE_OPTIONS().length}${isDefault ? '（預設）' : ''}`;
+                          })()})
+                        </span>
+                      </button>
+                      {permOpenFor === u.id && (
+                        <div className="mt-2 p-3 bg-[#F5F2EC] rounded-xl border border-[#DDD9D0]">
+                          <p className="text-xs text-slate-500 mb-2">
+                            勾選此帳號可看到的分頁。預設為全選，但「手機控管」屬大肚倉作業，
+                            非大肚倉的員工預設不勾選（仍可手動開啟）。全部不勾＝還原為預設值。
+                          </p>
+                          <div className="flex items-center gap-2 mb-2">
+                            <button
+                              onClick={() => updateApiUserPages(u.id, STAFF_PAGE_OPTIONS().map(n => n.key))}
+                              disabled={savingPermFor === u.id}
+                              className="px-2.5 py-1 text-xs bg-indigo-600 text-white rounded-lg
+                                         hover:bg-indigo-700 disabled:opacity-50">
+                              全選
+                            </button>
+                            <button
+                              onClick={() => updateApiUserPages(u.id, [])}
+                              disabled={savingPermFor === u.id}
+                              className="px-2.5 py-1 text-xs border border-slate-300 text-slate-600 rounded-lg
+                                         hover:bg-slate-100 disabled:opacity-50">
+                              還原預設
+                            </button>
+                            <span className="text-xs text-slate-400">（預設＝全選，非大肚倉者不含手機控管）</span>
+                          </div>
+                          <div className="flex flex-wrap gap-3">
+                            {STAFF_PAGE_OPTIONS().map(n => {
+                              const cur = (u.page_perms?.length ?? 0) > 0
+                                ? u.page_perms
+                                : defaultStaffPageKeys(u.allowedWarehouses);
+                              const on = cur.includes(n.key);
+                              return (
+                                <label key={n.key} className="flex items-center gap-1.5 cursor-pointer select-none text-sm">
+                                  <input type="checkbox" checked={on}
+                                    disabled={savingPermFor === u.id}
+                                    onChange={() => updateApiUserPages(
+                                      u.id,
+                                      on ? cur.filter(k => k !== n.key) : [...cur, n.key]
+                                    )}
+                                    className="rounded accent-indigo-600" />
+                                  <span>{n.icon} {n.label}</span>
+                                </label>
+                              );
+                            })}
+                            {savingPermFor === u.id && <span className="text-xs text-slate-400">儲存中…</span>}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -7583,6 +7851,22 @@ function AccountManagement() {
                     className="px-2 py-1 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded">
                     刪除
                   </button>
+                  {resettingFor === u.username
+                    ? <span className="px-2 py-1 text-xs text-slate-400">重設中…</span>
+                    : resetPwdFor === u.username
+                      ? <span className="flex items-center gap-1">
+                          <button onClick={() => resetPassword('vendor', u.username, u.name || u.username)}
+                            className="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700">
+                            確定重設
+                          </button>
+                          <button onClick={() => setResetPwdFor(null)}
+                            className="px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                        </span>
+                      : <button onClick={() => setResetPwdFor(u.username)}
+                          title="還原為預設密碼（＝帳號），對方登入後須自行設定新密碼"
+                          className="px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded">
+                          重設密碼
+                        </button>}
                   <button onClick={() => setExpandedId(isOpen ? null : u.id)}
                     className="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded flex items-center gap-0.5">
                     {isOpen ? '▲' : '▼'} 權限
@@ -8256,7 +8540,7 @@ export default function App() {
         setCurrentUser({
           id: `api_${apiUser.id}`, username: apiUser.username, name: apiUser.name || apiUser.username,
           role, vendors: userVendors,
-          permissions: getDefaultPermissions(role),
+          permissions: buildPermsFromPagePerms(role, apiUser.page_perms, allowedWh),
           allowedWarehouses: allowedWh,
           approved: true, _apiAuth: true,
         });
@@ -8314,6 +8598,7 @@ export default function App() {
     shiftCodeRows, setShiftCodeRows,
     shiftCodeHeaders, setShiftCodeHeaders,
     attendSettings, setAttendSettings,
+    workerPwds, setWorkerPwds,
     currentUser,
     saveNow,
     triggerForceSave,
@@ -8329,6 +8614,7 @@ export default function App() {
     settings:   <Settings />,
     accounts:   <AccountManagement />,
     attendance: <Attendance />,
+    phoneControl: <Attendance phoneOnly />,
     selfCheck:  <WorkerSelfCheck />,
   };
 
