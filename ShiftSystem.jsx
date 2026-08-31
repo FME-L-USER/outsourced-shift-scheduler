@@ -2132,41 +2132,85 @@ function ScheduleTable() {
   }, []);
 
   // 「國」但當天非實際國定假日（補休調整到其他日期）時，該歸屬哪個假日：
-  // 同月內所有這類「不落在假日當天的國」與同月「實際假日」做最短距離貪婪配對（一對一，不重複），
-  // 避免同月有多個假日時，每一格各自找最近日期導致重複誤判成同一個假日
-  const getAmbiguousHolidayMap = useCallback((empId, month, year) => {
-    const monthHolidays = NATIONAL_HOLIDAYS.filter(h => h.year === year && h.month === month)
-      .map(h => ({ day: h.day, name: h.name }));
+  // 以「目前排班週期」為範圍（不可用月份，週期常跨月，否則跨月那天會配到週期外的假日），
+  // 將這些補休日與週期內的實際假日做最短距離一對一貪婪配對，避免重複誤判成同一個假日
+  // 注意：不可用 useCallback —— 相依陣列會在渲染當下就存取 dayHeaders（宣告於本函式之後），
+  //       會觸發 TDZ（Cannot access before initialization）
+  const getAmbiguousHolidayMap = (empId) => {
+    // 存代號表「欄位名稱」而非假日名稱：兩者不一定同名
+    //（中秋節→中秋、國慶日→雙十、農曆除夕→除夕…，須經 HOLIDAY_COL_MAP 轉換）
+    const periodHolidays = dayHeaders
+      .map(h => ({
+        dk: h.dk,
+        col: getHolidayColName(h.year, h.month, h.day),
+        ts: new Date(h.year, h.month - 1, h.day).getTime(),
+      }))
+      .filter(h => h.col);
     const result = new Map();
-    if (monthHolidays.length > 0) {
-      const daysInMo = getDaysInMonth(year, month);
-      const ambiguousDays = [];
-      for (let d = 1; d <= daysInMo; d++) {
-        const dk = dateKey(year, month, d);
-        if (schedule[empId]?.[dk] === '國' && !getHolidayColName(year, month, d)) ambiguousDays.push(d);
-      }
-      const remainingDays = [...ambiguousDays];
-      const remainingHols = [...monthHolidays];
-      while (remainingDays.length > 0 && remainingHols.length > 0) {
-        let best = null;
-        remainingDays.forEach(d => {
-          remainingHols.forEach(h => {
-            const dist = Math.abs(h.day - d);
-            if (!best || dist < best.dist) best = { d, h, dist };
-          });
-        });
-        result.set(dateKey(year, month, best.d), best.h.name);
-        remainingDays.splice(remainingDays.indexOf(best.d), 1);
-        remainingHols.splice(remainingHols.indexOf(best.h), 1);
-      }
-      // 假日數量不夠配對時（同月國定假日只有1個但有多天補休），剩下的用最近距離（可重複）
+    if (periodHolidays.length === 0) return result;
+
+    const remainingDays = dayHeaders
+      .filter(h => schedule[empId]?.[h.dk] === '國' && !getHolidayColName(h.year, h.month, h.day))
+      .map(h => ({ dk: h.dk, ts: new Date(h.year, h.month - 1, h.day).getTime() }));
+    // 一對一配對時優先使用「當天尚未被標記為國」的假日：假日當天若已標國，
+    // 該天會走精準對應用掉此假日，不應再被其他補休日搶走
+    const remainingHols = periodHolidays.filter(h => schedule[empId]?.[h.dk] !== '國');
+    while (remainingDays.length > 0 && remainingHols.length > 0) {
+      let best = null;
       remainingDays.forEach(d => {
-        const nearest = monthHolidays.reduce((b, h) => Math.abs(h.day - d) < Math.abs(b.day - d) ? h : b);
-        result.set(dateKey(year, month, d), nearest.name);
+        remainingHols.forEach(h => {
+          const dist = Math.abs(h.ts - d.ts);
+          if (!best || dist < best.dist) best = { d, h, dist };
+        });
       });
+      result.set(best.d.dk, best.h.col);
+      remainingDays.splice(remainingDays.indexOf(best.d), 1);
+      remainingHols.splice(remainingHols.indexOf(best.h), 1);
     }
+    // 補休日多於可一對一配對的假日時（例如假日當天都已標國、或補休天數本就較多），
+    // 剩下的退而求其次：用週期內全部假日中距離最近者（允許重複），至少不留下未轉換的「國」
+    remainingDays.forEach(d => {
+      const nearest = periodHolidays.reduce((b, h) =>
+        Math.abs(h.ts - d.ts) < Math.abs(b.ts - d.ts) ? h : b);
+      result.set(d.dk, nearest.col);
+    });
     return result;
-  }, [schedule, getHolidayColName]);
+  };
+
+  // 連續上班天數檢核（法規：不可連續上班 7 天）
+  // 須跨越週期邊界：前一週期末段接本週期開頭、本週期末段接下一週期，
+  // 因此往前後各多掃 7 天的實際班表資料。
+  // 週期內未填視為上班(V)（與畫面顯示一致）；週期外只採計「確實排定為 V」的日子，
+  // 避免尚未排班的空白日被誤判成連續上班。
+  const MAX_WORK_RUN = 7;
+  const getMaxWorkRun = (empId) => {
+    const row = schedule[empId];
+    if (!row || dayHeaders.length === 0) return 0;
+    const first = dayHeaders[0];
+    const last = dayHeaders[dayHeaders.length - 1];
+    const inPeriod = new Set(dayHeaders.map(h => h.dk));
+    const cur = new Date(first.year, first.month - 1, first.day);
+    cur.setDate(cur.getDate() - MAX_WORK_RUN);
+    const stop = new Date(last.year, last.month - 1, last.day);
+    stop.setDate(stop.getDate() + MAX_WORK_RUN);
+
+    let best = 0, run = 0, touches = false;
+    while (cur <= stop) {
+      const dk = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
+      const within = inPeriod.has(dk);
+      const isWork = within ? ((row[dk] ?? 'V') === 'V') : (row[dk] === 'V');
+      if (isWork) {
+        run++;
+        if (within) touches = true;
+      } else {
+        if (touches) best = Math.max(best, run);
+        run = 0; touches = false;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    if (touches) best = Math.max(best, run);
+    return best;
+  };
 
   // 依員工班別、班表代號、日期 → 代號表實際代號
   // month/year 明確傳入，避免 range mode 跨月時用錯 selectedMonth
@@ -2192,9 +2236,9 @@ function ScheduleTable() {
         if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
       }
       // Fallback：非假日當天的「國」（補休調整），用同月貪婪配對決定歸屬哪個假日
-      const assignedName = getAmbiguousHolidayMap(emp.id, month, year).get(dateKey(year, month, day));
-      if (assignedName) {
-        const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === assignedName);
+      const assignedCol = getAmbiguousHolidayMap(emp.id).get(dateKey(year, month, day));
+      if (assignedCol) {
+        const colIdx = shiftCodeHeaders.findIndex(h => String(h).trim() === assignedCol);
         if (colIdx !== -1 && row[colIdx + 1] != null) return String(row[colIdx + 1]);
       }
       return rawCode;
@@ -2691,6 +2735,104 @@ function ScheduleTable() {
     });
     toast(`已修正 ${fixedCount} 個格位：每週指定一天例假，其餘休息改為休假。`, 'success');
   }, [visibleEmployees, schedule, setSchedule, toast]);
+
+  // 一鍵轉換「國」：校正排班週期內的國定假日標記
+  // 規則：每週正常為 1例+1休，超出 2 天的部分視為多排；優先轉「休」保留「例」（法定例假）；
+  //      與週期內的國定假日一對一配對，每人最終恰好保有「國定假日天數」天「國」——
+  //      不足者補標、超過者改回「休」，因此可重複執行且結果一致
+  // 注意：不可用 useCallback —— 相依陣列會在渲染當下就存取 dayHeaders，
+  // 而 dayHeaders 於本函式之後才宣告，會觸發 TDZ（Cannot access before initialization）
+  const handleConvertHolidays = () => {
+    const rangeKeys = new Set(dayHeaders.map(h => h.dk));
+    const inRange = (y, m, d) => rangeKeys.has(dateKey(y, m, d));
+    // 以系統設定的「開放排班國定假日」為準；未設定則取週期內所有國定假日
+    let hols = openHolidays
+      .map(k => k.split('-').map(Number))
+      .filter(([y, m, d]) => inRange(y, m, d))
+      .map(([y, m, d]) => new Date(y, m - 1, d).getTime());
+    if (hols.length === 0) {
+      hols = NATIONAL_HOLIDAYS
+        .filter(h => inRange(h.year, h.month, h.day))
+        .map(h => new Date(h.year, h.month - 1, h.day).getTime());
+    }
+    if (hols.length === 0) { toast('目前排班週期內沒有國定假日，無需轉換。', 'info'); return; }
+    const minDist = ts => Math.min(...hols.map(t => Math.abs(t - ts)));
+
+    let converted = 0, affected = 0;
+    const updates = {};
+    visibleEmployees.forEach(emp => {
+      const empSchedule = schedule[emp.id];
+      if (!empSchedule) return;
+      // 週期內已排定的「國」一律不異動，僅計入額度；已排滿就跳過此人
+      const existingGuo = dayHeaders.filter(h => empSchedule[h.dk] === '國');
+      const quota = hols.length - existingGuo.length;
+      if (quota <= 0) return;
+      // 取週期內的休/例/國（既有的「國」納入每週休假日計算，避免重複多排）
+      const offDays = dayHeaders
+        .map(h => ({
+          dk: h.dk,
+          code: empSchedule[h.dk],
+          ts: new Date(h.year, h.month - 1, h.day).getTime(),
+        }))
+        .filter(x => x.code === '休' || x.code === '例' || x.code === '國');
+      // 依週分組（週一為起點）
+      const weekMap = {};
+      offDays.forEach(o => {
+        const date = new Date(o.ts);
+        const dow = (date.getDay() + 6) % 7;
+        const mon = new Date(o.ts); mon.setDate(date.getDate() - dow);
+        const wk = `${mon.getFullYear()}-${mon.getMonth() + 1}-${mon.getDate()}`;
+        if (!weekMap[wk]) weekMap[wk] = [];
+        weekMap[wk].push(o);
+      });
+      // 每週超出 2 天（1例+1休）的部分視為多排；已排定的「國」也算休假日並佔用該週的超出額度
+      // 候選只取「休」：例假為法定須保留、已排定的「國」不異動
+      const candidates = [];
+      Object.values(weekMap).forEach(days => {
+        const surplus = days.length - 2;
+        const alreadyGuo = days.filter(x => x.code === '國').length;
+        const canConvert = surplus - alreadyGuo;
+        if (canConvert <= 0) return;
+        candidates.push(...days
+          .filter(x => x.code === '休')
+          .sort((a, b) => minDist(a.ts) - minDist(b.ts))
+          .slice(0, canConvert));
+      });
+      if (candidates.length === 0) return;
+      // 與「尚未被既有國用掉」的國定假日一對一貪婪配對，且不超過剩餘額度
+      const usedHolTs = new Set(existingGuo.map(h => new Date(h.year, h.month - 1, h.day).getTime()));
+      const remainCand = [...candidates];
+      const remainHol = hols.filter(ts => !usedHolTs.has(ts));
+      const picked = [];
+      while (remainCand.length > 0 && remainHol.length > 0 && picked.length < quota) {
+        let best = null;
+        remainCand.forEach(c => remainHol.forEach(h => {
+          const dist = Math.abs(h - c.ts);
+          if (!best || dist < best.dist) best = { c, h, dist };
+        }));
+        picked.push(best.c);
+        remainCand.splice(remainCand.indexOf(best.c), 1);
+        remainHol.splice(remainHol.indexOf(best.h), 1);
+      }
+      if (picked.length === 0) return;
+      const ns = { ...empSchedule };
+      picked.forEach(({ dk }) => { ns[dk] = '國'; converted++; });
+      updates[emp.id] = ns;
+      affected++;
+    });
+
+    if (converted === 0) {
+      toast(`無需轉換：目前週期內人員的「國」已排滿 ${hols.length} 天，或沒有多排的休假可轉換。`, 'info');
+      return;
+    }
+    setSchedule(prev => {
+      const next = { ...prev };
+      Object.entries(updates).forEach(([id, days]) => { next[id] = days; });
+      return next;
+    });
+    toast(`已補排 ${converted} 格「國」（${affected} 位人員，每人上限 ${hols.length} 天）；原已排定的「國」未異動`, 'success');
+  };
+
   // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
   const handleDownloadTemplate = () => {
     try {
@@ -2987,6 +3129,11 @@ function ScheduleTable() {
             className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-700 flex items-center gap-1">
             🔧 修正一週一例
           </button>}
+          {!isWorker && <button onClick={handleConvertHolidays}
+            title="將每週超出 2 天的休假改標為國定假日（保留例假），每人最多轉換週期內的國定假日天數"
+            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
+            🎌 一鍵轉換國
+          </button>}
           <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
           {!isWorker && <button onClick={exportScheduleRaw}
             className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-1">
@@ -3085,7 +3232,16 @@ function ScheduleTable() {
                     </td>
                     <td className="sticky left-8 z-10 px-2 py-2 font-semibold text-slate-900
                                    border-r border-slate-200 bg-inherit">
-                      <div className="truncate max-w-[130px] text-sm">{emp.name}</div>
+                      {(() => {
+                        const runLen = getMaxWorkRun(emp.id);
+                        const overRun = runLen >= MAX_WORK_RUN;
+                        return (
+                          <div className={`truncate max-w-[130px] text-sm ${overRun ? 'text-red-600 font-bold' : ''}`}
+                            title={overRun ? `⚠️ 連續上班 ${runLen} 天（含前後週期），不可連續上班 ${MAX_WORK_RUN} 天` : undefined}>
+                            {emp.name}
+                          </div>
+                        );
+                      })()}
                       <div className="text-xs text-slate-500 truncate max-w-[130px]">{emp.empId}</div>
                     </td>
                     <td className="hidden sm:table-cell px-2 py-2 text-slate-800 font-semibold border-r border-slate-100 text-center whitespace-nowrap">
@@ -7038,11 +7194,13 @@ function AccountManagement() {
     toast('帳號已刪除', 'info');
   };
 
+  // 寫入 DB 失敗時務必提示：否則畫面顯示建立成功、實際 DB 沒有帳號，
+  // 使用者要到登入失敗時才會發現（歷來已發生過一次）
   const syncVendorToDB = async (u) => {
     const token = localStorage.getItem('sms_jwt');
     if (!token) return;
     try {
-      await fetch('/api/auth/vendor-register', {
+      const r = await fetch('/api/auth/vendor-register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -7054,7 +7212,12 @@ function AccountManagement() {
           allowed_warehouses: u.allowedWarehouses ?? [],
         }),
       });
-    } catch (_) {}
+      if (!r.ok) {
+        toast(`帳號 ${u.username} 未能寫入資料庫（HTTP ${r.status}），該帳號將無法登入，請聯繫管理員`, 'error');
+      }
+    } catch (e) {
+      toast(`帳號 ${u.username} 寫入資料庫失敗：${e.message}`, 'error');
+    }
   };
 
   const handleApprove = async id => {

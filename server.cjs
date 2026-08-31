@@ -20,19 +20,32 @@ app.use((_req, res, next) => {
   next();
 });
 
-// ── 登入速率限制（每 IP，15 分鐘內最多 20 次）────────────
+// ── 登入速率限制 ──────────────────────────────────────────
+// 以「IP + 帳號」為單位限制 10 次／15 分鐘：防止單一帳號被暴力破解。
+// 另設每 IP 500 次／15 分鐘的總量上限：公司內部數百名人員共用同一對外 IP，
+// 若僅以 IP 計數，交接班等尖峰時段多人同時登入會誤擋（第 N 人起一律 429，
+// 前端會誤判為密碼錯誤並累積至本機鎖定），故總量上限須明顯放寬。
 const loginRateMap = new Map();
-function checkLoginRate(ip) {
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+function hitRate(key, limit) {
   const now = Date.now();
-  const entry = loginRateMap.get(ip) ?? { count: 0, resetAt: now + 15 * 60 * 1000 };
-  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 15 * 60 * 1000; }
+  const entry = loginRateMap.get(key) ?? { count: 0, resetAt: now + RATE_WINDOW_MS };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + RATE_WINDOW_MS; }
   entry.count++;
-  loginRateMap.set(ip, entry);
-  return entry.count <= 20;
+  loginRateMap.set(key, entry);
+  return entry.count <= limit;
+}
+function checkLoginRate(ip, username) {
+  // 兩個計數器都要遞增，不可用 && 短路
+  const ipOk = hitRate(`ip:${ip}`, 500);
+  const userOk = username
+    ? hitRate(`u:${ip}|${String(username).trim().toLowerCase()}`, 10)
+    : true;
+  return ipOk && userOk;
 }
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, e] of loginRateMap) { if (now > e.resetAt) loginRateMap.delete(ip); }
+  for (const [k, e] of loginRateMap) { if (now > e.resetAt) loginRateMap.delete(k); }
 }, 5 * 60 * 1000);
 
 // ── 環境變數 ──────────────────────────────────────────────
@@ -78,6 +91,21 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login         TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_warehouses TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vendors           TEXT[] NOT NULL DEFAULT '{}'`);
+  // id 原為 VARCHAR(20)，但「委外人員升級廠商幹部」產生的帳號 id 形如
+  // worker_upgraded_imp_1785741320010_236（37 字元），寫入時會超長拋錯，
+  // 導致帳號無法建立、登入時回 500。放寬長度限制（僅在需要時才 ALTER）。
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'sms' AND table_name = 'users'
+          AND column_name = 'id' AND character_maximum_length < 64
+      ) THEN
+        ALTER TABLE sms.users ALTER COLUMN id TYPE VARCHAR(64);
+      END IF;
+    END $$;
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_state (
       id         VARCHAR(50) PRIMARY KEY,
@@ -395,7 +423,7 @@ function requireManagerOrAdmin(req, res, next) {
 // ── POST /api/auth/login ──────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
-  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
+  if (!checkLoginRate(ip, req.body?.USER_ID)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
 
   const { USER_ID, PSW } = req.body ?? {};
   if (!USER_ID || !PSW) return res.status(400).json({ error: '請輸入帳號及密碼' });
@@ -680,7 +708,7 @@ const hashPbkdf2 = (plain) => new Promise((resolve, reject) => {
 
 app.post('/api/auth/vendor-login', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
-  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
+  if (!checkLoginRate(ip, req.body?.username)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
   const { username, password, passwordHash } = req.body ?? {};
   if (!username || (!password && !passwordHash))
     return res.status(400).json({ error: '缺少帳號或密碼' });
@@ -858,7 +886,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 //   已設密碼 → PBKDF2 驗證
 app.post('/api/auth/worker-login', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
-  if (!checkLoginRate(ip)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
+  if (!checkLoginRate(ip, req.body?.empId)) return res.status(429).json({ error: '登入嘗試次數過多，請 15 分鐘後再試' });
   const { empId, password } = req.body ?? {};
   if (!empId || !password)
     return res.status(400).json({ error: '缺少員編或密碼' });
