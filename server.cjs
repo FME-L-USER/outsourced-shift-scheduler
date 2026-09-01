@@ -91,6 +91,8 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login         TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_warehouses TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vendors           TEXT[] NOT NULL DEFAULT '{}'`);
+  // 權限申請時由申請者填寫的身分說明（AD 不回傳姓名，需申請者自述）
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS request_note  TEXT`);
   // id 原為 VARCHAR(20)，但「委外人員升級廠商幹部」產生的帳號 id 形如
   // worker_upgraded_imp_1785741320010_236（37 字元），寫入時會超長拋錯，
   // 導致帳號無法建立、登入時回 500。放寬長度限制（僅在需要時才 ALTER）。
@@ -239,6 +241,17 @@ async function seedDaxiAreaEmployees() {
   }
   if (created > 0) console.log(`大溪倉員工帳號：新建 ${created} 筆`);
 
+  // 名單內既有的 AD 帳號若仍是最低權限(worker)，升級為 area：
+  // 這些人本就在正式名單上，不應被後續的權限申請關卡擋在門外。
+  // 僅處理 AD 帳號（password_hash='ad_auth_only'）且僅由 worker 升，不動管理員。
+  const listedUsernames = uniqueUsers.map(e => e.u);
+  const { rowCount: upgraded } = await pool.query(
+    `UPDATE users SET role = 'area', approved = true
+      WHERE username = ANY($1) AND role = 'worker' AND password_hash = 'ad_auth_only'`,
+    [listedUsernames]
+  );
+  if (upgraded > 0) console.log(`大溪倉員工帳號：${upgraded} 筆由 worker 升級為 area`);
+
   // 2. 倉別：主管開放全倉，其餘僅大溪倉（wh1）；僅更新尚未設定者，不覆蓋手動調整
   const supers = [...new Set(DAXI_AREA_EMPLOYEES.filter(e => e.wh === '可視全倉').map(e => e.u))];
   const normals = [...new Set(DAXI_AREA_EMPLOYEES.filter(e => e.wh !== '可視全倉').map(e => e.u))]
@@ -326,7 +339,6 @@ const DAXI_EMPLOYEES = [
   { u: 'jiu120914',  n: '江映慈', d: '大溪理貨二課' },
   { u: 'kelly1009',  n: '呂羿螢', d: '大溪理貨二課' },
   { u: 'the1053',    n: '林玠含', d: '大溪理貨二課' },
-  { u: 'beverly',    n: '林育瑩', d: '大溪理貨二課' },
   { u: 'avon',       n: '林雅芳', d: '大溪理貨二課' },
   { u: 'yilu1983',   n: '陳怡茹', d: '大溪理貨二課' },
   { u: 'yung',       n: '陳詩永', d: '大溪理貨二課' },
@@ -538,6 +550,7 @@ function safeUser(u) {
     vendors:           u.vendors           || [],
     approved:          u.approved,
     last_login:        u.last_login,
+    request_note:      u.request_note || '',
   };
 }
 
@@ -588,24 +601,35 @@ app.post('/api/auth/login', async (req, res) => {
       // role 預設 worker（CHECK constraint 允許的最低權限），由管理員審核後調整
       // password_hash 使用 sentinel 'ad_auth_only'，AD 使用者不走本地密碼驗證
       // display_name 使用 username 作為 fallback（AD API 無回傳顯示名稱）
+      // 首次 AD 登入且不在任何名單內：自動建立「權限申請」紀錄（approved=false）
+      // AD 驗證已通過，身分可信，故直接受理申請，不另設未驗證的申請端點
       const isGrace = uname === 'grace';
       const { rows: created } = await pool.query(
         `INSERT INTO users (id, username, password_hash, role, approved, display_name, page_perms, fn_perms)
-         VALUES ($1, $2, 'ad_auth_only', $3, true, $4, '{}', '{}') RETURNING *`,
-        [uname, uname, isGrace ? 'admin' : 'worker', uname]
+         VALUES ($1, $2, 'ad_auth_only', $3, $4, $5, '{}', '{}') RETURNING *`,
+        [uname, uname, isGrace ? 'admin' : 'worker', isGrace, uname]
       );
       user = created[0];
-      console.log(`自動建立帳號: ${uname}，角色: ${user.role}，已核准: ${user.approved}`);
+      console.log(`AD 首次登入: ${uname}，角色: ${user.role}，已核准: ${user.approved}`);
     } else {
-      // 既有帳號：AD 驗證成功即視為核准，補正 approved=true
+      // 既有帳號的資料補正：grace 固定為管理員；
+      // 已具日翊/管理員角色者，AD 驗證成功即視為核准（相容舊資料）。
+      // 注意：不可無條件核准，否則權限申請關卡形同虛設。
       const sets = [];
       if (uname === 'grace' && user.role !== 'admin') { sets.push(`role='admin'`); user.role = 'admin'; }
-      if (!user.approved) { sets.push(`approved=true`); user.approved = true; }
+      if (!user.approved && (user.role === 'admin' || user.role === 'area')) {
+        sets.push(`approved=true`); user.approved = true;
+      }
       if (sets.length) await pool.query(`UPDATE users SET ${sets.join(',')} WHERE id=$1`, [user.id]);
     }
 
-    if (!user.approved) {
-      return res.status(403).json({ error: '此帳號審核中，請等候管理員核准後再登入。' });
+    // 權限申請關卡：尚未取得日翊/管理員角色者不得進入系統
+    if (!user.approved || (user.role !== 'admin' && user.role !== 'area')) {
+      return res.status(403).json({
+        code: 'need_access_request',
+        username: user.username,
+        error: '您的帳號尚未開通使用權限，已為您送出申請，請等候管理員核准。',
+      });
     }
 
     await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
@@ -714,6 +738,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     vendors:     data.vendors     ?? [],
     warehouses:  data.warehouses  ?? [],
     systemLocked: data.systemLocked ?? false,
+    deptLocks:    data.deptLocks ?? {},
     vendorHolidayOpen: data.vendorHolidayOpen ?? false,
   });
 });
@@ -1097,6 +1122,78 @@ app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('worker-password error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── POST /api/auth/vendor-apply （公開）───────────────────
+// 廠商幹部帳號申請：申請者尚未登入，故為公開端點。
+// 一律建立 approved=false，需管理員核准後才能登入。
+app.post('/api/auth/vendor-apply', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!checkLoginRate(ip, req.body?.username)) {
+    return res.status(429).json({ error: '嘗試次數過多，請 15 分鐘後再試' });
+  }
+  const { id, username, password_hash, name, vendors, allowed_warehouses } = req.body ?? {};
+  const uname = String(username ?? '').trim();
+  if (!uname || uname.length > 50) return res.status(400).json({ error: '帳號格式錯誤' });
+  if (!password_hash || !String(password_hash).startsWith('pbkdf2:')) {
+    return res.status(400).json({ error: '密碼格式錯誤' });
+  }
+  if (!String(name ?? '').trim()) return res.status(400).json({ error: '請填寫姓名／負責人' });
+
+  try {
+    const { rows: dup } = await pool.query('SELECT username FROM users WHERE username=$1', [uname]);
+    if (dup.length > 0) return res.status(409).json({ error: '此帳號名稱已被使用，請更換' });
+
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, role, display_name, vendors, allowed_warehouses, approved, created_at)
+       VALUES ($1, $2, $3, 'vendor', $4, $5, $6, false, NOW())`,
+      [
+        String(id || uname).slice(0, 64),
+        uname,
+        String(password_hash),
+        String(name).trim().slice(0, 50),
+        Array.isArray(vendors) ? vendors.slice(0, 10) : [],
+        Array.isArray(allowed_warehouses) ? allowed_warehouses.slice(0, 10) : [],
+      ]
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('vendor-apply error:', e.message);
+    return res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── POST /api/auth/access-request ─────────────────────────
+// 權限申請補件：AD 不回傳姓名，故由申請者自行填寫姓名與所屬單位，供管理員審核判斷。
+// 需重新驗證 AD 帳密，避免任何人替他人送出或竄改申請內容。
+app.post('/api/auth/access-request', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!checkLoginRate(ip, req.body?.USER_ID)) return res.status(429).json({ error: '嘗試次數過多，請 15 分鐘後再試' });
+
+  const { USER_ID, PSW, name, warehouse, note } = req.body ?? {};
+  if (!USER_ID || !PSW) return res.status(400).json({ error: '請輸入帳號及密碼' });
+  if (!String(name ?? '').trim()) return res.status(400).json({ error: '請填寫姓名' });
+
+  const ad = await verifyAD(String(USER_ID).trim(), PSW);
+  if (!ad.ok) return res.status(401).json({ error: ad.msg || 'AD 驗證失敗' });
+
+  const uname = String(USER_ID).trim().toLowerCase();
+  const parts = [`單位：${String(warehouse ?? '').trim() || '未填'}`];
+  if (String(note ?? '').trim()) parts.push(`備註：${String(note).trim()}`);
+  const requestNote = parts.join('｜').slice(0, 500);
+
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE users SET display_name = $2, request_note = $3
+        WHERE username = $1 AND approved = false`,
+      [uname, String(name).trim().slice(0, 50), requestNote]
+    );
+    if (rowCount === 0) return res.status(409).json({ error: '此帳號已完成審核，請直接登入' });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('access-request error:', e.message);
+    return res.status(500).json({ error: '伺服器錯誤' });
   }
 });
 

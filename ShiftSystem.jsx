@@ -368,6 +368,18 @@ const getDaysInMonth = (year, month) => new Date(year, month, 0).getDate();
 const dateKey = (year, month, day) => `${year}-${month}-${day}`;
 const parseLocal = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
 
+// 依開放排班區間推算「包含今天」的週期偏移量（0 = 設定的區間本身，負數 = 往前的週期）
+// 設定的區間常是未來期（例如今天 9/1、區間 9/7~10/4），登入時應自動顯示今天所在的那一期
+function todayPeriodOffset(scheduleRange) {
+  if (!scheduleRange?.start || !scheduleRange?.end) return 0;
+  const s = parseLocal(scheduleRange.start);
+  const e = parseLocal(scheduleRange.end);
+  const periodLen = Math.round((e - s) / 86400000) + 1;
+  if (!Number.isFinite(periodLen) || periodLen <= 0) return 0;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.floor(Math.round((today - s) / 86400000) / periodLen);
+}
+
 const buildDefaultSchedule = (employees, year, month) => {
   const days = getDaysInMonth(year, month);
   const schedule = {};
@@ -604,6 +616,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
+  const [accessNotice, setAccessNotice] = useState(''); // 權限申請中的提示（非錯誤）
+  const [accessForm, setAccessForm] = useState(null);   // 權限申請補件表單（AD 不回傳姓名）
+  const [accessBusy, setAccessBusy] = useState(false);
   const [lockUntil, setLockUntil] = useState(0);
 
   // 鎖定倒數：鎖定期間每秒更新顯示，到期自動解鎖
@@ -658,6 +673,33 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     const until = newCount >= 5 ? Date.now() + 15 * 60 * 1000 : 0;
     setLockData(u, { count: newCount, until });
     return { count: newCount, locked: newCount >= 5 };
+  };
+
+  const submitAccessRequest = async () => {
+    if (!accessForm?.name.trim()) { setError('請填寫姓名'); return; }
+    setAccessBusy(true);
+    setError('');
+    try {
+      const r = await fetch('/api/auth/access-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          USER_ID: username.trim(), PSW: password,
+          name: accessForm.name, warehouse: accessForm.warehouse, note: accessForm.note,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setAccessForm(null);
+        setAccessNotice('您的權限申請已送出，請等候管理員核准。');
+      } else {
+        setError(d.error ?? '申請送出失敗，請稍後再試');
+      }
+    } catch {
+      setError('伺服器連線失敗，請稍後再試');
+    } finally {
+      setAccessBusy(false);
+    }
   };
 
   const handleSubmit = async e => {
@@ -782,7 +824,18 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
           }, data.token);
           return;
         }
-        if (r.status === 403) { setError(data.error ?? '此帳號審核中，請等候管理員核准後再登入。'); return; }
+        if (r.status === 403) {
+          // 尚未開通權限：AD 驗證已通過、申請已受理，以提示樣式呈現而非錯誤
+          if (data.code === 'need_access_request') {
+            setError('');
+            setAccessNotice('');
+            // AD 不回傳姓名，請申請者補填身分資訊供管理員審核判斷
+            setAccessForm({ name: '', warehouse: '', note: '' });
+            return;
+          }
+          setError(data.error ?? '此帳號審核中，請等候管理員核准後再登入。');
+          return;
+        }
         const rf = recordFail(uKey);
         setError(rf.locked
           ? '登入失敗次數過多，帳號已鎖定 15 分鐘'
@@ -899,8 +952,9 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     }
     const hashedPwd = await hashPwd(regForm.password);
     sessionStorage.setItem('last_reg_ts', String(Date.now()));
-    onRegister({
-      id: crypto.randomUUID(),
+    const newId = crypto.randomUUID();
+    const payload = {
+      id: newId,
       username: regForm.username,
       password: hashedPwd,
       name: regForm.name,
@@ -908,7 +962,32 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       vendors: [regForm.vendor],
       allowedWarehouses: regForm.warehouse ? [regForm.warehouse] : [],
       approved: false,
-    });
+    };
+    // 必須寫入伺服器：申請者尚未登入，本機狀態不會被自動存檔，
+    // 管理員登入時本機清單會被伺服器資料覆蓋，申請將直接遺失
+    try {
+      const r = await fetch('/api/auth/vendor-apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: newId,
+          username: regForm.username,
+          password_hash: hashedPwd,
+          name: regForm.name,
+          vendors: [regForm.vendor],
+          allowed_warehouses: regForm.warehouse ? [regForm.warehouse] : [],
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setRegError(d.error ?? '申請送出失敗，請稍後再試');
+        return;
+      }
+    } catch {
+      setRegError('伺服器連線失敗，請稍後再試');
+      return;
+    }
+    onRegister(payload);
     setRegDone(true);
   };
 
@@ -1049,6 +1128,62 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
               {error}
             </div>
           )}
+          {accessNotice && (
+            <div className="mb-4 px-3 py-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+              <div className="font-semibold mb-1">⏳ 權限申請已送出</div>
+              <p>{accessNotice}</p>
+              <p className="text-xs text-amber-700 mt-1.5">
+                核准後即可直接以此 AD 帳號登入，無需重新申請。
+              </p>
+            </div>
+          )}
+          {accessForm && (
+            <div className="mb-4 px-3 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+              <div className="font-semibold text-amber-800 mb-1">🔐 此帳號尚未開通權限</div>
+              <p className="text-xs text-amber-700 mb-3">
+                AD 驗證已通過。請填寫以下資訊送出申請，管理員核准後即可使用。
+              </p>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">姓名 <span className="text-red-500">*</span></label>
+                  <input value={accessForm.name} autoFocus
+                    onChange={e => setAccessForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="請輸入您的姓名"
+                    className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-lg text-sm
+                               focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">所屬單位</label>
+                  <select value={accessForm.warehouse}
+                    onChange={e => setAccessForm(p => ({ ...p, warehouse: e.target.value }))}
+                    className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-lg text-sm
+                               focus:outline-none focus:ring-2 focus:ring-amber-400">
+                    <option value="">請選擇</option>
+                    {warehouses.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">備註（選填）</label>
+                  <input value={accessForm.note}
+                    onChange={e => setAccessForm(p => ({ ...p, note: e.target.value }))}
+                    placeholder="例如：課別、職務"
+                    className="w-full px-3 py-2 bg-white border border-[#DDD9D0] rounded-lg text-sm
+                               focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button type="button" onClick={submitAccessRequest} disabled={accessBusy}
+                  className="flex-1 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold
+                             hover:bg-amber-700 disabled:opacity-50">
+                  {accessBusy ? '送出中…' : '送出權限申請'}
+                </button>
+                <button type="button" onClick={() => setAccessForm(null)} disabled={accessBusy}
+                  className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 帳號 / 密碼（選擇身份後才顯示） */}
           {identity && (
@@ -1133,6 +1268,26 @@ function resolveSelfEmployee(user, employees) {
   const uname = String(user.username ?? '').trim();
   if (!uname) return null;
   return employees.find(e => String(e.empId ?? '').trim() === uname) ?? null;
+}
+
+// 系統鎖定三段式：none 全部可異動｜partial 廠商幹部與委外人員不可異動｜full 全部不可異動
+// 相容舊資料：布林 true → full、false/未設定 → none
+const LOCK_MODES = [
+  { key: 'none',    label: '解除鎖定', desc: '全部可異動',                 icon: '🔓' },
+  { key: 'partial', label: '部分鎖定', desc: '廠商幹部、委外人員不可異動', icon: '🔐' },
+  { key: 'full',    label: '全部鎖定', desc: '全部不可異動',               icon: '🔒' },
+];
+function normalizeLockMode(v) {
+  if (v === true) return 'full';
+  if (v === false || v == null) return 'none';
+  return LOCK_MODES.some(m => m.key === v) ? v : 'none';
+}
+// 依鎖定模式判斷該角色能否編輯班表
+function lockAllowsEdit(lockValue, role) {
+  const mode = normalizeLockMode(lockValue);
+  if (mode === 'full') return false;
+  if (mode === 'partial') return role !== ROLES.VENDOR && role !== ROLES.WORKER;
+  return true;
 }
 
 const NAV_ITEMS = [
@@ -1230,56 +1385,63 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 
   return (
     <aside className={`flex flex-col text-white transition-all duration-300
-                       ${collapsed ? 'w-14' : 'w-56'} shrink-0 h-screen sticky top-0`}
+                       ${collapsed ? 'w-[72px]' : 'w-60'} shrink-0 h-screen sticky top-0`}
            style={{background:'var(--sms-sidebar)'}}>
-      {/* Logo */}
-      <div className="flex items-center gap-2 px-3 py-4 border-b border-[#1C4A46]">
-        <span className="text-2xl">🗓️</span>
-        {!collapsed && <span className="font-bold text-sm leading-tight">班表管理<br/>系統</span>}
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 py-3 overflow-y-auto">
-        {items.map(item => (
-          <button key={item.key}
-            onClick={() => onNavigate(item.key)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-base transition-colors rounded-[6px] mx-0.5
-                        ${currentPage === item.key
-                          ? 'text-white font-medium'
-                          : 'text-slate-300 hover:text-white'}`}
-            style={currentPage === item.key
-              ? {background:'var(--sms-sidebar-active)'}
-              : undefined}
-            onMouseEnter={e => { if(currentPage !== item.key) e.currentTarget.style.background='var(--sms-sidebar-hover)'; }}
-            onMouseLeave={e => { if(currentPage !== item.key) e.currentTarget.style.background=''; }}>
-            {!collapsed && <span className="truncate">{item.label}</span>}
-          </button>
-        ))}
-      </nav>
-
-      {/* User Info & Logout */}
-      <div className="border-t border-[#1C4A46] p-3">
+      {/* 標題列：標題／副標＋收合鈕 */}
+      <div className="flex items-center gap-2 px-4 pt-5 pb-4">
         {!collapsed && (
-          <div className="mb-2 text-xs text-slate-400 truncate">
-            <div className="font-medium text-slate-200">{currentUser.name}</div>
-            <div>{currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}</div>
+          <div className="min-w-0">
+            <div className="font-bold text-base leading-tight truncate">班表管理系統</div>
+            <div className="text-xs text-white/50 mt-0.5 truncate">委外人力排班</div>
           </div>
         )}
-        {onSave && <SaveButton onSave={onSave} collapsed={collapsed} />}
-        <button onClick={onLogout}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-slate-400
-                     hover:text-red-300 transition-colors">
-          <span>🚪</span>
-          {!collapsed && '登出'}
+        <button onClick={onToggle} title={collapsed ? '展開選單' : '收合選單'}
+          className="ml-auto shrink-0 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20
+                     flex items-center justify-center text-sm transition-colors">
+          {collapsed ? '»' : '«'}
         </button>
       </div>
 
-      {/* Collapse toggle */}
-      <button onClick={onToggle}
-        className="absolute -right-3 top-16 bg-[#1C4A46] hover:bg-[#254E4A] text-white
-                   rounded-full w-6 h-6 flex items-center justify-center text-xs shadow">
-        {collapsed ? '›' : '‹'}
-      </button>
+      {/* 選單：選中為白色膠囊、其餘 hover 時淡色膠囊 */}
+      <nav className="flex-1 px-3 pb-3 overflow-y-auto space-y-1.5">
+        {items.map(item => {
+          const active = currentPage === item.key;
+          return (
+            <button key={item.key}
+              onClick={() => onNavigate(item.key)}
+              title={collapsed ? item.label : undefined}
+              className={`w-full flex items-center gap-3 rounded-full transition-colors
+                          ${collapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
+                          ${active
+                            ? 'bg-white font-bold shadow-sm'
+                            : 'text-white/80 hover:bg-white/10 hover:text-white'}`}
+              style={active ? { color: 'var(--sms-sidebar)' } : undefined}>
+              <span className="text-lg leading-none shrink-0">{item.icon}</span>
+              {!collapsed && <span className="truncate text-sm">{item.label}</span>}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* 使用者資訊與登出 */}
+      <div className="px-3 pb-4 pt-3 border-t border-white/10">
+        {!collapsed && (
+          <div className="px-2 mb-2 text-xs truncate">
+            <div className="font-semibold text-white/90 truncate">{currentUser.name}</div>
+            <div className="text-white/45">
+              {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
+            </div>
+          </div>
+        )}
+        {onSave && <SaveButton onSave={onSave} collapsed={collapsed} />}
+        <button onClick={onLogout} title={collapsed ? '登出' : undefined}
+          className={`w-full flex items-center gap-3 rounded-full py-2.5 text-sm text-white/70
+                      hover:bg-white/10 hover:text-red-300 transition-colors
+                      ${collapsed ? 'justify-center px-0' : 'px-4'}`}>
+          <span className="text-base leading-none">🚪</span>
+          {!collapsed && '登出'}
+        </button>
+      </div>
     </aside>
   );
 }
@@ -1483,19 +1645,21 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, ope
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">✕</button>
         </div>
-        <nav className="flex-1 py-3 overflow-y-auto">
-          {items.map(item => (
-            <button key={item.key}
-              onClick={() => { onNavigate(item.key); onClose(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors
-                          ${currentPage === item.key ? 'font-medium text-white' : 'text-slate-300'}`}
-              style={currentPage === item.key ? {background:'var(--sms-sidebar-active)'} : undefined}
-              onTouchStart={e => { if(currentPage !== item.key) e.currentTarget.style.background='var(--sms-sidebar-hover)'; }}
-              onTouchEnd={e => { if(currentPage !== item.key) e.currentTarget.style.background=''; }}>
-              <span className="text-base w-6 text-center">{item.icon}</span>
-              <span>{item.label}</span>
-            </button>
-          ))}
+        {/* 與桌機版一致：選中為白色膠囊 */}
+        <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1.5">
+          {items.map(item => {
+            const active = currentPage === item.key;
+            return (
+              <button key={item.key}
+                onClick={() => { onNavigate(item.key); onClose(); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-sm rounded-full transition-colors
+                            ${active ? 'bg-white font-bold shadow-sm' : 'text-white/80 active:bg-white/10'}`}
+                style={active ? { color: 'var(--sms-sidebar)' } : undefined}>
+                <span className="text-lg leading-none w-6 text-center">{item.icon}</span>
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
         </nav>
         <div className="p-4 border-t border-[#1C4A46] text-sm text-slate-300">
           <div className="font-medium text-slate-200 mb-1">{currentUser.name}</div>
@@ -2149,7 +2313,7 @@ function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    systemLocked, scheduleRange, openHolidays, vendorHolidayOpen,
+    deptLocks, scheduleRange, openHolidays, vendorHolidayOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
     selectedVendor,
   } = useApp();
@@ -2245,10 +2409,14 @@ function ScheduleTable() {
   // 因此往前後各多掃 7 天的實際班表資料。
   // 週期內未填視為上班(V)（與畫面顯示一致）；週期外只採計「確實排定為 V」的日子，
   // 避免尚未排班的空白日被誤判成連續上班。
-  const MAX_WORK_RUN = 7;
-  const getMaxWorkRun = (empId) => {
+  const MAX_WORK_RUN = 7;   // 姓名標紅（違規）
+  const WARN_WORK_RUN = 6;  // 格子標粉紅底（警示）
+  // 回傳 max：與本週期相接的最長連續上班天數
+  //     warn：本週期內、屬於「連續上班達 WARN_WORK_RUN 天」區段的日期
+  // 兩者皆採同一份跨週期計算，避免格子與姓名的判斷不一致
+  const getWorkRunInfo = (empId) => {
     const row = schedule[empId];
-    if (!row || dayHeaders.length === 0) return 0;
+    if (!row || dayHeaders.length === 0) return { max: 0, warn: new Set() };
     const first = dayHeaders[0];
     const last = dayHeaders[dayHeaders.length - 1];
     const inPeriod = new Set(dayHeaders.map(h => h.dk));
@@ -2257,22 +2425,29 @@ function ScheduleTable() {
     const stop = new Date(last.year, last.month - 1, last.day);
     stop.setDate(stop.getDate() + MAX_WORK_RUN);
 
-    let best = 0, run = 0, touches = false;
+    let max = 0;
+    const warn = new Set();
+    let run = [];
+    let touches = false;
+    const flush = () => {
+      if (touches) {
+        max = Math.max(max, run.length);
+        if (run.length >= WARN_WORK_RUN) {
+          run.forEach(k => { if (inPeriod.has(k)) warn.add(k); });
+        }
+      }
+      run = []; touches = false;
+    };
     while (cur <= stop) {
       const dk = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
       const within = inPeriod.has(dk);
       const isWork = within ? ((row[dk] ?? 'V') === 'V') : (row[dk] === 'V');
-      if (isWork) {
-        run++;
-        if (within) touches = true;
-      } else {
-        if (touches) best = Math.max(best, run);
-        run = 0; touches = false;
-      }
+      if (isWork) { run.push(dk); if (within) touches = true; }
+      else flush();
       cur.setDate(cur.getDate() + 1);
     }
-    if (touches) best = Math.max(best, run);
-    return best;
+    flush();
+    return { max, warn };
   };
 
   // 依員工班別、班表代號、日期 → 代號表實際代號
@@ -2333,6 +2508,14 @@ function ScheduleTable() {
 
   // rangeMode 下的視圖平移（天數偏移）
   const [viewOffset, setViewOffset] = useState(0);
+  // 登入後 scheduleRange 由伺服器載入，待其就緒再切到包含今天的週期（僅執行一次）
+  const didInitOffset = useRef(false);
+  useEffect(() => {
+    if (didInitOffset.current || !scheduleRange.start || !scheduleRange.end) return;
+    didInitOffset.current = true;
+    const off = todayPeriodOffset(scheduleRange);
+    if (off !== 0) setViewOffset(off);
+  }, [scheduleRange]);
   const rangeMode = !!(scheduleRange.start && scheduleRange.end);
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
@@ -2415,30 +2598,24 @@ function ScheduleTable() {
   /** 計算當週休假日數（'休'） */
   const getWeeklyRest = useCallback((empId, dk) => getWeeklyCode(empId, dk, '休'), [getWeeklyCode]);
 
-  const isEditable = useCallback((dk) => {
-    if (systemLocked) return false;
-    // worker 必須有 scheduleRange 才能編輯，且僅限範圍內日期
-    if (currentUser?.role === ROLES.WORKER) {
-      if (!scheduleRange.start || !scheduleRange.end) return false;
+  // 鎖定以「課別」為單位：各課排班完成時間不同，需可分別鎖定
+  const isEditable = useCallback((dk, emp) => {
+    if (!lockAllowsEdit(emp?.dept ? deptLocks[emp.dept] : 'none', currentUser?.role)) return false;
+    // worker 必須有 scheduleRange 才能編輯
+    if (currentUser?.role === ROLES.WORKER && (!scheduleRange.start || !scheduleRange.end)) return false;
+    // 開放排班日期區間：一律僅限區間內可編輯（往前/往後查看時也不得修改）
+    if (scheduleRange.start && scheduleRange.end) {
       const [y,m,d] = dk.split('-').map(Number);
       const date = new Date(y, m-1, d);
       const rs = parseLocal(scheduleRange.start);
       const re = parseLocal(scheduleRange.end);
-      return date >= rs && date <= re;
-    }
-    // 編輯限制僅對原始設定區間，往前/往後查看時仍可編輯
-    if (scheduleRange.start && scheduleRange.end) {
-      const [y,m,d] = dk.split('-').map(Number);
-      const date = new Date(y, m-1, d);
-      const rs = parseLocal(viewRange?.start ?? scheduleRange.start);
-      const re = parseLocal(viewRange?.end   ?? scheduleRange.end);
       if (date < rs || date > re) return false;
     }
     return true;
-  }, [systemLocked, scheduleRange, viewRange, currentUser]);
+  }, [deptLocks, scheduleRange, currentUser]);
 
   const handleCellClick = useCallback((empId, dk) => {
-    if (!isEditable(dk)) {
+    if (!isEditable(dk, employees.find(e => e.id === empId))) {
       toast('此日期已鎖定，無法修改。', 'warn');
       return;
     }
@@ -3127,6 +3304,34 @@ function ScheduleTable() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* 開放排班區間公告：登入預設顯示的是「今天所在」的週期，
+          與可編輯的開放區間常常不同，需明確標示以免誤以為不能改 */}
+      {rangeMode && (() => {
+        const viewingOpen = viewOffset === 0;
+        return (
+          <div className={`rounded-xl px-5 py-4 flex items-center gap-3 flex-wrap border-2
+            ${viewingOpen
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+              : 'bg-amber-50 border-amber-300 text-amber-800'}`}>
+            <span className="text-xl font-bold">
+              📢 開放排班區間：{scheduleRange.start} ~ {scheduleRange.end}
+            </span>
+            <span className="text-base font-medium">
+              {viewingOpen
+                ? '（目前檢視中，可編輯班表）'
+                : '（目前檢視的是其他期間，僅供查看，不可編輯）'}
+            </span>
+            {!viewingOpen && (
+              <button onClick={() => setViewOffset(0)}
+                className="ml-auto px-4 py-2 text-sm font-semibold bg-amber-600 text-white
+                           rounded-lg hover:bg-amber-700">
+                前往開放區間
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-slate-800">班表管理</h2>
@@ -3148,8 +3353,8 @@ function ScheduleTable() {
               <button onClick={() => setViewOffset(v => v + 1)}
                 className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
-              {viewOffset !== 0 && (
-                <button onClick={() => setViewOffset(0)}
+              {viewOffset !== todayPeriodOffset(scheduleRange) && (
+                <button onClick={() => setViewOffset(todayPeriodOffset(scheduleRange))}
                   className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
                   回目前
                 </button>
@@ -3206,11 +3411,23 @@ function ScheduleTable() {
             className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1">
             🖨️ 列印報表
           </button>
-          {systemLocked && (
-            <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full font-medium">
-              🔒 系統已鎖定
-            </span>
-          )}
+          {(() => {
+            // 依目前顯示人員所屬課別，提示哪些課已鎖定
+            const locked = [...new Set(visibleEmployees
+              .map(e => e.dept)
+              .filter(d => d && normalizeLockMode(deptLocks[d]) !== 'none'))];
+            if (locked.length === 0) return null;
+            const anyFull = locked.some(d => normalizeLockMode(deptLocks[d]) === 'full');
+            const canEditAny = locked.some(d => lockAllowsEdit(deptLocks[d], currentUser.role));
+            return (
+              <span title={`已鎖定課別：${locked.join('、')}`}
+                className={`px-2 py-1 text-xs rounded-full font-medium
+                  ${anyFull ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
+                🔒 {locked.length === 1 ? `${locked[0]} 已鎖定` : `${locked.length} 個課別已鎖定`}
+                {canEditAny && '（廠商／委外不可異動）'}
+              </span>
+            );
+          })()}
         </div>
       </div>
 
@@ -3264,21 +3481,8 @@ function ScheduleTable() {
                 let workDays = 0;
                 let leaveDays = 0;
                 // 連續6天上班警示（僅對當區幹部/管理員顯示，廠商不顯示）
-                const warnDks = (() => {
-                  if (currentUser.role === ROLES.VENDOR) return new Set();
-                  const s = new Set();
-                  let run = [];
-                  for (const { dk } of dayHeaders) {
-                    if ((schedule[emp.id]?.[dk] ?? 'V') === 'V') {
-                      run.push(dk);
-                    } else {
-                      if (run.length >= 6) run.forEach(k => s.add(k));
-                      run = [];
-                    }
-                  }
-                  if (run.length >= 6) run.forEach(k => s.add(k));
-                  return s;
-                })();
+                const runInfo = getWorkRunInfo(emp.id);
+                const warnDks = currentUser.role === ROLES.VENDOR ? new Set() : runInfo.warn;
                 return (
                   <tr key={emp.id}
                     className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}`}>
@@ -3292,7 +3496,7 @@ function ScheduleTable() {
                     <td className="sticky left-8 z-10 px-2 py-2 font-semibold text-slate-900
                                    border-r border-slate-200 bg-inherit">
                       {(() => {
-                        const runLen = getMaxWorkRun(emp.id);
+                        const runLen = runInfo.max;
                         const overRun = runLen >= MAX_WORK_RUN;
                         return (
                           <div className={`truncate max-w-[130px] text-sm ${overRun ? 'text-red-600 font-bold' : ''}`}
@@ -3327,7 +3531,7 @@ function ScheduleTable() {
                           })()
                         : (SHIFT_CODES[code]?.label || code); // 「國」固定顯示「國」，假日名稱只在 tooltip 呈現
                       const info = SHIFT_CODES[code] ?? SHIFT_CODES[''];
-                      const locked = !isEditable(dk);
+                      const locked = !isEditable(dk, emp);
                       const weekBand = Math.floor(colIdx / 7) % 2 === 1;
                       return (
                         <td key={dk}
@@ -3852,6 +4056,14 @@ function Reports() {
   const toast = useToast();
 
   const [viewOffset, setViewOffset] = useState(0);
+  // 登入後 scheduleRange 由伺服器載入，待其就緒再切到包含今天的週期（僅執行一次）
+  const didInitOffset = useRef(false);
+  useEffect(() => {
+    if (didInitOffset.current || !scheduleRange.start || !scheduleRange.end) return;
+    didInitOffset.current = true;
+    const off = todayPeriodOffset(scheduleRange);
+    if (off !== 0) setViewOffset(off);
+  }, [scheduleRange]);
   const rangeMode = !!(scheduleRange.start && scheduleRange.end);
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
@@ -4198,8 +4410,8 @@ function Reports() {
               <button onClick={() => setViewOffset(v => v + 1)}
                 className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
-              {viewOffset !== 0 && (
-                <button onClick={() => setViewOffset(0)}
+              {viewOffset !== todayPeriodOffset(scheduleRange) && (
+                <button onClick={() => setViewOffset(todayPeriodOffset(scheduleRange))}
                   className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
                   回目前
                 </button>
@@ -5646,6 +5858,7 @@ function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
 function Settings() {
   const {
     systemLocked, setSystemLocked,
+    deptLocks, setDeptLocks,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
@@ -5788,31 +6001,91 @@ function Settings() {
     <div className="p-6 space-y-6 max-w-3xl">
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
-      {/* ── 系統鎖定 ── */}
+      {/* ── 各課別鎖定 ── */}
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-3">系統鎖定</h3>
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-slate-600">
-            {systemLocked ? '🔒 目前已鎖定，所有幹部無法修改班表' : '🔓 目前未鎖定，幹部可正常編輯班表'}
+        <h3 className="font-semibold text-slate-700 mb-1">各課別鎖定</h3>
+        <p className="text-xs text-slate-500 mb-2">
+          班表編輯權限以<strong>課別</strong>為單位控管。各課排班完成時間不同，可在該課排完後單獨鎖定，不影響其他課別。
+        </p>
+
+        {/* 各選項的實際效果對照 */}
+        <div className="mb-4 bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-2">
+          <div className="text-xs font-semibold text-slate-600 mb-1.5">各選項實際效果</div>
+          <div className="space-y-1 text-xs">
+            {[
+              { icon: '🔓', label: '解除鎖定', riyi: true,  vendor: true,  note: '' },
+              { icon: '🔐', label: '部分鎖定', riyi: true,  vendor: false, note: '' },
+              { icon: '🔒', label: '全部鎖定', riyi: false, vendor: false, note: '（該課鎖住）' },
+            ].map(r => (
+              <div key={r.label} className="flex items-center gap-2 flex-wrap">
+                <span className="w-24 shrink-0 text-slate-700">{r.icon} {r.label}</span>
+                <span className={r.riyi ? 'text-emerald-700' : 'text-red-600'}>
+                  日翊{r.riyi ? '可' : '✗'}
+                </span>
+                <span className="text-slate-300">·</span>
+                <span className={r.vendor ? 'text-emerald-700' : 'text-red-600'}>
+                  廠商{r.vendor ? '可' : '✗'}
+                </span>
+                {r.note && <span className="text-slate-400">{r.note}</span>}
+              </div>
+            ))}
           </div>
-          <button
-            onClick={() => {
-              setSystemLocked(p => !p);
-              toast(systemLocked ? '系統已解鎖' : '系統已鎖定', systemLocked ? 'info' : 'warn');
-            }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${systemLocked
-                ? 'bg-green-600 hover:bg-green-700 text-white'
-                : 'bg-red-600 hover:bg-red-700 text-white'}`}>
-            {systemLocked ? '解除鎖定' : '鎖定系統'}
-          </button>
+          <div className="text-xs text-slate-400 mt-1.5">※「廠商」含廠商幹部與委外人員</div>
         </div>
+        {warehouses.length === 0 ? (
+          <p className="text-sm text-slate-400">尚未設定倉別</p>
+        ) : (
+          <div className="space-y-4">
+            {warehouses.map(w => (
+              <div key={w.id}>
+                <div className="text-sm font-semibold text-slate-600 mb-2">🏭 {w.name}</div>
+                {(w.departments ?? []).length === 0 ? (
+                  <p className="text-xs text-slate-400 pl-4">此倉別尚無課別</p>
+                ) : (
+                  <div className="space-y-1.5 pl-4">
+                    {(w.departments ?? []).map(d => {
+                      const cur = normalizeLockMode(deptLocks[d.name]);
+                      return (
+                        <div key={d.id ?? d.name} className="flex items-center gap-3 flex-wrap">
+                          <span className="text-sm text-slate-700 w-40 shrink-0 truncate">{d.name}</span>
+                          <div className="flex gap-1">
+                            {LOCK_MODES.map(m => {
+                              const active = cur === m.key;
+                              const tone = m.key === 'none' ? 'bg-emerald-600' : m.key === 'partial' ? 'bg-amber-500' : 'bg-red-600';
+                              return (
+                                <button key={m.key}
+                                  onClick={() => {
+                                    setDeptLocks(prev => {
+                                      const next = { ...prev };
+                                      if (m.key === 'none') delete next[d.name];
+                                      else next[d.name] = m.key;
+                                      return next;
+                                    });
+                                    toast(`${d.name}：${m.label}`, m.key === 'none' ? 'info' : 'warn');
+                                  }}
+                                  title={m.desc}
+                                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors
+                                    ${active ? `${tone} text-white border-transparent` : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                                  {m.icon} {m.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── 開放排班日期區間 ── */}
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
-        <p className="text-xs text-slate-500 mb-3">設定後，僅允許在此區間內編輯班表。留空表示不限制。</p>
+        <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
         <div className="flex gap-3 items-end flex-wrap">
           <div>
             <label className="block text-xs text-slate-600 mb-1">開始日期</label>
@@ -7309,6 +7582,46 @@ function AccountManagement() {
     }
   };
 
+  // 核准日翊 AD 權限申請：升為日翊(area)並標記已核准
+  const [approvingFor, setApprovingFor] = useState(null);
+  // 核准時選定的倉別（userId → wh id 陣列）。日翊角色若倉別空白會看不到任何倉，故必須指定
+  const [pendingWh, setPendingWh] = useState({});
+  const togglePendingWh = (userId, whId) => setPendingWh(prev => {
+    const cur = prev[userId] ?? [];
+    return { ...prev, [userId]: cur.includes(whId) ? cur.filter(x => x !== whId) : [...cur, whId] };
+  });
+  const approveAccessRequest = async (u) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setApprovingFor(u.id);
+    try {
+      const r = await fetch(`/api/users/${u.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          role: 'area',
+          approved: true,
+          allowed_warehouses: pendingWh[u.id] ?? [],
+        }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
+        const whNames = (updated.allowedWarehouses ?? [])
+          .map(id => warehouses.find(w => w.id === id)?.name ?? id).join('、');
+        setPendingWh(prev => { const n = { ...prev }; delete n[u.id]; return n; });
+        toast(`已核准 ${updated.username}（${whNames || '未指派倉別'}）`, 'success');
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast(d.error || '核准失敗', 'error');
+      }
+    } catch {
+      toast('核准失敗，請檢查網路', 'error');
+    } finally {
+      setApprovingFor(null);
+    }
+  };
+
   // ── 委外人員搜尋 ──
   const [workerSearchName, setWorkerSearchName] = useState('');
   const [workerSearchId,   setWorkerSearchId]   = useState('');
@@ -7379,15 +7692,45 @@ function AccountManagement() {
     }
   };
 
-  const handleApprove = async id => {
-    const target = users.find(u => u.id === id);
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, approved: true } : u));
+  const handleApprove = async u => {
+    if (u._api) {
+      const token = localStorage.getItem(JWT_KEY);
+      const r = await fetch(`/api/users/${u.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ approved: true }),
+      }).catch(() => null);
+      if (r?.ok) {
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
+        toast(`已核准 ${updated.username}`, 'success');
+      } else {
+        toast('核准失敗', 'error');
+      }
+      return;
+    }
+    const target = users.find(x => x.id === u.id);
+    setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: true } : x));
     toast('帳號已核准', 'success');
     if (target?.role === ROLES.VENDOR) await syncVendorToDB({ ...target, approved: true });
   };
 
-  const handleReject = id => {
-    setUsers(prev => prev.filter(u => u.id !== id));
+  const handleReject = async u => {
+    if (u._api) {
+      const token = localStorage.getItem(JWT_KEY);
+      const r = await fetch(`/api/users/${u.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => null);
+      if (r?.ok) {
+        setApiUsers(prev => prev.filter(x => x.id !== u.id));
+        toast('申請已拒絕並刪除', 'info');
+      } else {
+        toast('拒絕失敗', 'error');
+      }
+      return;
+    }
+    setUsers(prev => prev.filter(x => x.id !== u.id));
     toast('申請已拒絕並刪除', 'info');
   };
 
@@ -7428,7 +7771,18 @@ function AccountManagement() {
   const roleLabel = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員' };
   const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
 
-  const pendingUsers = users.filter(u => u.approved === false);
+  // 廠商帳號申請以資料庫為準：申請者尚未登入，資料是直接寫入伺服器的，
+  // 本機 users 只保留舊資料相容（依帳號去重，避免同一筆重複顯示）
+  const pendingUsers = (() => {
+    const seen = new Set();
+    const out = [];
+    apiUsers.filter(u => u.role === ROLES.VENDOR && !u.approved).forEach(u => {
+      seen.add(u.username);
+      out.push({ ...u, _api: true, name: u.display_name || u.username });
+    });
+    users.filter(u => u.approved === false && !seen.has(u.username)).forEach(u => out.push(u));
+    return out;
+  })();
   const staffUsers   = users.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role) && u.approved !== false);
 
   // Tab 2: 廠商帳號 — 依登入員工的倉別×課別×廠商別綁定過濾可見廠商
@@ -7530,9 +7884,9 @@ function AccountManagement() {
                 <span className="text-emerald-700">{u.vendors?.join('、')}</span>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => handleApprove(u.id)}
+                <button onClick={() => handleApprove(u)}
                   className="px-3 py-1 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700">核准</button>
-                <button onClick={() => handleReject(u.id)}
+                <button onClick={() => handleReject(u)}
                   className="px-3 py-1 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600">拒絕</button>
               </div>
             </div>
@@ -7638,6 +7992,77 @@ function AccountManagement() {
         </div>
         </div>
       )}
+
+      {/* ── 待審核：日翊 AD 權限申請 ── */}
+      {activeTab === 'staff' && apiUsersLoaded && (() => {
+        // 僅列出「日翊 AD 帳號」的權限申請：廠商幹部有自己的審核流程，不應混入
+        const pendingAd = apiUsers.filter(u =>
+          u.role !== ROLES.VENDOR &&
+          (!u.approved || (u.role !== ROLES.ADMIN && u.role !== ROLES.AREA))
+        );
+        if (pendingAd.length === 0) return null;
+        return (
+          <div className="border border-amber-300 rounded-xl overflow-hidden mb-4">
+            <div className="bg-amber-50 px-4 py-2.5 border-b border-amber-200 flex items-center gap-2">
+              <span className="text-sm font-semibold text-amber-800">⏳ 待審核權限申請（{pendingAd.length} 筆）</span>
+              <span className="text-xs text-amber-700">這些 AD 帳號已通過公司驗證，但尚未取得系統使用權限</span>
+            </div>
+            <div className="divide-y divide-amber-100">
+              {pendingAd.map(u => (
+                <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-amber-50/50">
+                  <span className="font-mono font-bold text-slate-800 text-sm w-32 shrink-0">{u.username}</span>
+                  <span className="text-sm text-slate-600">
+                    {u.display_name && u.display_name !== u.username ? u.display_name : '（未填姓名）'}
+                  </span>
+                  {u.request_note
+                    ? <span className="text-xs text-slate-500 bg-white border border-amber-200 rounded px-2 py-0.5">
+                        {u.request_note}
+                      </span>
+                    : <span className="text-xs text-slate-400">申請中（未補件）</span>}
+
+                  {/* 核准前須指定倉別：日翊角色倉別空白會看不到任何倉別 */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-500">開放倉別：</span>
+                    {warehouses.map(w => (
+                      <label key={w.id} className="flex items-center gap-1 cursor-pointer text-xs select-none">
+                        <input type="checkbox"
+                          checked={(pendingWh[u.id] ?? []).includes(w.id)}
+                          disabled={approvingFor === u.id}
+                          onChange={() => togglePendingWh(u.id, w.id)}
+                          className="rounded accent-emerald-600" />
+                        <span>{w.name}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    {approvingFor === u.id
+                      ? <span className="text-xs text-slate-400">核准中…</span>
+                      : <button onClick={() => approveAccessRequest(u)}
+                          disabled={(pendingWh[u.id] ?? []).length === 0}
+                          title={(pendingWh[u.id] ?? []).length === 0 ? '請先勾選開放倉別' : ''}
+                          className="px-3 py-1 text-xs bg-emerald-600 text-white rounded-lg
+                                     hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                          核准為日翊
+                        </button>}
+                    {confirmDelFor === u.id
+                      ? <span className="flex items-center gap-1">
+                          <button onClick={() => deleteApiUser(u)}
+                            className="px-2 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700">確定拒絕</button>
+                          <button onClick={() => setConfirmDelFor(null)}
+                            className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded-lg">取消</button>
+                        </span>
+                      : <button onClick={() => setConfirmDelFor(u.id)}
+                          className="px-2.5 py-1 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50">
+                          拒絕
+                        </button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 清單表頭（員工 / 廠商 tab） */}
       {/* ── 員工帳號 Tab：AD 員工清單（API mode） ── */}
@@ -8056,6 +8481,8 @@ export default function App() {
   const [selectedGroup,     setSelectedGroup]     = useState(() => LS.get('sms_sel_grp',    null));
   const [selectedVendor,    setSelectedVendor]    = useState(() => LS.get('sms_sel_vendor', null));
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
+  // 各課別鎖定狀態 { 課別名稱: 'none'|'partial'|'full' }：各課排班完成時間不同，需分別鎖定
+  const [deptLocks, setDeptLocks] = useState(() => LS.get('sms_dept_locks', {}));
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
   const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
   const [vendorHolidayOpen,  setVendorHolidayOpen]  = useState(() => LS.get('sms_vendor_hol_open', false));
@@ -8133,6 +8560,7 @@ export default function App() {
           warehouses:         LS.get('sms_warehouses', []),
           schedule:           LS.get('sms_schedule', {}),
           systemLocked:       LS.get('sms_locked', false),
+          deptLocks:          LS.get('sms_dept_locks', {}),
           scheduleRange:      LS.get('sms_range', {}),
           openHolidays:       LS.get('sms_open_holidays', []),
           vendorHolidayOpen:  LS.get('sms_vendor_hol_open', false),
@@ -8175,6 +8603,7 @@ export default function App() {
           if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+          if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8200,6 +8629,7 @@ export default function App() {
           if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+          if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8228,6 +8658,7 @@ export default function App() {
         if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
         if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
         if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
+        if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
         if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
@@ -8285,6 +8716,7 @@ export default function App() {
       if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
       if (s.openHolidays)            setOpenHolidays(s.openHolidays);
       if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
+      if (s.deptLocks)               setDeptLocks(s.deptLocks);
       if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
       if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
       if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8386,6 +8818,7 @@ export default function App() {
   useEffect(() => { LS.set('sms_sel_grp',   selectedGroup);       }, [selectedGroup]);
   useEffect(() => { LS.set('sms_schedule',   schedule,      storageWarn); }, [schedule]);
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
+  useEffect(() => { LS.set('sms_dept_locks',     deptLocks);     }, [deptLocks]);
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
   useEffect(() => { LS.set('sms_open_holidays',       openHolidays);      }, [openHolidays]);
   useEffect(() => { LS.set('sms_vendor_hol_open',    vendorHolidayOpen); }, [vendorHolidayOpen]);
@@ -8408,7 +8841,7 @@ export default function App() {
   // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
   const latestStateRef = useRef({});
   latestStateRef.current = {
-    employees, vendors, warehouses, schedule, systemLocked,
+    employees, vendors, warehouses, schedule, systemLocked, deptLocks,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
@@ -8435,7 +8868,7 @@ export default function App() {
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
     const body = JSON.stringify({
-      employees, vendors, warehouses, schedule, systemLocked,
+      employees, vendors, warehouses, schedule, systemLocked, deptLocks,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
@@ -8454,7 +8887,7 @@ export default function App() {
         .then(r => { if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
-  }, [employees, vendors, warehouses, schedule, systemLocked, scheduleRange,
+  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
@@ -8586,6 +9019,7 @@ export default function App() {
     selectedVendor, setSelectedVendor,
     schedule, setSchedule,
     systemLocked, setSystemLocked,
+    deptLocks, setDeptLocks,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
