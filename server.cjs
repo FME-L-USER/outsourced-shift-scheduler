@@ -134,6 +134,146 @@ async function initDB() {
   await seedAreaEmployees();
   // 大溪倉員工（role=area 日翊，2026 更新名單）
   await seedDaxiAreaEmployees();
+  // 各倉別廠商配置（冪等，只新增不刪除）
+  await seedWarehouseVendors();
+  // 課別／組別正規化（以使用者提供之正式清單為準）
+  await seedDeptGroups();
+}
+
+// ── 課別／組別正式清單 ────────────────────────────────────────────
+// 來源：使用者提供之「倉別 / 課別 / 組別」對照表，為權威資料。
+// 未列於此表的組別會被移除；已指派到該組別的員工資料不會被刪除，僅在啟動時列出提醒。
+const DEPT_GROUPS = {
+  '大溪倉': {
+    '大溪理貨一課': ['日班-理貨一組','日班-理貨二組','中班-理貨一組',
+                     '日班-驗收組','夜班-驗收組','中班-驗收組','日班-EC廠退組'],
+    '大溪理貨二課': ['日班-店訂組','日班-退貨組','中班-分揀組','日班-加工組','日班-POP組'],
+    '倉儲管理課':   ['日班-庫存組','日班-廠退組','日班-收發組','清潔組','中班-庫存組'],
+    '運務課':       ['運務組'],
+    '營運推進課':   ['日班-單據組'],
+  },
+  '大肚倉': {
+    '大肚理貨課':   ['日班-理貨組','中班-理貨組','清潔組','日班-出貨組'],
+    '大肚運務課':   ['運務組'],
+  },
+  '岡山倉': {
+    '岡山營運課':   ['日班-理貨組','中班-理貨組','夜班-理貨組','日班-出貨組'],
+  },
+};
+
+// 課別更名對照（舊名 → 新名），同時遷移員工清冊的 dept 欄位
+const DEPT_RENAMES = { '營運指導課': '營運推進課' };
+
+async function seedDeptGroups() {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const state = rows[0]?.data;
+  if (!state || !Array.isArray(state.warehouses)) return;
+
+  let changed = false;
+
+  const warehouses = state.warehouses.map(w => {
+    const want = DEPT_GROUPS[w.name];
+    if (!want) return w;
+    return {
+      ...w,
+      departments: (w.departments ?? []).map(d => {
+        const name = DEPT_RENAMES[d.name] ?? d.name;
+        const groups = want[name];
+        if (!groups) return d; // 不在清單內的課別保持原樣，不擅自刪除
+        if (name !== d.name || JSON.stringify(d.groups ?? []) !== JSON.stringify(groups)) changed = true;
+        return { ...d, name, groups: [...groups] };
+      }),
+    };
+  });
+
+  // 員工清冊的課別名稱同步更名，避免與倉別設定脫鉤
+  let employees = state.employees;
+  if (Array.isArray(employees)) {
+    const next = employees.map(e =>
+      DEPT_RENAMES[e.dept] ? { ...e, dept: DEPT_RENAMES[e.dept] } : e);
+    if (next.some((e, i) => e !== employees[i])) { employees = next; changed = true; }
+  }
+
+  if (!changed) return;
+  await pool.query(
+    `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
+    [JSON.stringify({ warehouses, employees })]
+  );
+
+  // 提醒：清單外的組別已從下拉選單移除，但仍有員工掛在上面
+  const valid = new Map();
+  for (const w of warehouses)
+    for (const d of (w.departments ?? [])) valid.set(`${w.name}|${d.name}`, new Set(d.groups ?? []));
+  const stranded = new Map();
+  for (const e of (employees ?? [])) {
+    if (!e.group) continue;
+    const set = valid.get(`${e.warehouse}|${e.dept}`);
+    if (set && !set.has(e.group)) {
+      const k = `${e.warehouse} / ${e.dept} / ${e.group}`;
+      stranded.set(k, (stranded.get(k) ?? 0) + 1);
+    }
+  }
+  console.log('[seed] 已更新課別／組別清單');
+  for (const [k, n] of stranded) console.warn(`[seed] ⚠ 組別已移除但仍有 ${n} 位人員：${k}`);
+}
+
+// ── 各課別廠商配置 ────────────────────────────────────────────────
+// 來源：使用者提供之「課別 / 組別 / 廠商」對照表（權威資料）。
+// 系統資料模型中廠商掛在「課別」層，故此處為該課各組別廠商的聯集。
+const DEPT_VENDORS = {
+  '大溪理貨一課': ['芊通', '高順', '海納', '建豐', '勁速', '金鑫', '品豐', '全勤', '日翊', '閱川', '智遠'],
+  '大溪理貨二課': ['芊通', '高順', '海納', '建豐', '勁速', '全勤', '日翊', '閱川', '智遠'],
+  '倉儲管理課':   ['高順', '建豐', '勁速', '金鑫', '品豐', '日翊', '閱川', '智遠'],
+  '運務課':       ['芊通', '高順', '建豐', '勁速', '品豐', '智遠'],
+  '營運推進課':   ['日翊'],
+  '大肚理貨課':   ['承奕', '華煬通', '三彥', '萬宜', '信邦'],
+  '大肚運務課':   ['承奕', '華煬通', '三彥', '萬宜'],
+  '岡山營運課':   ['承杺', '芊通', '頂富'],
+};
+
+// 廠商代碼（員工編號前綴用）
+const VENDOR_CODES = {
+  '承杺': 'CS', '芊通': 'CT', '承奕': 'CY', '頂富': 'DF', '華煬通': 'HT',
+  '三彥': 'SY', '萬宜': 'WY', '信邦': 'XB', '高順': 'GS', '海納': 'HN',
+  '建豐': 'JF', '勁速': 'JS', '金鑫': 'JX', '品豐': 'PF', '全勤': 'QQ',
+  '日翊': 'RY', '閱川': 'YC', '智遠': 'ZY',
+};
+
+async function seedWarehouseVendors() {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const state = rows[0]?.data;
+  if (!state || !Array.isArray(state.warehouses)) return; // 尚未初始化，待管理員首次登入後再寫入
+
+  let changed = false;
+
+  // 1. 全域廠商清單：補上缺少的廠商（只新增，不刪除既有設定）
+  const vendors = Array.isArray(state.vendors) ? [...state.vendors] : [];
+  const haveNames = new Set(vendors.map(v => v.name));
+  for (const [name, code] of Object.entries(VENDOR_CODES)) {
+    if (haveNames.has(name)) continue;
+    vendors.push({ id: 'vd_' + code.toLowerCase(), code, name });
+    changed = true;
+  }
+
+  // 2. 各課別依對照表配置廠商（以對照表為準，覆蓋既有設定）
+  const warehouses = state.warehouses.map(w => ({
+    ...w,
+    departments: (w.departments ?? []).map(d => {
+      // 課別可能同時在本次啟動被更名，兩個名稱都查
+      const want = DEPT_VENDORS[d.name] ?? DEPT_VENDORS[DEPT_RENAMES[d.name]];
+      if (!want) return d; // 不在對照表內的課別保持原樣
+      if (JSON.stringify(d.vendors ?? []) === JSON.stringify(want)) return d;
+      changed = true;
+      return { ...d, vendors: [...want] };
+    }),
+  }));
+
+  if (!changed) return;
+  await pool.query(
+    `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
+    [JSON.stringify({ vendors, warehouses })]
+  );
+  console.log('[seed] 已更新各倉別廠商配置');
 }
 
 // ── 大溪倉人員名單（2026 更新版，role=area 日翊）──────────────────────────────
@@ -739,6 +879,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     warehouses:  data.warehouses  ?? [],
     systemLocked: data.systemLocked ?? false,
     deptLocks:    data.deptLocks ?? {},
+    deptRanges:   data.deptRanges ?? {},
     vendorHolidayOpen: data.vendorHolidayOpen ?? false,
   });
 });
@@ -1128,6 +1269,131 @@ app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
 // ── POST /api/auth/vendor-apply （公開）───────────────────
 // 廠商幹部帳號申請：申請者尚未登入，故為公開端點。
 // 一律建立 approved=false，需管理員核准後才能登入。
+// ── POST /api/attendance/temp（公開）─────────────────────────
+// 臨時人力自助簽到／手機控管。臨時人力沒有帳號，故此端點不需 JWT，
+// 但僅允許 upsert 當日 extras 中「自己那一筆」，並做下列限制：
+//   1. 每 IP 15 分鐘 120 次（獨立計數器，不與登入共用，避免灌爆此端點時
+//      連帶用光登入配額，導致全公司（同一對外 IP）無法登入）
+//   2. 日期必須在伺服器日期 ±1 天內（避免竄改歷史出勤）
+//   3. 只接受白名單欄位，字串長度設上限
+//   4. 單日 extras 筆數上限，避免被灌爆
+const TEMP_ALLOWED_FIELDS = new Set([
+  'name', 'vendor', 'group', 'warehouse', 'note', 'present', 'signedIn', 'signedOut',
+  'phoneSubmitted', 'phoneNotSubmitted',
+  ...['morning', 'noon', 'afternoon', 'ot'].flatMap(k => [`${k}Taken`, `${k}Returned`]),
+]);
+// 時間戳欄位（xxxAt）一律隨對應布林欄位一起接受
+const isTempField = k => TEMP_ALLOWED_FIELDS.has(k) ||
+  (k.endsWith('At') && TEMP_ALLOWED_FIELDS.has(k.slice(0, -2)));
+const MAX_TEMP_PER_DAY = 300;
+
+// 臨時人力手機櫃：固定使用鐵櫃二，75 格。
+// 與長期人員不同，臨時人力每天不同人，故櫃號逐日配發、不跨日保留。
+// 由伺服器在建檔交易內配號並回傳，臨時人力才知道自己該放幾號格。
+const TEMP_LOCKER_CAB = '二';
+const TEMP_LOCKER_CAPACITY = 75;
+
+// 姓名比對用正規化：去掉半形／全形空白與零寬字元，避免「林 舒瑩」對不到「林舒瑩」
+function normNameSrv(v) {
+  return String(v ?? '').replace(/[\s　​﻿]/g, '');
+}
+
+function pickTempLocker(dayEntries) {
+  const used = new Set(dayEntries
+    .filter(e => e.locker?.cab === TEMP_LOCKER_CAB)
+    .map(e => e.locker.slot));
+  for (let n = 1; n <= TEMP_LOCKER_CAPACITY; n++) if (!used.has(n)) return { cab: TEMP_LOCKER_CAB, slot: n };
+  return null;   // 已滿
+}
+
+function sanitizeTempPatch(patch) {
+  const out = {};
+  for (const [k, v] of Object.entries(patch ?? {})) {
+    if (!isTempField(k)) continue;
+    if (typeof v === 'boolean') out[k] = v;
+    else if (typeof v === 'string') out[k] = v.slice(0, 60);
+  }
+  return out;
+}
+
+app.post('/api/attendance/temp', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!hitRate(`temp:${ip}`, 120)) return res.status(429).json({ error: '操作過於頻繁，請稍後再試' });
+
+  const { date, id, patch } = req.body ?? {};
+  const dateStr = String(date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return res.status(400).json({ error: 'date 格式錯誤' });
+  const diffDays = Math.abs(Date.now() - Date.parse(`${dateStr}T00:00:00Z`)) / 86400000;
+  if (!(diffDays < 2)) return res.status(400).json({ error: '僅能填寫當日資料' });
+
+  const entryId = String(id ?? '');
+  if (!/^temp_[A-Za-z0-9_-]{6,60}$/.test(entryId)) return res.status(400).json({ error: 'id 格式錯誤' });
+
+  const clean = sanitizeTempPatch(patch);
+  if (Object.keys(clean).length === 0) return res.status(400).json({ error: '無可更新欄位' });
+
+  // 交班尖峰會有多人同時簽到，讀改寫必須在交易內鎖住該列，
+  // 否則後寫入者會以自己讀到的舊 extras 覆蓋掉別人剛存的紀錄。
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query("SELECT data FROM app_state WHERE id='main' FOR UPDATE");
+    const data = rows[0]?.data;
+    if (!data) {
+      await client.query('ROLLBACK');
+      return res.status(503).json({ error: '系統尚未初始化，請聯繫管理員' });
+    }
+
+    const extras = { ...(data.extras ?? {}) };
+    const day = [...(extras[dateStr] ?? [])];
+
+    // 先找這位臨時人力先前已綁定的那一筆（自建的 id，或勾稽到派工表後標記的 _claimId）
+    let idx = day.findIndex(e => e.id === entryId || e._claimId === entryId);
+
+    // 首次填表：以姓名勾稽當日「派工表匯入（報名狀態＝成功）」名單，
+    // 勾稽到就沿用該筆，避免同一人在名單上出現兩列。
+    if (idx < 0 && clean.name) {
+      const want = normNameSrv(clean.name);
+      idx = day.findIndex(e => e._isImport && !e._claimId && normNameSrv(e.name) === want);
+      if (idx >= 0) {
+        day[idx] = { ...day[idx], _claimId: entryId, locker: day[idx].locker ?? pickTempLocker(day) };
+      }
+    }
+
+    if (idx >= 0) {
+      day[idx] = { ...day[idx], ...clean };
+    } else {
+      if (day.length >= MAX_TEMP_PER_DAY) {
+        await client.query('ROLLBACK');
+        return res.status(429).json({ error: '本日臨時人力筆數已達上限' });
+      }
+      if (!clean.name) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: '姓名為必填' });
+      }
+      // 姓名不在當日派工表名單上：仍讓他簽到（人已在現場），但標記供幹部查核
+      // locker 一律由伺服器決定（不在白名單內，前端無法自行指定）
+      const locker = pickTempLocker(day);
+      day.push({ id: entryId, present: true, lateEarly: '正常', timeNote: '', absType: '',
+                 _isTemp: true, _unlisted: true, ...clean, locker });
+    }
+    extras[dateStr] = day;
+
+    await client.query(
+      `UPDATE app_state SET data = jsonb_set(data, '{extras}', $1::jsonb), updated_at = NOW() WHERE id='main'`,
+      [JSON.stringify(extras)]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, entry: day[idx >= 0 ? idx : day.length - 1] });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[temp attendance]', err.message);
+    res.status(500).json({ error: '儲存失敗' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/auth/vendor-apply', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
   if (!checkLoginRate(ip, req.body?.username)) {

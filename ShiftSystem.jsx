@@ -125,7 +125,9 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
-const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker' };
+const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker', TEMP: 'temp' };
+// 臨時人力自助簽到僅開放給手機控管實際使用的倉別
+const TEMP_WAREHOUSE = '大肚倉';
 const JWT_KEY = 'sms_jwt';
 
 const SHIFT_CODES = {
@@ -148,6 +150,16 @@ const VENDOR_MAP = {
   SY: '三彥',
   WY: '萬宜',
   XB: '信邦',
+  GS: '高順',
+  HN: '海納',
+  JF: '建豐',
+  JS: '勁速',
+  JX: '金鑫',
+  PF: '品豐',
+  QQ: '全勤',
+  RY: '日翊',
+  YC: '閱川',
+  ZY: '智遠',
 };
 
 // 廠商全名對應（匯出報表標題用，可依實際名稱修改）
@@ -160,6 +172,16 @@ const VENDOR_COMPANY_NAMES = {
   '三彥': '三彥管理顧問有限公司',
   '萬宜': '萬宜管理顧問有限公司',
   '信邦': '信邦管理顧問有限公司',
+  '高順': '高順管理顧問有限公司',
+  '海納': '海納管理顧問有限公司',
+  '建豐': '建豐管理顧問有限公司',
+  '勁速': '勁速管理顧問有限公司',
+  '金鑫': '金鑫管理顧問有限公司',
+  '品豐': '品豐管理顧問有限公司',
+  '全勤': '全勤管理顧問有限公司',
+  '日翊': '日翊管理顧問有限公司',
+  '閱川': '閱川管理顧問有限公司',
+  '智遠': '智遠管理顧問有限公司',
 };
 
 /** 廠商種子資料（從 VENDOR_MAP 展開） */
@@ -274,32 +296,42 @@ function getDefaultPermissions(role) {
  * 倉別種子資料（三層：倉別 → 課別 → 組別）
  * 來源：倉別代號.xlsx
  * 結構：{ id, name, departments: [{ id, code, name, vendors[], groups: string[] }] }
+ * 各課廠商＝該課所有組別實際進駐廠商的聯集（來源：課別/組別/廠商對照表）。
  */
+const DEPT_VENDORS = {
+  daxi1:    ['芊通','高順','海納','建豐','勁速','金鑫','品豐','全勤','日翊','閱川','智遠'],
+  daxi2:    ['芊通','高順','海納','建豐','勁速','全勤','日翊','閱川','智遠'],
+  cangchu:  ['高順','建豐','勁速','金鑫','品豐','日翊','閱川','智遠'],
+  yunwu:    ['芊通','高順','建豐','勁速','品豐','智遠'],
+  yingyun:  ['日翊'],
+  dadu1:    ['承奕','華煬通','三彥','萬宜','信邦'],
+  dadu2:    ['承奕','華煬通','三彥','萬宜'],
+  gangshan: ['承杺','芊通','頂富'],
+};
 const SEED_WAREHOUSES = [
   {
     id: 'wh1', name: '大溪倉',
     departments: [
       {
-        id: 'dept_wh1_1', code: 'L027', name: '大溪理貨一課', vendors: [],
-        groups: ['日班-理貨一組','日班-理貨二組','事務組','中班-理貨一組','中班-理貨二組',
+        id: 'dept_wh1_1', code: 'L027', name: '大溪理貨一課', vendors: [...DEPT_VENDORS.daxi1],
+        groups: ['日班-理貨一組','日班-理貨二組','中班-理貨一組',
                  '日班-驗收組','夜班-驗收組','中班-驗收組','日班-EC廠退組'],
       },
       {
-        id: 'dept_wh1_2', code: 'L022', name: '大溪理貨二課', vendors: [],
-        groups: ['日班-店訂組','日班-退貨組','中班-分揀組','日班-加工組','日班-POP組','事務組'],
+        id: 'dept_wh1_2', code: 'L022', name: '大溪理貨二課', vendors: [...DEPT_VENDORS.daxi2],
+        groups: ['日班-店訂組','日班-退貨組','中班-分揀組','日班-加工組','日班-POP組'],
       },
       {
-        id: 'dept_wh1_3', code: 'L021', name: '倉儲管理課', vendors: [],
-        groups: ['日班-庫存組','日班-廠退組','日班-收發組','日班-O2O組',
-                 '清潔組','事務組','日班-出貨組','中班-庫存組','夜班-O2O組'],
+        id: 'dept_wh1_3', code: 'L021', name: '倉儲管理課', vendors: [...DEPT_VENDORS.cangchu],
+        groups: ['日班-庫存組','日班-廠退組','日班-收發組','清潔組','中班-庫存組'],
       },
       {
-        id: 'dept_wh1_4', code: 'L025', name: '運務課', vendors: [],
+        id: 'dept_wh1_4', code: 'L025', name: '運務課', vendors: [...DEPT_VENDORS.yunwu],
         groups: ['運務組'],
       },
       {
-        id: 'dept_wh1_5', code: 'L012', name: '營運指導課', vendors: [],
-        groups: ['事務組'],
+        id: 'dept_wh1_5', code: 'L012', name: '營運推進課', vendors: [...DEPT_VENDORS.yingyun],
+        groups: ['日班-單據組'],
       },
     ],
   },
@@ -307,11 +339,11 @@ const SEED_WAREHOUSES = [
     id: 'wh2', name: '大肚倉',
     departments: [
       {
-        id: 'dept_wh2_1', code: 'L035', name: '大肚理貨課', vendors: [],
-        groups: ['日班-理貨組','中班-理貨組','夜班-理貨組','事務組','清潔組','日班-出貨組'],
+        id: 'dept_wh2_1', code: 'L035', name: '大肚理貨課', vendors: [...DEPT_VENDORS.dadu1],
+        groups: ['日班-理貨組','中班-理貨組','清潔組','日班-出貨組'],
       },
       {
-        id: 'dept_wh2_2', code: 'L037', name: '大肚運務課', vendors: [],
+        id: 'dept_wh2_2', code: 'L037', name: '大肚運務課', vendors: [...DEPT_VENDORS.dadu2],
         groups: ['運務組'],
       },
     ],
@@ -320,9 +352,8 @@ const SEED_WAREHOUSES = [
     id: 'wh3', name: '岡山倉',
     departments: [
       {
-        id: 'dept_wh3_1', code: 'L007', name: '岡山營運課', vendors: [],
-        groups: ['日班-理貨組','中班-理貨組','夜班-理貨組','日班-庫存組',
-                 '日班-出貨組','日班-收發組','清潔組','運務組','事務組'],
+        id: 'dept_wh3_1', code: 'L007', name: '岡山營運課', vendors: [...DEPT_VENDORS.gangshan],
+        groups: ['日班-理貨組','中班-理貨組','夜班-理貨組','日班-出貨組'],
       },
     ],
   },
@@ -370,6 +401,12 @@ const parseLocal = s => { const [y,m,d] = s.split('-').map(Number); return new D
 
 // 依開放排班區間推算「包含今天」的週期偏移量（0 = 設定的區間本身，負數 = 往前的週期）
 // 設定的區間常是未來期（例如今天 9/1、區間 9/7~10/4），登入時應自動顯示今天所在的那一期
+// 取該課別實際適用的開放排班區間：課別自訂優先，未設定則沿用全域設定
+function resolveRange(deptRanges, deptName, fallback) {
+  const r = deptName ? deptRanges?.[deptName] : null;
+  return (r?.start && r?.end) ? r : (fallback ?? {});
+}
+
 function todayPeriodOffset(scheduleRange) {
   if (!scheduleRange?.start || !scheduleRange?.end) return 0;
   const s = parseLocal(scheduleRange.start);
@@ -506,6 +543,89 @@ const verifyPwd = async (input, stored) => {
 // filterEmployees(list, warehouses, selectedWarehouse, selectedDept, selectedGroup)
 // Applies warehouse → dept (vendor) → group cascading filter.
 // ─────────────────────────────────────────────
+
+// ── 手機控管鐵櫃設定（目前僅大肚倉使用）──────────────────────────
+// 每個鐵櫃 75 格；鐵櫃一由兩個組別共用，須依 order 先後填格位。
+const LOCKER_CAPACITY = 75;
+// 鐵櫃二為臨時人力專用：每日配發、隔日釋出，由伺服器在建檔時自動配號
+const TEMP_LOCKER_CAB = '二';
+const LOCKER_CABINETS = [
+  { id: '一', groups: ['日班-理貨組'] },
+  { id: '三', groups: ['中班-理貨組', '運務組'] },   // 共用，依此順序填格
+  { id: '四', groups: ['日班-出貨組'] },
+];
+// 組別 → 鐵櫃編號
+const LOCKER_GROUP_CABINET = Object.fromEntries(
+  LOCKER_CABINETS.flatMap(c => c.groups.map(g => [g, c.id])));
+
+const lockerLabel = a => (a ? `鐵櫃 ${a.cab}：${a.slot}號格` : '');
+
+// 手機繳交狀態互斥對照：已繳交與未交不可同時成立
+const PHONE_OPPOSITE = { phoneSubmitted: 'phoneNotSubmitted', phoneNotSubmitted: 'phoneSubmitted' };
+
+/**
+ * 配置櫃號。既有配置一律保留（櫃號固定綁定人員），只補未配置者，
+ * 並回收離職／調離該組人員空出的格位。
+ * @returns {{ assign, assigned, released, overflow }}
+ */
+function assignLockers(employees, prevAssign) {
+  const assign = {};
+  const overflow = [];
+  let assigned = 0;
+
+  // 仍在該鐵櫃編制內的人員，依組別順序 → 員工編號排列
+  const rank = new Map();
+  LOCKER_CABINETS.forEach(c => c.groups.forEach((g, i) => rank.set(g, i)));
+
+  for (const cab of LOCKER_CABINETS) {
+    const members = employees
+      .filter(e => cab.groups.includes(e.group))
+      .sort((a, b) =>
+        (rank.get(a.group) - rank.get(b.group)) ||
+        String(a.empId ?? '').localeCompare(String(b.empId ?? '')));
+
+    // 保留既有格位（僅限本櫃且未被佔用者）
+    const taken = new Set();
+    const keep = new Map();
+    for (const e of members) {
+      const prev = prevAssign?.[e.id];
+      if (prev && prev.cab === cab.id && prev.slot >= 1 && prev.slot <= LOCKER_CAPACITY
+          && !taken.has(prev.slot)) {
+        taken.add(prev.slot);
+        keep.set(e.id, prev.slot);
+      }
+    }
+
+    // 未配置者依序取用最小的空格
+    let next = 1;
+    for (const e of members) {
+      if (keep.has(e.id)) { assign[e.id] = { cab: cab.id, slot: keep.get(e.id) }; continue; }
+      while (next <= LOCKER_CAPACITY && taken.has(next)) next++;
+      if (next > LOCKER_CAPACITY) { overflow.push(e); continue; }
+      taken.add(next);
+      assign[e.id] = { cab: cab.id, slot: next };
+      assigned++;
+    }
+  }
+
+  const released = Object.keys(prevAssign ?? {}).filter(id => !assign[id]).length;
+  return { assign, assigned, released, overflow };
+}
+
+// 當日是否已有實際出勤動作（簽到／簽退／手機控管／點名）。
+// 注意須讀原始 attendData，不可用 getRecord——後者會依班表補上預設值，
+// 導致每個人看起來都「有紀錄」。
+const PHONE_SLOT_KEYS = ['morning', 'noon', 'afternoon', 'ot'];
+function hasAttendActivity(rec) {
+  if (!rec) return false;
+  if (rec.signedIn || rec.signedOut || rec.phoneSubmitted || rec.phoneNotSubmitted || rec.present) return true;
+  return PHONE_SLOT_KEYS.some(k => rec[`${k}Taken`] || rec[`${k}Returned`]);
+}
+
+// 名稱比對用正規化：去掉半形/全形空白、零寬字元，避免「三彥 」被當成新廠商
+function normName(v) {
+  return (v ?? '').toString().replace(/[\s　​﻿]/g, '');
+}
 
 function filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup) {
   if (selectedDept) {
@@ -653,15 +773,52 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
     { value: 'riyi',       label: '日翊' },
     { value: 'vendor_mgr', label: '廠商幹部' },
     { value: 'worker',     label: '委外人員' },
+    { value: 'temp',       label: `臨時人力（${TEMP_WAREHOUSE}）` },
   ];
 
   const IDENTITY_INFO = {
     riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-teal-50 border-blue-100 text-blue-700' },
     vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-teal-50 border-teal-100 text-emerald-700' },
     worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
+    temp:       { text: `${TEMP_WAREHOUSE}當日臨時支援人力，免帳號密碼；填寫廠商、班別與姓名即可簽到`, color: 'bg-violet-50 border-violet-100 text-violet-700' },
   };
 
   const switchIdentity = v => { setIdentity(v); setUsername(''); setPassword(''); setError(''); };
+
+  // ── 臨時人力：免帳密，填寫廠商／班別／姓名即可進入簽到畫面 ──
+  const [tempForm, setTempForm] = useState({ vendor: '', group: '', name: '' });
+  // 手機控管目前僅大肚倉使用，故臨時人力的廠商與班別只列出大肚倉的選項
+  const tempWh = useMemo(() => warehouses.find(w => w.name === TEMP_WAREHOUSE), [warehouses]);
+  const tempGroupOptions = useMemo(() => {
+    const set = new Set();
+    (tempWh?.departments ?? []).forEach(d => (d.groups ?? []).forEach(g => set.add(g)));
+    return [...set];
+  }, [tempWh]);
+  const tempVendorOptions = useMemo(() => {
+    const set = new Set();
+    (tempWh?.departments ?? []).forEach(d => (d.vendors ?? []).forEach(v => set.add(v)));
+    return [...set];
+  }, [tempWh]);
+
+  const submitTemp = () => {
+    const name = tempForm.name.trim();
+    if (!tempForm.vendor) { setError('請選擇廠商'); return; }
+    if (!tempForm.group)  { setError('請選擇班別'); return; }
+    if (!name)            { setError('請輸入姓名'); return; }
+    setError('');
+    // 臨時人力無帳號，以本機產生的識別碼對應當日 extras 中的那一筆
+    const key = 'sms_temp_id';
+    let id = localStorage.getItem(key);
+    if (!id || !/^temp_[A-Za-z0-9_-]{6,60}$/.test(id)) {
+      id = 'temp_' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      localStorage.setItem(key, id);
+    }
+    onLogin({
+      id, role: ROLES.TEMP, name,
+      vendor: tempForm.vendor, group: tempForm.group, warehouse: TEMP_WAREHOUSE,
+      permissions: {}, vendors: [], allowedWarehouses: [],
+    });
+  };
 
   // 登入失敗鎖定：以 sessionStorage 記錄各帳號失敗次數
   const getLockData  = (u) => { try { return JSON.parse(localStorage.getItem('_sms_lock_' + u) || '{"count":0,"until":0}'); } catch { return {count:0,until:0}; } };
@@ -1185,8 +1342,50 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             </div>
           )}
 
+          {/* 畫面 1：臨時人力填表（選廠商／班別／姓名） */}
+          {identity === 'temp' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">廠商 <span className="text-red-500">*</span></label>
+                <select value={tempForm.vendor} onChange={e => setTempForm(p => ({ ...p, vendor: e.target.value }))}
+                  className="w-full px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
+                             focus:outline-none focus:ring-2 focus:ring-violet-400">
+                  <option value="">請選擇廠商</option>
+                  {tempVendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                {tempVendorOptions.length === 0 && (
+                  <p className="text-xs text-red-600 mt-1">
+                    {TEMP_WAREHOUSE}尚未設定廠商，請聯繫管理員
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">班別 <span className="text-red-500">*</span></label>
+                <select value={tempForm.group} onChange={e => setTempForm(p => ({ ...p, group: e.target.value }))}
+                  className="w-full px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
+                             focus:outline-none focus:ring-2 focus:ring-violet-400">
+                  <option value="">請選擇班別</option>
+                  {tempGroupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">姓名 <span className="text-red-500">*</span></label>
+                <input value={tempForm.name} autoFocus
+                  onChange={e => setTempForm(p => ({ ...p, name: e.target.value }))}
+                  placeholder="請輸入您的姓名"
+                  className="w-full px-4 py-2.5 bg-white border border-[#DDD9D0] rounded-xl text-sm
+                             focus:outline-none focus:ring-2 focus:ring-violet-400" />
+              </div>
+              <button type="button" onClick={submitTemp}
+                className="w-full py-3 bg-violet-600 hover:bg-violet-700 text-white font-semibold
+                           rounded-xl transition-colors text-sm shadow-sm">
+                下一步：簽到 / 手機控管
+              </button>
+            </div>
+          )}
+
           {/* 帳號 / 密碼（選擇身份後才顯示） */}
-          {identity && (
+          {identity && identity !== 'temp' && (
             <>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">帳號</label>
@@ -1385,48 +1584,48 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 
   return (
     <aside className={`flex flex-col text-white transition-all duration-300
-                       ${collapsed ? 'w-[72px]' : 'w-60'} shrink-0 h-screen sticky top-0`}
+                       ${collapsed ? 'w-14' : 'w-44'} shrink-0 h-screen sticky top-0`}
            style={{background:'var(--sms-sidebar)'}}>
       {/* 標題列：標題／副標＋收合鈕 */}
-      <div className="flex items-center gap-2 px-4 pt-5 pb-4">
+      <div className="flex items-center gap-1.5 px-2.5 pt-3 pb-2.5">
         {!collapsed && (
           <div className="min-w-0">
-            <div className="font-bold text-base leading-tight truncate">班表管理系統</div>
-            <div className="text-xs text-white/50 mt-0.5 truncate">委外人力排班</div>
+            <div className="font-bold text-sm leading-tight truncate">班表管理系統</div>
+            <div className="text-[10px] text-white/50 truncate">委外人力排班</div>
           </div>
         )}
         <button onClick={onToggle} title={collapsed ? '展開選單' : '收合選單'}
-          className="ml-auto shrink-0 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20
-                     flex items-center justify-center text-sm transition-colors">
+          className="ml-auto shrink-0 w-6 h-6 rounded-full bg-white/10 hover:bg-white/20
+                     flex items-center justify-center text-xs transition-colors">
           {collapsed ? '»' : '«'}
         </button>
       </div>
 
       {/* 選單：選中為白色膠囊、其餘 hover 時淡色膠囊 */}
-      <nav className="flex-1 px-3 pb-3 overflow-y-auto space-y-1.5">
+      <nav className="flex-1 px-2 pb-2 overflow-y-auto space-y-0.5">
         {items.map(item => {
           const active = currentPage === item.key;
           return (
             <button key={item.key}
               onClick={() => onNavigate(item.key)}
               title={collapsed ? item.label : undefined}
-              className={`w-full flex items-center gap-3 rounded-full transition-colors
-                          ${collapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
+              className={`w-full flex items-center gap-2 rounded-full transition-colors
+                          ${collapsed ? 'justify-center px-0 py-2' : 'px-3 py-2'}
                           ${active
                             ? 'bg-white font-bold shadow-sm'
                             : 'text-white/80 hover:bg-white/10 hover:text-white'}`}
               style={active ? { color: 'var(--sms-sidebar)' } : undefined}>
-              <span className="text-lg leading-none shrink-0">{item.icon}</span>
-              {!collapsed && <span className="truncate text-sm">{item.label}</span>}
+              <span className="text-base leading-none shrink-0">{item.icon}</span>
+              {!collapsed && <span className="truncate text-[13px]">{item.label}</span>}
             </button>
           );
         })}
       </nav>
 
       {/* 使用者資訊與登出 */}
-      <div className="px-3 pb-4 pt-3 border-t border-white/10">
+      <div className="px-2 pb-2.5 pt-2 border-t border-white/10">
         {!collapsed && (
-          <div className="px-2 mb-2 text-xs truncate">
+          <div className="px-2 mb-1.5 text-[11px] truncate">
             <div className="font-semibold text-white/90 truncate">{currentUser.name}</div>
             <div className="text-white/45">
               {currentUser.role === ROLES.ADMIN ? '管理員' : currentUser.role === ROLES.AREA ? '日翊' : currentUser.role === ROLES.WORKER ? '委外人員' : '委外幹部'}
@@ -1435,10 +1634,10 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
         )}
         {onSave && <SaveButton onSave={onSave} collapsed={collapsed} />}
         <button onClick={onLogout} title={collapsed ? '登出' : undefined}
-          className={`w-full flex items-center gap-3 rounded-full py-2.5 text-sm text-white/70
+          className={`w-full flex items-center gap-2 rounded-full py-2 text-[13px] text-white/70
                       hover:bg-white/10 hover:text-red-300 transition-colors
-                      ${collapsed ? 'justify-center px-0' : 'px-4'}`}>
-          <span className="text-base leading-none">🚪</span>
+                      ${collapsed ? 'justify-center px-0' : 'px-3'}`}>
+          <span className="text-sm leading-none">🚪</span>
           {!collapsed && '登出'}
         </button>
       </div>
@@ -1567,10 +1766,14 @@ function WarehouseDeptBar() {
       </div>
       {/* Mobile: 摺疊列 */}
       <div className="md:hidden">
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-sm text-slate-600 truncate max-w-[200px]">🏭 {filterLabel}</span>
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <span className="text-base font-semibold text-slate-700 truncate flex-1 min-w-0">🏭 {filterLabel}</span>
           <button onClick={() => setMobileFilterOpen(v => !v)}
-            className="text-xs px-2 py-1 border border-[#DDD9D0] rounded-lg text-slate-600 whitespace-nowrap">
+            className={`shrink-0 text-base font-semibold px-4 py-2 rounded-lg whitespace-nowrap
+                        transition-colors shadow-sm
+                        ${mobileFilterOpen
+                          ? 'bg-slate-600 text-white hover:bg-slate-700'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
             {mobileFilterOpen ? '收起 ▲' : '篩選 ▼'}
           </button>
         </div>
@@ -2313,7 +2516,7 @@ function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    deptLocks, scheduleRange, openHolidays, vendorHolidayOpen,
+    deptLocks, deptRanges, scheduleRange, openHolidays, vendorHolidayOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
     selectedVendor,
   } = useApp();
@@ -2506,28 +2709,44 @@ function ScheduleTable() {
   const [checkedEmpIds, setCheckedEmpIds] = useState(new Set());
   const importFileRef = useRef();
 
+  // 功能按鈕收合狀態：手機預設收合以節省畫面，桌機預設展開
+  const [toolsOpen, setToolsOpen] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerWidth >= 768);
+
   // rangeMode 下的視圖平移（天數偏移）
   const [viewOffset, setViewOffset] = useState(0);
   // 登入後 scheduleRange 由伺服器載入，待其就緒再切到包含今天的週期（僅執行一次）
-  const didInitOffset = useRef(false);
+  // 已選課別若有自訂開放區間，畫面與公告一律以該課別為準
+  const selectedDeptName = useMemo(() => {
+    if (!selectedDept) return null;
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    return wh?.departments?.find(d => d.id === selectedDept)?.name ?? null;
+  }, [warehouses, selectedWarehouse, selectedDept]);
+  const activeRange = useMemo(
+    () => resolveRange(deptRanges, selectedDeptName, scheduleRange),
+    [deptRanges, selectedDeptName, scheduleRange]);
+
+  const rangeKeyRef = useRef(null);
   useEffect(() => {
-    if (didInitOffset.current || !scheduleRange.start || !scheduleRange.end) return;
-    didInitOffset.current = true;
-    const off = todayPeriodOffset(scheduleRange);
-    if (off !== 0) setViewOffset(off);
-  }, [scheduleRange]);
-  const rangeMode = !!(scheduleRange.start && scheduleRange.end);
+    if (!activeRange.start || !activeRange.end) return;
+    // 切換課別導致適用區間改變時，需重新定位到今天所在的週期
+    const key = `${activeRange.start}~${activeRange.end}`;
+    if (rangeKeyRef.current === key) return;
+    rangeKeyRef.current = key;
+    setViewOffset(todayPeriodOffset(activeRange));
+  }, [activeRange]);
+  const rangeMode = !!(activeRange.start && activeRange.end);
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
-    const s = parseLocal(scheduleRange.start);
-    const e = parseLocal(scheduleRange.end);
+    const s = parseLocal(activeRange.start);
+    const e = parseLocal(activeRange.end);
     const len = Math.round((e - s) / 86400000); // 首尾天數差（不含尾）
     const shift = viewOffset * (len + 1); // +1：含頭含尾的完整天數，避免下一期與前一期重疊
     const vs = new Date(s); vs.setDate(vs.getDate() + shift);
     const ve = new Date(e); ve.setDate(ve.getDate() + shift);
     const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
     return { start: fmt(vs), end: fmt(ve), len };
-  }, [rangeMode, scheduleRange, viewOffset]);
+  }, [rangeMode, activeRange, viewOffset]);
 
   const toggleCheck = (empId) =>
     setCheckedEmpIds(prev => {
@@ -2598,21 +2817,19 @@ function ScheduleTable() {
   /** 計算當週休假日數（'休'） */
   const getWeeklyRest = useCallback((empId, dk) => getWeeklyCode(empId, dk, '休'), [getWeeklyCode]);
 
-  // 鎖定以「課別」為單位：各課排班完成時間不同，需可分別鎖定
+  // 鎖定與開放區間皆以「課別」為單位：各課排班完成時間不同，需可分別設定
   const isEditable = useCallback((dk, emp) => {
     if (!lockAllowsEdit(emp?.dept ? deptLocks[emp.dept] : 'none', currentUser?.role)) return false;
-    // worker 必須有 scheduleRange 才能編輯
-    if (currentUser?.role === ROLES.WORKER && (!scheduleRange.start || !scheduleRange.end)) return false;
-    // 開放排班日期區間：一律僅限區間內可編輯（往前/往後查看時也不得修改）
-    if (scheduleRange.start && scheduleRange.end) {
+    // 該課別若有自訂開放區間則優先採用，否則沿用全域設定
+    const range = resolveRange(deptRanges, emp?.dept, scheduleRange);
+    if (currentUser?.role === ROLES.WORKER && (!range.start || !range.end)) return false;
+    if (range.start && range.end) {
       const [y,m,d] = dk.split('-').map(Number);
       const date = new Date(y, m-1, d);
-      const rs = parseLocal(scheduleRange.start);
-      const re = parseLocal(scheduleRange.end);
-      if (date < rs || date > re) return false;
+      if (date < parseLocal(range.start) || date > parseLocal(range.end)) return false;
     }
     return true;
-  }, [deptLocks, scheduleRange, currentUser]);
+  }, [deptLocks, deptRanges, scheduleRange, currentUser]);
 
   const handleCellClick = useCallback((empId, dk) => {
     if (!isEditable(dk, employees.find(e => e.id === empId))) {
@@ -2629,12 +2846,13 @@ function ScheduleTable() {
       }
     }
 
-    // WORKER 嚴格限制在 scheduleRange 內（不隨 viewRange 放寬）
-    if (currentUser.role === ROLES.WORKER && scheduleRange.start && scheduleRange.end) {
+    // WORKER 嚴格限制在該課別的開放區間內（不隨 viewRange 放寬）
+    const wRange = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept, scheduleRange);
+    if (currentUser.role === ROLES.WORKER && wRange.start && wRange.end) {
       const [y, m, d] = dk.split('-').map(Number);
       const date = new Date(y, m - 1, d);
-      const rs = parseLocal(scheduleRange.start);
-      const re = parseLocal(scheduleRange.end);
+      const rs = parseLocal(wRange.start);
+      const re = parseLocal(wRange.end);
       if (date < rs || date > re) {
         toast('此日期超出開放排班區間，無法修改。', 'warn');
         return;
@@ -2730,7 +2948,7 @@ function ScheduleTable() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
       const label = rangeMode
-        ? `${scheduleRange.start}~${scheduleRange.end}`
+        ? `${activeRange.start}~${activeRange.end}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表存檔_${label}.xlsx`);
       toast('班表存檔成功', 'success');
@@ -2763,7 +2981,7 @@ function ScheduleTable() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
       const label = rangeMode
-        ? `${scheduleRange.start}~${scheduleRange.end}`
+        ? `${activeRange.start}~${activeRange.end}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表_代碼轉換_${label}.xlsx`);
       toast('代碼轉換匯出成功', 'success');
@@ -2792,8 +3010,8 @@ function ScheduleTable() {
         const isFormatA = h0 === '員工編號';
         const isFormatC = h0.includes('作業區') || headerRow[1] === '姓名';
 
-        const baseYear  = rangeMode ? parseInt(scheduleRange.start.split('-')[0]) : selectedYear;
-        const baseMonth = rangeMode ? parseInt(scheduleRange.start.split('-')[1]) : selectedMonth;
+        const baseYear  = rangeMode ? parseInt(activeRange.start.split('-')[0]) : selectedYear;
+        const baseMonth = rangeMode ? parseInt(activeRange.start.split('-')[1]) : selectedMonth;
         const getYear   = (month) => (month < baseMonth - 6 ? baseYear + 1 : baseYear);
 
         const mapVal = (v) => {
@@ -2849,8 +3067,8 @@ function ScheduleTable() {
         if (dateCols.length === 0) { toast('找不到日期欄位', 'error'); return; }
 
         // 開放排班日期區間限制（與手動點格子編輯的 isEditable 規則一致）
-        const rangeStart = scheduleRange.start ? parseLocal(scheduleRange.start) : null;
-        const rangeEnd   = scheduleRange.end   ? parseLocal(scheduleRange.end)   : null;
+        const rangeStart = activeRange.start ? parseLocal(activeRange.start) : null;
+        const rangeEnd   = activeRange.end   ? parseLocal(activeRange.end)   : null;
         const inRange = (month, day) => {
           if (!rangeStart || !rangeEnd) return true;
           const d = new Date(getYear(month), month - 1, day);
@@ -2905,7 +3123,7 @@ function ScheduleTable() {
 
         // 若整份檔案的日期都不在開放排班區間內，直接視為匯入失敗
         if (skippedOutOfRange > 0 && updatedCells === 0) {
-          toast(`匯入失敗：檔案日期不在開放排班區間內（${scheduleRange.start}～${scheduleRange.end}）`, 'error');
+          toast(`匯入失敗：檔案日期不在開放排班區間內（${activeRange.start}～${activeRange.end}）`, 'error');
           return;
         }
         if (Object.keys(updates).length === 0) {
@@ -3000,13 +3218,15 @@ function ScheduleTable() {
 
     let converted = 0, affected = 0;
     const updates = {};
+    // 記錄未轉換者的原因，讓使用者知道是「不需要轉」還是「轉不了」
+    const skipped = { noSchedule: [], full: [], noSurplus: [], partial: [] };
     visibleEmployees.forEach(emp => {
       const empSchedule = schedule[emp.id];
-      if (!empSchedule) return;
+      if (!empSchedule) { skipped.noSchedule.push(emp.name); return; }
       // 週期內已排定的「國」一律不異動，僅計入額度；已排滿就跳過此人
       const existingGuo = dayHeaders.filter(h => empSchedule[h.dk] === '國');
       const quota = hols.length - existingGuo.length;
-      if (quota <= 0) return;
+      if (quota <= 0) { skipped.full.push(emp.name); return; }
       // 取週期內的休/例/國（既有的「國」納入每週休假日計算，避免重複多排）
       const offDays = dayHeaders
         .map(h => ({
@@ -3038,7 +3258,7 @@ function ScheduleTable() {
           .sort((a, b) => minDist(a.ts) - minDist(b.ts))
           .slice(0, canConvert));
       });
-      if (candidates.length === 0) return;
+      if (candidates.length === 0) { skipped.noSurplus.push(emp.name); return; }
       // 與「尚未被既有國用掉」的國定假日一對一貪婪配對，且不超過剩餘額度
       const usedHolTs = new Set(existingGuo.map(h => new Date(h.year, h.month - 1, h.day).getTime()));
       const remainCand = [...candidates];
@@ -3054,15 +3274,28 @@ function ScheduleTable() {
         remainCand.splice(remainCand.indexOf(best.c), 1);
         remainHol.splice(remainHol.indexOf(best.h), 1);
       }
-      if (picked.length === 0) return;
+      if (picked.length === 0) { skipped.noSurplus.push(emp.name); return; }
+      if (picked.length < quota) skipped.partial.push(`${emp.name}(${picked.length}/${quota})`);
       const ns = { ...empSchedule };
       picked.forEach(({ dk }) => { ns[dk] = '國'; converted++; });
       updates[emp.id] = ns;
       affected++;
     });
 
+    // 組出未轉換原因說明（僅列前 8 位，避免訊息過長）
+    const cut = arr => arr.slice(0, 8).join('、') + (arr.length > 8 ? `…共 ${arr.length} 人` : '');
+    const reasons = [];
+    if (skipped.noSurplus.length)
+      reasons.push(`每週休假未超過 2 天、無多排的「休」可轉：${cut(skipped.noSurplus)}`);
+    if (skipped.full.length)
+      reasons.push(`「國」已排滿 ${hols.length} 天：${cut(skipped.full)}`);
+    if (skipped.partial.length)
+      reasons.push(`可轉天數不足額度：${cut(skipped.partial)}`);
+    if (skipped.noSchedule.length)
+      reasons.push(`查無班表資料：${cut(skipped.noSchedule)}`);
+
     if (converted === 0) {
-      toast(`無需轉換：目前週期內人員的「國」已排滿 ${hols.length} 天，或沒有多排的休假可轉換。`, 'info');
+      toast(`未轉換任何一天。原因：${reasons.join('；') || '目前畫面沒有可處理的人員'}`, 'info');
       return;
     }
     setSchedule(prev => {
@@ -3070,7 +3303,8 @@ function ScheduleTable() {
       Object.entries(updates).forEach(([id, days]) => { next[id] = days; });
       return next;
     });
-    toast(`已補排 ${converted} 格「國」（${affected} 位人員，每人上限 ${hols.length} 天）；原已排定的「國」未異動`, 'success');
+    toast(`已補排 ${converted} 格「國」（${affected} 位人員，每人上限 ${hols.length} 天）；原已排定的「國」未異動`
+      + (reasons.length ? `。未轉換者：${reasons.join('；')}` : ''), 'success');
   };
 
   // 下載匯入班表範本（Format C：作業區/姓名/廠商 + 月/日/星期 三列表頭）
@@ -3314,7 +3548,7 @@ function ScheduleTable() {
               ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
               : 'bg-amber-50 border-amber-300 text-amber-800'}`}>
             <span className="text-xl font-bold">
-              📢 開放排班區間：{scheduleRange.start} ~ {scheduleRange.end}
+              📢 {selectedDeptName ? `${selectedDeptName} ` : ''}開放排班區間：{activeRange.start} ~ {activeRange.end}
             </span>
             <span className="text-base font-medium">
               {viewingOpen
@@ -3353,8 +3587,8 @@ function ScheduleTable() {
               <button onClick={() => setViewOffset(v => v + 1)}
                 className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
-              {viewOffset !== todayPeriodOffset(scheduleRange) && (
-                <button onClick={() => setViewOffset(todayPeriodOffset(scheduleRange))}
+              {viewOffset !== todayPeriodOffset(activeRange) && (
+                <button onClick={() => setViewOffset(todayPeriodOffset(activeRange))}
                   className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
                   回目前
                 </button>
@@ -3372,6 +3606,22 @@ function ScheduleTable() {
               </select>
             </>
           )}
+          {isManager && checkedEmpIds.size > 0 && (
+            <button onClick={resetChecked}
+              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 flex items-center gap-1">
+              🔄 重排已選（{checkedEmpIds.size}人）
+            </button>
+          )}
+          {/* 功能按鈕收合鈕：手機預設收合，桌機預設展開 */}
+          <button onClick={() => setToolsOpen(v => !v)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1
+                        border transition-colors shadow-sm
+                        ${toolsOpen
+                          ? 'bg-slate-600 text-white border-slate-600 hover:bg-slate-700'
+                          : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'}`}>
+            🛠️ 功能 {toolsOpen ? '▲' : '▼'}
+          </button>
+          {toolsOpen && <>
           <button onClick={() => setShowConverted(v => !v)}
             className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 border transition-colors
               ${showConverted
@@ -3379,12 +3629,6 @@ function ScheduleTable() {
                 : 'bg-white text-slate-600 border-[#DDD9D0] hover:bg-[#F5F2EC]'}`}>
             {showConverted ? '🔤 顯示代號中' : '🔡 顯示記號'}
           </button>
-          {isManager && checkedEmpIds.size > 0 && (
-            <button onClick={resetChecked}
-              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 flex items-center gap-1">
-              🔄 重排已選（{checkedEmpIds.size}人）
-            </button>
-          )}
           {isManager && <button onClick={handleDownloadTemplate}
             className="px-3 py-1.5 bg-[#1e3870] text-white rounded-lg text-sm hover:bg-[#1a2f5e] flex items-center gap-1">
             📋 下載匯入範本
@@ -3402,7 +3646,6 @@ function ScheduleTable() {
             className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
             🎌 一鍵轉換國
           </button>}
-          <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
           {isManager && <button onClick={exportConverted}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
@@ -3411,6 +3654,9 @@ function ScheduleTable() {
             className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1">
             🖨️ 列印報表
           </button>
+          </>}
+          {/* 檔案輸入須恆常掛載，否則收合後 importFileRef 會失效 */}
+          <input ref={importFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportSchedule} className="hidden" />
           {(() => {
             // 依目前顯示人員所屬課別，提示哪些課已鎖定
             const locked = [...new Set(visibleEmployees
@@ -3434,7 +3680,7 @@ function ScheduleTable() {
       {/* Legend */}
       <div className="flex gap-3 text-xs flex-wrap">
         {Object.entries(SHIFT_CODES).filter(([k]) => k).map(([code, info]) => (
-          <span key={code} className={`px-2 py-0.5 rounded ${info.color}`}>
+          <span key={code} className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 border border-slate-200">
             {info.label || code} = {info.meaning}
           </span>
         ))}
@@ -3614,7 +3860,8 @@ function fuzzyMatch(headers) {
 
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
-    warehouses, vendors, selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
+    warehouses, setWarehouses, vendors, setVendors,
+    selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -3758,6 +4005,13 @@ function EmployeeRoster() {
           return true;
         };
 
+        // 既有主檔的「正規化名稱 → 原始寫法」對照，用於吸收空白差異
+        const vendorCanon = new Map(vendors.map(v => [normName(v.name), v.name]));
+        const deptCanon = new Map(
+          warehouses.flatMap(w => (w.departments ?? []).map(d => [normName(d.name), d.name])));
+        const canonVendor = v => (v ? (vendorCanon.get(normName(v)) ?? v.trim()) : '');
+        const canonDept   = d => (d ? (deptCanon.get(normName(d))   ?? d.trim()) : '');
+
         let added = 0, updated = 0, skippedTemp = 0, skippedLeave = 0;
         const existingMap = new Map(employees.map(e => [e.empId, e]));
         const newEmps = [];
@@ -3785,9 +4039,10 @@ function EmployeeRoster() {
           // 過濾：離職日欄位有填日期（非空、非年資小數）
           if (hasLeaveDate(leaveVal)) { skippedLeave++; continue; }
 
-          const vendor = parseCodeName(vendorRaw);
+          // 去空白後與既有主檔比對，命中則沿用主檔寫法，避免產生「三彥 」這類重複項
+          const vendor = canonVendor(parseCodeName(vendorRaw));
           const group  = parseCodeName(groupRaw);
-          const dept   = parseCodeName(deptRaw);
+          const dept   = canonDept(parseCodeName(deptRaw));
 
           if (empId && existingMap.has(empId) && !seenInFile.has(empId)) {
             // 同員工編號：更新基本資料，保留 shiftTypeId
@@ -3828,6 +4083,46 @@ function EmployeeRoster() {
           return [...merged, ...newEmps];
         });
 
+        // ── 同步廠商設定：本次匯入若出現某課別尚未登錄的廠商，自動補進去 ──
+        // 課別的廠商清單決定了篩選下拉選項，未登錄會導致該批人員篩選不到。
+        const imported = [...updatedEmps, ...newEmps];
+        const pairs = new Map();   // 課別名稱 → Set(廠商名稱)
+        for (const e of imported) {
+          if (!e.dept || !e.vendor) continue;
+          if (!pairs.has(e.dept)) pairs.set(e.dept, new Set());
+          pairs.get(e.dept).add(e.vendor);
+        }
+
+        const addedByDept = new Map();   // 課別 → [補上的廠商]
+        const nextWarehouses = warehouses.map(w => ({
+          ...w,
+          departments: (w.departments ?? []).map(d => {
+            const want = pairs.get(d.name);
+            if (!want) return d;
+            const have = new Set((d.vendors ?? []).map(normName));
+            const miss = [...want].filter(v => !have.has(normName(v)));
+            if (miss.length === 0) return d;
+            addedByDept.set(d.name, miss);
+            return { ...d, vendors: [...(d.vendors ?? []), ...miss] };
+          }),
+        }));
+
+        // 廠商主檔也一併補上，否則廠商別維護與報表全名對照會缺項
+        const haveVendor = new Set(vendors.map(v => normName(v.name)));
+        const newVendorNames = [...new Set(
+          [...addedByDept.values()].flat().filter(v => !haveVendor.has(normName(v))))];
+
+        let syncMsg = '';
+        if (addedByDept.size > 0) {
+          setWarehouses(nextWarehouses);
+          if (newVendorNames.length > 0) {
+            setVendors(prev => [...prev,
+              ...newVendorNames.map((name, k) => ({ id: `vd_${baseTs}_${k}`, code: '', name }))]);
+          }
+          syncMsg = '；並自動補上廠商設定 — ' +
+            [...addedByDept].map(([d, vs]) => `${d}：${vs.join('、')}`).join('；');
+        }
+
         const skipMsg = [
           skippedTemp  ? `臨時人員 ${skippedTemp} 筆` : '',
           skippedLeave ? `已離職 ${skippedLeave} 筆` : '',
@@ -3837,7 +4132,7 @@ function EmployeeRoster() {
         setTimeout(() => saveNow((ok) => {
           if (!ok) toast('資料同步失敗，請手動按存檔鍵', 'error');
         }), 100);
-        toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}`, 'success');
+        toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}${syncMsg}`, 'success');
       } catch (err) {
         toast('檔案解析失敗：' + err.message, 'error');
       }
@@ -4992,16 +5287,162 @@ function WorkerSelfField({ rec, field, label, checkboxClass, textClass, onSet })
   return (
     <label className="flex items-center gap-2 cursor-pointer text-base select-none">
       <input type="checkbox" checked={!!rec[field]}
-        onChange={ev => onSet({ [field]: ev.target.checked, [field + 'At']: ev.target.checked ? nowTimeStr() : '' })}
+        onChange={ev => onSet({
+          [field]: ev.target.checked,
+          [field + 'At']: ev.target.checked ? nowTimeStr() : '',
+          ...(ev.target.checked ? { [PHONE_OPPOSITE[field] ?? '_']: false } : {}),
+        })}
         className={`w-6 h-6 cursor-pointer ${checkboxClass}`} />
       {label}{rec[field] && rec[field + 'At'] && <span className={`text-sm ml-1 ${textClass}`}>{rec[field + 'At']}</span>}
     </label>
   );
 }
 
+// ── 臨時人力自助簽到／手機控管（畫面 2）──
+// 臨時人力無帳號，資料寫入當日 extras，透過公開端點 /api/attendance/temp 送出。
+function TempSelfCheck({ onLogout }) {
+  const toast = useToast();
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const { currentUser } = useApp();
+  const [rec, setLocalRec] = useState({});
+  // 'init' 建檔中 / 'ready' 可填寫 / 'failed' 建檔失敗（此時不可勾選，避免誤以為已存檔）
+  const [status, setStatus] = useState('init');
+  const [retryTick, setRetryTick] = useState(0);
+
+  const push = useCallback(async (patch) => {
+    try {
+      const r = await fetch('/api/attendance/temp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: todayStr, id: currentUser.id, patch }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        return { ok: false, error: d.error ?? `伺服器回應 ${r.status}` };
+      }
+      const d = await r.json().catch(() => ({}));
+      return { ok: true, entry: d.entry };
+    } catch {
+      return { ok: false, error: '無法連線，請確認網路' };
+    }
+  }, [todayStr, currentUser.id]);
+
+  // 進入畫面即建檔，讓日翊端立刻在名單看到這位臨時人力
+  const [initError, setInitError] = useState('');
+  const [locker, setLocker] = useState(null);
+  const [unlisted, setUnlisted] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setStatus('init');
+    push({ name: currentUser.name, vendor: currentUser.vendor, group: currentUser.group,
+           warehouse: currentUser.warehouse })
+      .then(r => {
+        if (!alive) return;
+        setStatus(r.ok ? 'ready' : 'failed');
+        setInitError(r.ok ? '' : r.error);
+        if (r.ok) { setLocker(r.entry?.locker ?? null); setUnlisted(!!r.entry?._unlisted); }
+      });
+    return () => { alive = false; };
+  }, [push, currentUser, retryTick]);
+
+  const setRec = patch => {
+    const before = rec;
+    setLocalRec(prev => ({ ...prev, ...patch }));
+    push(patch).then(r => {
+      // 送出失敗就把畫面還原，避免顯示成已完成但伺服器沒有資料
+      if (!r.ok) { setLocalRec(before); toast(`儲存失敗：${r.error}`, 'error'); }
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F5F2EC]">
+      <div className="bg-white border-b border-[#DDD9D0] px-4 py-3 flex items-center">
+        <span className="font-bold text-slate-800">委外人力排班作業平台</span>
+        <button onClick={onLogout} className="ml-auto text-sm text-slate-500 hover:text-red-600">離開</button>
+      </div>
+      <div className="p-6 max-w-lg mx-auto space-y-4">
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-slate-800">簽到 / 手機控管</h2>
+          <p className="text-base font-semibold text-slate-700 mt-1">{currentUser.name}</p>
+          <p className="text-sm text-slate-400 mt-0.5">
+            {currentUser.warehouse}・{currentUser.vendor}・{currentUser.group}・{todayStr}
+          </p>
+          <span className="inline-block mt-2 px-3 py-1 rounded-lg bg-violet-50 border border-violet-200
+                           text-violet-700 text-sm font-semibold">臨時人力</span>
+        </div>
+
+        {status === 'ready' && unlisted && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-800">
+            <div className="font-semibold">⚠ 今日派工名單上查無您的姓名</div>
+            <p className="text-xs mt-1">
+              您仍可簽到與繳交手機，但請向現場幹部確認報名狀態，以免出勤未被計入。
+            </p>
+          </div>
+        )}
+
+        {status === 'ready' && (
+          locker ? (
+            <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl px-5 py-4 text-center">
+              <div className="text-sm text-indigo-700">您的手機置物櫃號</div>
+              <div className="text-3xl font-extrabold text-indigo-800 mt-1 tracking-wide">
+                {lockerLabel(locker)}
+              </div>
+              <div className="text-xs text-indigo-600 mt-1.5">
+                請將手機放入此格；離場前記得取回
+              </div>
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-800 text-center">
+              臨時人力手機櫃已滿，請洽現場幹部安排
+            </div>
+          )
+        )}
+
+        {status === 'init' && (
+          <p className="text-center text-sm text-slate-400">建檔中…</p>
+        )}
+        {status === 'failed' && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+            <div className="font-semibold mb-1">⚠ 尚未建檔成功，目前無法簽到</div>
+            <p className="text-xs mb-2">{initError}</p>
+            <button onClick={() => setRetryTick(t => t + 1)}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">
+              重試
+            </button>
+          </div>
+        )}
+
+        <div className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4
+                        ${status === 'ready' ? '' : 'opacity-50 pointer-events-none'}`}>
+          <div className="flex items-center gap-6 justify-center">
+            <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
+            <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
+          </div>
+          <div className="flex items-center justify-center gap-5 flex-wrap border-t border-slate-100 pt-4">
+            <WorkerSelfField rec={rec} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={setRec} />
+            <WorkerSelfField rec={rec} field="phoneNotSubmitted" label="手機未交" checkboxClass="accent-orange-600" textClass="text-orange-600" onSet={setRec} />
+          </div>
+          <div className="space-y-2 border-t border-slate-100 pt-4">
+            {WORKER_PHONE_SLOTS.map(slot => (
+              <div key={slot.key} className="flex items-center gap-6 justify-center">
+                <span className="text-sm text-slate-400 w-10 flex-shrink-0 text-right">{slot.label}</span>
+                <WorkerSelfField rec={rec} field={`${slot.key}Taken`} label="領取" checkboxClass="accent-amber-600" textClass="text-amber-600" onSet={setRec} />
+                <WorkerSelfField rec={rec} field={`${slot.key}Returned`} label="歸還" checkboxClass="accent-emerald-600" textClass="text-emerald-600" onSet={setRec} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 委外人員自助簽到／手機控管 ──
 function WorkerSelfCheck() {
-  const { employees, currentUser, attendData, setAttendData } = useApp();
+  const { employees, currentUser, attendData, setAttendData, lockerAssign, schedule } = useApp();
   const toast = useToast();
 
   // 須與 Attendance 元件的 attendDate 格式（補零）一致，否則會存到不同的 attendData key
@@ -5012,6 +5453,15 @@ function WorkerSelfCheck() {
 
   const emp = resolveSelfEmployee(currentUser, employees);
   const empId = emp?.id;
+
+  // 今日班表若為休假，提醒本人一聲（仍可正常簽到，班表不會被異動）
+  // schedule 的鍵為 dateKey 格式（不補零），todayStr 有補零，須轉換
+  const todayLeave = (() => {
+    if (!empId) return null;
+    const [ty, tm, td] = todayStr.split('-').map(Number);
+    const code = schedule?.[empId]?.[dateKey(ty, tm, td)];
+    return { '休': '休假', '例': '例假', '國': '國定假日' }[code] ?? null;
+  })();
 
   const rec = attendData[todayStr]?.[empId] ?? {};
   const setRec = patch => {
@@ -5040,6 +5490,22 @@ function WorkerSelfCheck() {
       <div className="text-center">
         <h2 className="text-xl font-bold text-slate-800">簽到 / 手機控管</h2>
         <p className="text-sm text-slate-400 mt-1">{emp.name}・{emp.vendor}・{todayStr}</p>
+        {todayLeave && (
+          <div className="mt-3 bg-blue-50 border border-blue-300 rounded-xl px-4 py-3 text-left">
+            <div className="text-sm font-semibold text-blue-700">
+              📅 您今日班表為「{todayLeave}」
+            </div>
+            <p className="text-xs text-blue-600 mt-1">
+              若因作業需求出勤，仍可正常簽到與繳交手機；班表不會因此變動。
+            </p>
+          </div>
+        )}
+        {lockerAssign?.[empId] && (
+          <p className="mt-2 inline-block px-3 py-1 rounded-lg bg-indigo-50 border border-indigo-200
+                        text-indigo-700 text-base font-semibold">
+            🔐 {lockerLabel(lockerAssign[empId])}
+          </p>
+        )}
       </div>
 
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4">
@@ -5047,8 +5513,9 @@ function WorkerSelfCheck() {
           <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
           <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
         </div>
-        <div className="flex items-center justify-center border-t border-slate-100 pt-4">
+        <div className="flex items-center justify-center gap-5 flex-wrap border-t border-slate-100 pt-4">
           <WorkerSelfField rec={rec} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={setRec} />
+          <WorkerSelfField rec={rec} field="phoneNotSubmitted" label="手機未交" checkboxClass="accent-orange-600" textClass="text-orange-600" onSet={setRec} />
         </div>
         <div className="space-y-2 border-t border-slate-100 pt-4">
           {WORKER_PHONE_SLOTS.map(slot => (
@@ -5067,9 +5534,10 @@ function WorkerSelfCheck() {
 // phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
 // 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
 function Attendance({ phoneOnly = false }) {
-  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings } = useApp();
+  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign } = useApp();
   const toast = useToast();
 
+  // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
   // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
   const phoneWhInitRef = useRef(false);
   useEffect(() => {
@@ -5090,10 +5558,17 @@ function Attendance({ phoneOnly = false }) {
   })();
 
   const [subTab, setSubTab] = useState(phoneOnly ? 'phone' : 'attend');
+  // 點名表與手機控管是同一個元件（只差 phoneOnly），切換主選單時 React 會重用實例，
+  // useState 的初始值不會重跑，subTab 會殘留（例如停在「匯入」就切不回手機控管畫面）。
+  useEffect(() => {
+    if (phoneOnly) setSubTab('phone');
+    else setSubTab(prev => (prev === 'phone' ? 'attend' : prev));
+  }, [phoneOnly]);
   const [attendDate, setAttendDate] = useState(todayStr);
   const [groupFilter, setGroupFilter] = useState('');
   const [addModal, setAddModal] = useState(false);
   const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
+  const [phoneScope, setPhoneScope] = useState('all');   // all | long | temp
   const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
@@ -5163,13 +5638,27 @@ function Attendance({ phoneOnly = false }) {
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
-    // 班表當日排休/例/國 → 不出現在點名名單
+    // 班表當日排休/例/國 → 不出現在點名名單，
+    // 但若因作業需求臨時來上班且已產生簽到／手機控管紀錄，仍須顯示，
+    // 否則資料存進去卻沒有任何畫面呈現，幹部端等於看不到這個人。
     // dateKey 格式無補零 (2026-7-16)，attendDate 有補零 (2026-07-16)，需轉換
     const [ay, am, ad] = attendDate.split('-').map(Number);
     const attendDk = dateKey(ay, am, ad);
-    list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk]));
+    const dayRecs = attendData[attendDate] ?? {};
+    list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk])
+                            || hasAttendActivity(dayRecs[e.id]));
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, groupFilter, attendDate, schedule]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, groupFilter, attendDate, schedule, attendData]);
+
+  // 排休卻來上班者的 id，供名單上標示區隔
+  const offDutyPresentIds = useMemo(() => {
+    const [ay, am, ad] = attendDate.split('-').map(Number);
+    const attendDk = dateKey(ay, am, ad);
+    const dayRecs = attendData[attendDate] ?? {};
+    return new Set(scopedEmps
+      .filter(e => ABSENT_CODES.has(schedule[e.id]?.[attendDk]) && hasAttendActivity(dayRecs[e.id]))
+      .map(e => e.id));
+  }, [scopedEmps, attendDate, attendData, schedule]);
 
   const dateExtras = (extras[attendDate] ?? []).filter(e =>
     (!selectedGroup || !e.group || e.group === selectedGroup) &&
@@ -5203,7 +5692,10 @@ function Attendance({ phoneOnly = false }) {
 
   const getRecord = (empId) => {
     if (attendData[attendDate]?.[empId]) return attendData[attendDate][empId];
-    const shiftCode = schedule[empId]?.[attendDate];
+    // schedule 的鍵為 dateKey 格式（不補零，如 2026-9-2），attendDate 有補零（2026-09-02），
+    // 直接用 attendDate 查會在月/日小於 10 時一律查不到班表，須先轉換（與 scopedEmps 一致）
+    const [sy, sm, sd] = attendDate.split('-').map(Number);
+    const shiftCode = schedule[empId]?.[dateKey(sy, sm, sd)];
     // 班表 V → 預設未勾選（點名時再確認）
     if (shiftCode === 'V') {
       return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '' };
@@ -5489,8 +5981,18 @@ function Attendance({ phoneOnly = false }) {
                                   onChange={ev => setRecord(emp.id, { present: ev.target.checked })}
                                   className="w-6 h-6 mt-0.5 accent-blue-600 cursor-pointer flex-shrink-0" />
                                 <div className="min-w-[80px] flex-shrink-0">
-                                  <div className="font-medium text-slate-800 text-sm">{emp.name}</div>
-                                  <div className="text-xs text-slate-400">{emp.empId}</div>
+                                  {/* 休假卻來上班者以藍字呈現；班表不做任何異動 */}
+                                  <div className={`font-medium text-sm ${
+                                    offDutyPresentIds.has(emp.id) ? 'text-blue-600' : 'text-slate-800'}`}>
+                                    {emp.name}
+                                  </div>
+                                  <div className={`text-xs ${
+                                    offDutyPresentIds.has(emp.id) ? 'text-blue-400' : 'text-slate-400'}`}>
+                                    {emp.empId}
+                                  </div>
+                                  {offDutyPresentIds.has(emp.id) && (
+                                    <div className="text-[11px] text-blue-600 font-medium">休假出勤</div>
+                                  )}
                                 </div>
                                 {rec.present ? (
                                   <>
@@ -5606,36 +6108,277 @@ function Attendance({ phoneOnly = false }) {
   const PhoneField = ({ rec, field, label, checkboxClass, textClass, onSet }) => (
     <label className="flex items-center gap-1.5 cursor-pointer text-sm select-none">
       <input type="checkbox" checked={!!rec[field]}
-        onChange={ev => onSet({ [field]: ev.target.checked, [field + 'At']: ev.target.checked ? nowTimeStr() : '' })}
+        onChange={ev => onSet({
+          [field]: ev.target.checked,
+          [field + 'At']: ev.target.checked ? nowTimeStr() : '',
+          // 繳交／未交互斥：勾一邊自動取消另一邊
+          ...(ev.target.checked ? { [PHONE_OPPOSITE[field] ?? '_']: false } : {}),
+        })}
         className={`w-5 h-5 cursor-pointer ${checkboxClass}`} />
       {label}{rec[field] && rec[field + 'At'] && <span className={`text-xs ml-1 ${textClass}`}>{rec[field + 'At']}</span>}
     </label>
   );
 
+  // ── 櫃號分配：先試算並顯示結果，確認後才寫入
+  const [lockerPreview, setLockerPreview] = useState(null);
+
+  const handleAssignLockers = () => {
+    const dadu = warehouses.find(w => w.name === '大肚倉');
+    const deptNames = new Set((dadu?.departments ?? []).map(d => d.name));
+    const targets = employees.filter(e =>
+      e.status !== '離職' && deptNames.has(e.dept) && LOCKER_GROUP_CABINET[e.group]);
+    if (targets.length === 0) { toast('大肚倉查無可分配櫃號的人員', 'warn'); return; }
+
+    const result = assignLockers(targets, lockerAssign);
+    // 依鐵櫃整理成可檢視的清單，並標出本次新配者
+    const byCab = LOCKER_CABINETS.map(cab => ({
+      id: cab.id,
+      groups: cab.groups,
+      rows: targets
+        .filter(e => result.assign[e.id]?.cab === cab.id)
+        .map(e => ({
+          name: e.name, empId: e.empId, group: e.group,
+          slot: result.assign[e.id].slot,
+          isNew: lockerLabel(lockerAssign?.[e.id]) !== lockerLabel(result.assign[e.id]),
+        }))
+        .sort((a, b) => a.slot - b.slot),
+    }));
+    setLockerPreview({ ...result, byCab, targetCount: targets.length });
+  };
+
+  const confirmAssignLockers = () => {
+    if (!lockerPreview) return;
+    setLockerAssign(lockerPreview.assign);
+    setLockerPreview(null);
+    toast(`櫃號已套用：共 ${Object.keys(lockerPreview.assign).length} 人`, 'success');
+  };
+
+  // ── 手機櫃號總表：依鐵櫃列出全部 75 格的佔用狀況 ──
+  const [lockerSheetOpen, setLockerSheetOpen] = useState(false);
+
+  const lockerSheet = useMemo(() => {
+    // 員工id → 員工資料，供總表顯示組別與廠商
+    const empById = new Map(employees.map(e => [e.id, e]));
+
+    // 長期人員（鐵櫃一／三／四）：來自固定綁定的 lockerAssign
+    const fixed = LOCKER_CABINETS.map(cab => {
+      const slots = Array.from({ length: LOCKER_CAPACITY }, () => null);
+      for (const [id, a] of Object.entries(lockerAssign ?? {})) {
+        if (a?.cab !== cab.id || !(a.slot >= 1 && a.slot <= LOCKER_CAPACITY)) continue;
+        const e = empById.get(id);
+        slots[a.slot - 1] = e
+          ? { name: e.name, empId: e.empId, group: e.group, vendor: e.vendor }
+          : { name: '（查無此人）', empId: '', group: '', vendor: '' };
+      }
+      return { id: cab.id, groups: cab.groups, slots, used: slots.filter(Boolean).length };
+    });
+
+    // 臨時人力（鐵櫃二）：逐日配發，來自當日 extras
+    const tempSlots = Array.from({ length: LOCKER_CAPACITY }, () => null);
+    for (const e of (extras[attendDate] ?? [])) {
+      const sl = e.locker?.slot;
+      if (e.locker?.cab !== TEMP_LOCKER_CAB || !(sl >= 1 && sl <= LOCKER_CAPACITY)) continue;
+      tempSlots[sl - 1] = { name: e.name, empId: '', group: e.group ?? '', vendor: e.vendor ?? '' };
+    }
+    const tempCab = {
+      id: TEMP_LOCKER_CAB, groups: [`臨時人力・${attendDate} 當日`],
+      slots: tempSlots, used: tempSlots.filter(Boolean).length,
+    };
+
+    // 依鐵櫃編號排序：一、二、三、四
+    return [fixed[0], tempCab, ...fixed.slice(1)];
+  }, [lockerAssign, employees, extras, attendDate]);
+
+  const exportLockerSheet = () => {
+    try {
+      const aoa = [['鐵櫃', '櫃號', '姓名', '員工編號', '組別', '廠商']];
+      for (const cab of lockerSheet)
+        cab.slots.forEach((p, i) => aoa.push([
+          `鐵櫃 ${cab.id}`, `${i + 1}號格`,
+          p?.name ?? '', p?.empId ?? '', p?.group ?? '', p?.vendor ?? '',
+        ]));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 6 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '手機櫃號總表');
+      XLSX.writeFile(wb, `手機櫃號總表_${attendDate}.xlsx`);
+      toast('櫃號總表匯出成功', 'success');
+    } catch (err) {
+      toast('匯出失敗：' + err.message, 'error');
+    }
+  };
+
+  const lockerSheetModal = lockerSheetOpen && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+         onClick={() => setLockerSheetOpen(false)}>
+      <div className="bg-white rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+           onClick={ev => ev.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-[#DDD9D0] flex items-start gap-3 flex-wrap">
+          <div className="min-w-0">
+            <h3 className="font-bold text-slate-800">手機櫃號總表</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              共 {lockerSheet.reduce((n, c) => n + c.used, 0)} 人已配號，
+              空格 {lockerSheet.reduce((n, c) => n + (LOCKER_CAPACITY - c.used), 0)} 格
+            </p>
+          </div>
+          <button onClick={exportLockerSheet}
+            className="ml-auto px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">
+            📊 匯出 Excel
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {lockerSheet.map(cab => (
+            <div key={cab.id}>
+              <div className="text-sm font-semibold text-slate-700 mb-2">
+                🔐 鐵櫃 {cab.id}
+                <span className="ml-2 text-xs font-normal text-slate-400">
+                  {cab.groups.join(' → ')}・已用 {cab.used}/{LOCKER_CAPACITY} 格
+                </span>
+              </div>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-1">
+                {cab.slots.map((pp, i) => (
+                  <div key={i}
+                    title={pp ? `${pp.group}・${pp.vendor}・${pp.empId}` : '空格'}
+                    className={`px-1.5 py-1 rounded border text-xs truncate
+                      ${pp ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                           : 'bg-slate-50 border-slate-200 text-slate-300'}`}>
+                    <b className="tabular-nums">{i + 1}號格</b>
+                    <span className="ml-1">{pp ? pp.name : '空'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t border-[#DDD9D0] flex justify-end">
+          <button onClick={() => setLockerSheetOpen(false)}
+            className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+            關閉
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const lockerPreviewModal = lockerPreview && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+         onClick={() => setLockerPreview(null)}>
+      <div className="bg-white rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+           onClick={ev => ev.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-[#DDD9D0]">
+          <h3 className="font-bold text-slate-800">櫃號分配試算</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            對象：大肚倉在職且組別有對應鐵櫃者 {lockerPreview.targetCount} 人。
+            本次新配 <strong className="text-indigo-700">{lockerPreview.assigned}</strong> 人
+            {lockerPreview.released > 0 && <>、回收 <strong>{lockerPreview.released}</strong> 格</>}
+            。既有櫃號一律保留不重排。<span className="text-emerald-700 font-medium">綠底＝本次新配</span>
+          </p>
+          {lockerPreview.overflow.length > 0 && (
+            <p className="mt-2 text-xs text-red-600 font-medium">
+              ⚠ 有 {lockerPreview.overflow.length} 人無格位可用（每櫃上限 {LOCKER_CAPACITY} 格）：
+              {lockerPreview.overflow.map(e => e.name).join('、')}
+            </p>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {lockerPreview.byCab.map(cab => (
+            <div key={cab.id}>
+              <div className="text-sm font-semibold text-slate-700 mb-2">
+                🔐 鐵櫃 {cab.id}
+                <span className="ml-2 text-xs font-normal text-slate-400">
+                  {cab.groups.join(' → ')}・{cab.rows.length}/{LOCKER_CAPACITY} 格
+                </span>
+              </div>
+              {cab.rows.length === 0
+                ? <p className="text-xs text-slate-400 pl-4">無人員</p>
+                : <div className="flex flex-wrap gap-1.5">
+                    {cab.rows.map(r => (
+                      <span key={r.empId ?? r.name}
+                        title={`${r.group}・${r.empId ?? ''}`}
+                        className={`px-2 py-1 rounded border text-xs
+                          ${r.isNew
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                        <b>{r.slot}號格</b> {r.name}
+                      </span>
+                    ))}
+                  </div>}
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t border-[#DDD9D0] flex justify-end gap-2">
+          <button onClick={() => setLockerPreview(null)}
+            className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+            取消（不寫入）
+          </button>
+          <button onClick={confirmAssignLockers}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+            確認套用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   // ── 手機控管統計
-  const phoneAllPeople = [...scopedEmps.map(e => getRecord(e.id)), ...dateExtras];
+  // 手機控管子分頁：長期人員與臨時人力人數與作業節奏不同，分開檢視較好核對
+  const phoneScopeLong = phoneScope !== 'temp';
+  const phoneScopeTemp = phoneScope !== 'long';
+  const phoneAllPeople = [
+    ...(phoneScopeLong ? scopedEmps.map(e => getRecord(e.id)) : []),
+    ...(phoneScopeTemp ? dateExtras : []),
+  ];
+  const phoneTotalCount = phoneAllPeople.length;
   const phoneSignedInCount = phoneAllPeople.filter(r => r.signedIn).length;
   const phoneSignedOutCount = phoneAllPeople.filter(r => r.signedOut).length;
   const phoneSubmittedCount = phoneAllPeople.filter(r => r.phoneSubmitted).length;
-  const phoneIsIncomplete = r => !(r.signedIn && r.phoneSubmitted);
+  const phoneNotSubmittedCount = phoneAllPeople.filter(r => r.phoneNotSubmitted).length;
+  // 已明確標記「未交」者視為已處理，不再列為待辦
+  const phoneIsIncomplete = r => !(r.signedIn && (r.phoneSubmitted || r.phoneNotSubmitted));
   const phoneIncompleteCount = phoneAllPeople.filter(phoneIsIncomplete).length;
 
-  const StatTile = ({ label, value, total, color }) => (
+  const StatTile = ({ label, value, total, color, note }) => (
     <div className="flex-1 min-w-[100px] bg-white border border-[#DDD9D0] rounded-xl px-4 py-3">
       <div className="text-xs text-slate-400">{label}</div>
       <div className={`text-xl font-bold ${color}`}>{value}<span className="text-sm text-slate-400 font-normal">/{total}</span></div>
+      {note && <div className="text-[11px] text-amber-600 mt-0.5">{note}</div>}
     </div>
   );
 
   // ── 手機控管分頁
   const phonePane = (
     <div className="space-y-4">
+      {lockerPreviewModal}
+      {lockerSheetModal}
+
+      {/* 長期／臨時切換：兩者人數與作業節奏不同，分開檢視較好核對 */}
+      <div className="flex gap-1 border-b border-[#DDD9D0]">
+        {[
+          { key: 'all',  label: '全部',     n: scopedEmps.length + dateExtras.length },
+          { key: 'long', label: '長期人員', n: scopedEmps.length },
+          { key: 'temp', label: '臨時人力', n: dateExtras.length },
+        ].map(t => (
+          <button key={t.key} onClick={() => setPhoneScope(t.key)}
+            className={`px-4 py-2 text-sm rounded-t-lg border-b-2 -mb-px transition-colors
+              ${phoneScope === t.key
+                ? 'font-semibold text-indigo-700 border-indigo-600 bg-white'
+                : 'text-slate-500 border-transparent hover:bg-white/60'}`}>
+            {t.label}
+            <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full
+              ${phoneScope === t.key ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
+              {t.n}
+            </span>
+          </button>
+        ))}
+      </div>
       <div className="flex flex-wrap gap-3">
-        <StatTile label="應到人數" value={totalCount} total={totalCount} color="text-slate-700" />
-        <StatTile label="已簽到" value={phoneSignedInCount} total={totalCount} color="text-teal-600" />
-        <StatTile label="已簽退" value={phoneSignedOutCount} total={totalCount} color="text-slate-600" />
-        <StatTile label="已繳交手機" value={phoneSubmittedCount} total={totalCount} color="text-indigo-600" />
-        <StatTile label="尚未完成" value={phoneIncompleteCount} total={totalCount} color={phoneIncompleteCount > 0 ? 'text-rose-600' : 'text-emerald-600'} />
+        <StatTile label="應到人數" value={phoneTotalCount} total={phoneTotalCount} color="text-slate-700"
+          note={phoneScopeLong && offDutyPresentIds.size > 0 ? `含 ${offDutyPresentIds.size} 位排休出勤` : null} />
+        <StatTile label="已簽到" value={phoneSignedInCount} total={phoneTotalCount} color="text-teal-600" />
+        <StatTile label="已簽退" value={phoneSignedOutCount} total={phoneTotalCount} color="text-slate-600" />
+        <StatTile label="已繳交手機" value={phoneSubmittedCount} total={phoneTotalCount} color="text-indigo-600" />
+        <StatTile label="手機未交" value={phoneNotSubmittedCount} total={phoneTotalCount} color={phoneNotSubmittedCount > 0 ? 'text-orange-600' : 'text-slate-400'} />
+        <StatTile label="尚未完成" value={phoneIncompleteCount} total={phoneTotalCount} color={phoneIncompleteCount > 0 ? 'text-rose-600' : 'text-emerald-600'} />
       </div>
 
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 flex flex-wrap gap-4 items-end">
@@ -5650,8 +6393,21 @@ function Attendance({ phoneOnly = false }) {
             className="w-4 h-4 accent-rose-600 cursor-pointer" />
           只顯示未完成（未簽到或未繳交手機）
         </label>
+        {(currentUser.role === ROLES.ADMIN || currentUser.role === ROLES.AREA) && (
+          <button onClick={handleAssignLockers}
+            title={`${LOCKER_CABINETS.map(c => `鐵櫃${c.id}：${c.groups.join(' → ')}`).join('；')}。每櫃 ${LOCKER_CAPACITY} 格，既有櫃號不會被重排。`}
+            className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700
+                       flex items-center gap-1">
+            🔐 分配櫃號
+          </button>
+        )}
+        <button onClick={() => setLockerSheetOpen(true)}
+          className="px-3 py-2 bg-white border border-[#DDD9D0] text-slate-700 rounded-lg text-sm
+                     hover:bg-[#F5F2EC] flex items-center gap-1">
+          📋 櫃號總表
+        </button>
         <div className="ml-auto text-sm text-slate-500">
-          已繳交手機 <span className="font-bold text-indigo-700">{phoneSubmittedCount}</span>/{totalCount}人
+          已繳交手機 <span className="font-bold text-indigo-700">{phoneSubmittedCount}</span>/{phoneTotalCount}人
         </div>
       </div>
 
@@ -5665,8 +6421,8 @@ function Attendance({ phoneOnly = false }) {
         return (
           <div className="space-y-2">
             {allVendors.map(vName => {
-              let longEmps = vendorGroups[vName] ?? [];
-              let tempEmps = extrasVendorGroups[vName] ?? [];
+              let longEmps = phoneScopeLong ? (vendorGroups[vName] ?? []) : [];
+              let tempEmps = phoneScopeTemp ? (extrasVendorGroups[vName] ?? []) : [];
               if (phoneOnlyIncomplete) {
                 longEmps = longEmps.filter(emp => phoneIsIncomplete(getRecord(emp.id)));
                 tempEmps = tempEmps.filter(e => phoneIsIncomplete(e));
@@ -5688,6 +6444,20 @@ function Attendance({ phoneOnly = false }) {
                           <div className="min-w-[100px] flex-shrink-0">
                             <div className="font-medium text-slate-800 text-sm">{emp.name}</div>
                             <div className="text-xs text-slate-400">{emp.empId}</div>
+                            {offDutyPresentIds.has(emp.id) && (
+                              <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-amber-100
+                                              border border-amber-300 text-amber-800 text-xs font-semibold
+                                              whitespace-nowrap">
+                                排休出勤
+                              </div>
+                            )}
+                            {lockerAssign?.[emp.id] && (
+                              <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-indigo-50
+                                              border border-indigo-200 text-indigo-700 text-xs font-semibold
+                                              whitespace-nowrap">
+                                🔐 {lockerLabel(lockerAssign[emp.id])}
+                              </div>
+                            )}
                           </div>
                           <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                             <div className="flex items-center gap-4 flex-wrap">
@@ -5696,6 +6466,7 @@ function Attendance({ phoneOnly = false }) {
                             </div>
                             <div className="flex items-center gap-4 flex-wrap">
                               <PhoneField rec={rec} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={p => setRecord(emp.id, p)} />
+                              <PhoneField rec={rec} field="phoneNotSubmitted" label="手機未交" checkboxClass="accent-orange-600" textClass="text-orange-600" onSet={p => setRecord(emp.id, p)} />
                             </div>
                             {PHONE_BREAK_SLOTS.map(slot => (
                               <div key={slot.key} className="flex items-center gap-4 flex-wrap">
@@ -5712,7 +6483,25 @@ function Attendance({ phoneOnly = false }) {
                       <div key={e.id} className="px-3 py-3 flex items-start gap-4 flex-wrap bg-amber-50/40">
                         <div className="min-w-[100px] flex-shrink-0">
                           <div className="font-medium text-slate-800 text-sm">{e.name}</div>
-                          <div className="text-xs text-slate-400">{e._isImport ? '派工匯入' : '手動新增'}</div>
+                          <div className="text-xs text-slate-400">
+                            {e._isImport
+                              ? (e._claimId ? '派工匯入・本人已登入' : '派工匯入')
+                              : e._isTemp ? '臨時人力自填' : '手動新增'}
+                          </div>
+                          {e._unlisted && (
+                            <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-amber-100
+                                            border border-amber-300 text-amber-800 text-xs font-semibold
+                                            whitespace-nowrap">
+                              不在派工名單
+                            </div>
+                          )}
+                          {e.locker && (
+                            <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-indigo-50
+                                            border border-indigo-200 text-indigo-700 text-xs font-semibold
+                                            whitespace-nowrap">
+                              🔐 {lockerLabel(e.locker)}
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                           <div className="flex items-center gap-4 flex-wrap">
@@ -5721,6 +6510,7 @@ function Attendance({ phoneOnly = false }) {
                           </div>
                           <div className="flex items-center gap-4 flex-wrap">
                             <PhoneField rec={e} field="phoneSubmitted" label="上班繳交手機" checkboxClass="accent-indigo-600" textClass="text-indigo-600" onSet={p => setExtraRecord(e.id, p)} />
+                            <PhoneField rec={e} field="phoneNotSubmitted" label="手機未交" checkboxClass="accent-orange-600" textClass="text-orange-600" onSet={p => setExtraRecord(e.id, p)} />
                           </div>
                           {PHONE_BREAK_SLOTS.map(slot => (
                             <div key={slot.key} className="flex items-center gap-4 flex-wrap">
@@ -5859,15 +6649,25 @@ function Settings() {
   const {
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
+    deptRanges, setDeptRanges,
+    lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
     vendorCompanyNames, setVendorCompanyNames,
     vendors, setVendors,
     warehouses, setWarehouses,
-    selectedYear,
+    selectedYear, currentUser,
   } = useApp();
   const toast = useToast();
+
+  // 課別鎖定／開放區間只列出自己權責範圍內的倉別：
+  // 管理員為全倉；其餘角色依 allowedWarehouses（未指派則不顯示任何倉別）。
+  const lockableWarehouses = useMemo(() => {
+    if (currentUser?.role === ROLES.ADMIN) return warehouses;
+    const allowed = currentUser?.allowedWarehouses ?? [];
+    return allowed.length > 0 ? warehouses.filter(w => allowed.includes(w.id)) : [];
+  }, [warehouses, currentUser]);
 
   const vendorNames = vendors.map(v => v.name);
 
@@ -6001,11 +6801,44 @@ function Settings() {
     <div className="p-6 space-y-6 max-w-3xl">
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
-      {/* ── 各課別鎖定 ── */}
+      {/* ── 開放排班日期區間 ── */}
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-1">各課別鎖定</h3>
+        <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
+        <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
+        <div className="flex gap-3 items-end flex-wrap">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">開始日期</label>
+            <input type="date" value={start} onChange={e => setStart(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">結束日期</label>
+            <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <button onClick={saveRange}
+            className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            儲存
+          </button>
+          <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
+            className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+            清除
+          </button>
+        </div>
+        {scheduleRange.start && (
+          <p className="mt-3 text-xs text-teal-700">
+            目前區間：{scheduleRange.start} ～ {scheduleRange.end}
+          </p>
+        )}
+      </div>
+
+      {/* ── 各課別鎖定與開放區間 ── */}
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+        <h3 className="font-semibold text-slate-700 mb-1">各課別鎖定與開放區間</h3>
         <p className="text-xs text-slate-500 mb-2">
           班表編輯權限以<strong>課別</strong>為單位控管。各課排班完成時間不同，可在該課排完後單獨鎖定，不影響其他課別。
+          <br />開放排班區間亦可依各課需求分別設定；<strong>未設定者沿用上方全域區間</strong>
+          （{scheduleRange.start || '未設定'} ~ {scheduleRange.end || '未設定'}）。
         </p>
 
         {/* 各選項的實際效果對照 */}
@@ -6032,11 +6865,13 @@ function Settings() {
           </div>
           <div className="text-xs text-slate-400 mt-1.5">※「廠商」含廠商幹部與委外人員</div>
         </div>
-        {warehouses.length === 0 ? (
-          <p className="text-sm text-slate-400">尚未設定倉別</p>
+        {lockableWarehouses.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            {warehouses.length === 0 ? '尚未設定倉別' : '您尚未被指派可管理的倉別'}
+          </p>
         ) : (
           <div className="space-y-4">
-            {warehouses.map(w => (
+            {lockableWarehouses.map(w => (
               <div key={w.id}>
                 <div className="text-sm font-semibold text-slate-600 mb-2">🏭 {w.name}</div>
                 {(w.departments ?? []).length === 0 ? (
@@ -6071,6 +6906,32 @@ function Settings() {
                               );
                             })}
                           </div>
+                          {(() => {
+                            const r = deptRanges[d.name] ?? {};
+                            const custom = !!(r.start && r.end);
+                            const set = (k, v) => setDeptRanges(prev => {
+                              const next = { ...prev, [d.name]: { ...(prev[d.name] ?? {}), [k]: v } };
+                              return next;
+                            });
+                            return (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-xs shrink-0 ${custom ? 'text-indigo-600 font-medium' : 'text-slate-400'}`}>
+                                  {custom ? '自訂區間' : '沿用全域'}
+                                </span>
+                                <input type="date" value={r.start ?? ''} onChange={e => set('start', e.target.value)}
+                                  className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
+                                <span className="text-xs text-slate-400">~</span>
+                                <input type="date" value={r.end ?? ''} onChange={e => set('end', e.target.value)}
+                                  className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
+                                {custom && (
+                                  <button onClick={() => { setDeptRanges(prev => { const n = { ...prev }; delete n[d.name]; return n; }); toast(`${d.name}：已改為沿用全域區間`, 'info'); }}
+                                    className="px-2 py-1 text-xs rounded-lg border border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC]">
+                                    清除
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -6079,37 +6940,6 @@ function Settings() {
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* ── 開放排班日期區間 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
-        <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
-        <div className="flex gap-3 items-end flex-wrap">
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">開始日期</label>
-            <input type="date" value={start} onChange={e => setStart(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">結束日期</label>
-            <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-          </div>
-          <button onClick={saveRange}
-            className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-            儲存
-          </button>
-          <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
-            className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
-            清除
-          </button>
-        </div>
-        {scheduleRange.start && (
-          <p className="mt-3 text-xs text-teal-700">
-            目前區間：{scheduleRange.start} ～ {scheduleRange.end}
-          </p>
         )}
       </div>
 
@@ -8483,6 +9313,10 @@ export default function App() {
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
   // 各課別鎖定狀態 { 課別名稱: 'none'|'partial'|'full' }：各課排班完成時間不同，需分別鎖定
   const [deptLocks, setDeptLocks] = useState(() => LS.get('sms_dept_locks', {}));
+  // 各課別自訂開放排班區間 { 課別名稱: {start,end} }；未設定者沿用全域 scheduleRange
+  const [deptRanges, setDeptRanges] = useState(() => LS.get('sms_dept_ranges', {}));
+  // 手機控管櫃號 { 員工id: {cab,slot} }：固定綁定人員，不隨每日出勤變動
+  const [lockerAssign, setLockerAssign] = useState(() => LS.get('sms_locker_assign', {}));
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
   const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
   const [vendorHolidayOpen,  setVendorHolidayOpen]  = useState(() => LS.get('sms_vendor_hol_open', false));
@@ -8561,6 +9395,8 @@ export default function App() {
           schedule:           LS.get('sms_schedule', {}),
           systemLocked:       LS.get('sms_locked', false),
           deptLocks:          LS.get('sms_dept_locks', {}),
+          deptRanges:         LS.get('sms_dept_ranges', {}),
+          lockerAssign:       LS.get('sms_locker_assign', {}),
           scheduleRange:      LS.get('sms_range', {}),
           openHolidays:       LS.get('sms_open_holidays', []),
           vendorHolidayOpen:  LS.get('sms_vendor_hol_open', false),
@@ -8604,6 +9440,8 @@ export default function App() {
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
+          if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8630,6 +9468,8 @@ export default function App() {
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
+          if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8659,6 +9499,8 @@ export default function App() {
         if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
         if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
+        if (state?.deptRanges)             setDeptRanges(state.deptRanges);
+        if (state?.lockerAssign)           setLockerAssign(state.lockerAssign);
         if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
         if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
@@ -8717,6 +9559,8 @@ export default function App() {
       if (s.openHolidays)            setOpenHolidays(s.openHolidays);
       if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
       if (s.deptLocks)               setDeptLocks(s.deptLocks);
+      if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
       if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
       if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
       if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
@@ -8819,6 +9663,8 @@ export default function App() {
   useEffect(() => { LS.set('sms_schedule',   schedule,      storageWarn); }, [schedule]);
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
   useEffect(() => { LS.set('sms_dept_locks',     deptLocks);     }, [deptLocks]);
+  useEffect(() => { LS.set('sms_dept_ranges',    deptRanges);    }, [deptRanges]);
+  useEffect(() => { LS.set('sms_locker_assign',  lockerAssign);  }, [lockerAssign]);
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
   useEffect(() => { LS.set('sms_open_holidays',       openHolidays);      }, [openHolidays]);
   useEffect(() => { LS.set('sms_vendor_hol_open',    vendorHolidayOpen); }, [vendorHolidayOpen]);
@@ -8841,7 +9687,7 @@ export default function App() {
   // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
   const latestStateRef = useRef({});
   latestStateRef.current = {
-    employees, vendors, warehouses, schedule, systemLocked, deptLocks,
+    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
@@ -8868,7 +9714,7 @@ export default function App() {
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
     const body = JSON.stringify({
-      employees, vendors, warehouses, schedule, systemLocked, deptLocks,
+      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
@@ -8887,7 +9733,7 @@ export default function App() {
         .then(r => { if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
-  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, scheduleRange,
+  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
@@ -8986,6 +9832,8 @@ export default function App() {
   }, []);
 
   const handleLogin = useCallback((user, jwtToken) => {
+    // 臨時人力無帳號、無 JWT，直接進入自助畫面，不載入任何管理資料
+    if (user?.role === ROLES.TEMP) { setCurrentUser(user); return; }
     if (jwtToken) {
       localStorage.setItem(JWT_KEY, jwtToken);
       loadServerState(jwtToken, user?.role);
@@ -9020,6 +9868,8 @@ export default function App() {
     schedule, setSchedule,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
+    deptRanges, setDeptRanges,
+    lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
@@ -9056,6 +9906,17 @@ export default function App() {
     return (
       <ToastProvider>
         <LoginScreen users={users} onLogin={handleLogin} onRegister={u => setUsers(prev => [...prev, u])} vendors={vendors} employees={employees} workerPwds={workerPwds} warehouses={warehouses} />
+      </ToastProvider>
+    );
+  }
+
+  // 臨時人力：獨立的自助畫面，不進入主框架（無側邊選單、不讀取管理資料）
+  if (currentUser.role === ROLES.TEMP) {
+    return (
+      <ToastProvider>
+        <AppContext.Provider value={ctx}>
+          <TempSelfCheck onLogout={() => setCurrentUser(null)} />
+        </AppContext.Provider>
       </ToastProvider>
     );
   }
