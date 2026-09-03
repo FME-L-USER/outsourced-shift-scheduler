@@ -264,6 +264,9 @@ const PAGE_PERMISSIONS = [
     { key: 'editAttendance',   label: '編輯點名' },
     { key: 'exportAttendance', label: '匯出點名' },
   ]},
+  { key: 'phoneControl', label: '手機控管', features: [
+    { key: 'assignLocker', label: '分配櫃號' },
+  ]},
 ];
 
 function getDefaultPermissions(role) {
@@ -276,7 +279,9 @@ function getDefaultPermissions(role) {
       isAdmin ? true :
       isArea  ? !['settings','accounts'].includes(page.key) :
       isWorker ? page.key === 'schedule' :
-      ['dashboard','schedule','employees','shiftcodes'].includes(page.key);
+      // 廠商幹部：預設僅開放班表管理與報表匯出，其餘（點名表、手機控管、
+      // 人員清冊等）一律關閉，需由管理員個別開啟
+      ['schedule','reports'].includes(page.key);
 
     perms[page.key] = { view: pageVisible };
     page.features.forEach(f => {
@@ -284,7 +289,8 @@ function getDefaultPermissions(role) {
         isAdmin ? true :
         isArea  ? !['deleteEmployee','clearAll','lockSchedule','manageWarehouse','addAccount','editAccount','deleteAccount'].includes(f.key) :
         role === ROLES.WORKER ? f.key === 'editSchedule' :
-        ['editSchedule'].includes(f.key)
+        // 報表匯出頁若不含匯出功能等同無用，故與頁面一併開放
+        ['editSchedule','exportExcel'].includes(f.key)
       );
       perms[page.key][f.key] = on;
     });
@@ -1497,7 +1503,8 @@ const NAV_ITEMS = [
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
-  { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA] },
+  // 廠商幹部可否看到由權限決定（預設關閉）；roles 未列入時權限勾選會失效
+  { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftcodes',   label: '班別代號表',   icon: '📖', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'settings',     label: '系統設定',     icon: '⚙️', roles: [ROLES.ADMIN] },
   { key: 'accounts',     label: '帳號與權限',   icon: '🔑', roles: [ROLES.ADMIN] },
@@ -3542,23 +3549,30 @@ function ScheduleTable() {
           與可編輯的開放區間常常不同，需明確標示以免誤以為不能改 */}
       {rangeMode && (() => {
         const viewingOpen = viewOffset === 0;
+        // 在開放區間內不代表就能編輯：課別可能已鎖定，或該角色被鎖定排除。
+        // 以實際的 isEditable 判定，避免對被鎖住的廠商幹部顯示「可編輯班表」。
+        const probeDk = dayHeaders[0]?.dk;
+        const canEditAny = viewingOpen && probeDk
+          && visibleEmployees.some(emp => isEditable(probeDk, emp));
+        const tone = !viewingOpen || !canEditAny
+          ? 'bg-amber-50 border-amber-300 text-amber-800'
+          : 'bg-emerald-50 border-emerald-300 text-emerald-800';
         return (
-          <div className={`rounded-xl px-5 py-4 flex items-center gap-3 flex-wrap border-2
-            ${viewingOpen
-              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-              : 'bg-amber-50 border-amber-300 text-amber-800'}`}>
-            <span className="text-xl font-bold">
+          <div className={`rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap border ${tone}`}>
+            <span className="text-base font-bold">
               📢 {selectedDeptName ? `${selectedDeptName} ` : ''}開放排班區間：{activeRange.start} ~ {activeRange.end}
             </span>
-            <span className="text-base font-medium">
-              {viewingOpen
-                ? '（目前檢視中，可編輯班表）'
-                : '（目前檢視的是其他期間，僅供查看，不可編輯）'}
+            <span className="text-sm font-medium">
+              {!viewingOpen
+                ? '（目前檢視的是其他期間，僅供查看，不可編輯）'
+                : canEditAny
+                  ? '（目前檢視中，可編輯班表）'
+                  : '（目前檢視中，但班表已鎖定，僅供查看）'}
             </span>
             {!viewingOpen && (
               <button onClick={() => setViewOffset(0)}
-                className="ml-auto px-4 py-2 text-sm font-semibold bg-amber-600 text-white
-                           rounded-lg hover:bg-amber-700">
+                className="ml-auto px-3 py-1 text-xs font-semibold bg-amber-600 text-white
+                           rounded-md hover:bg-amber-700">
                 前往開放區間
               </button>
             )}
@@ -4960,10 +4974,12 @@ function MaintPane({ attendSettings, setAttendSettings, groupOptions }) {
   );
 }
 
-function ReportPane({ generateReport, groupOptions, attendDate, groupFilter }) {
+function ReportPane({ generateReport, groupOptions, attendDate, selectedGroup }) {
   const toast = useToast();
   const [rDate, setRDate] = useState(attendDate);
-  const [rGroup, setRGroup] = useState(groupFilter);
+  const [rGroup, setRGroup] = useState(selectedGroup ?? '');
+  // 跟隨上方篩選列：useState 初始值只在掛載時生效，之後切換組別須靠 effect 同步
+  useEffect(() => { setRGroup(selectedGroup ?? ''); }, [selectedGroup]);
   const [text, setText] = useState('');
   const textRef = React.useRef(null);
 
@@ -5016,11 +5032,11 @@ function ReportPane({ generateReport, groupOptions, attendDate, groupFilter }) {
   );
 }
 
-function ImportPane({ todayStr, groupFilter }) {
+function ImportPane({ todayStr }) {
   const { selectedGroup, setExtras, attendSettings } = useApp();
   const toast = useToast();
   const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
-  const activeGroup = selectedGroup || groupFilter;
+  const activeGroup = selectedGroup;
 
   const [importStart, setImportStart] = useState(todayStr);
   const [importEnd,   setImportEnd]   = useState(todayStr);
@@ -5216,14 +5232,15 @@ function ImportPane({ todayStr, groupFilter }) {
   );
 }
 
-function StatsPane({ attendDate, groupFilter, totalCount, presentCount, absentCount, attendRate, groupOptions, exportStats }) {
+function StatsPane({ attendDate, selectedGroup, totalCount, presentCount, absentCount, attendRate, groupOptions, exportStats }) {
   const [rDate,  setRDate]  = useState(attendDate);
-  const [rGroup, setRGroup] = useState(groupFilter);
+  const [rGroup, setRGroup] = useState(selectedGroup ?? '');
+  useEffect(() => { setRGroup(selectedGroup ?? ''); }, [selectedGroup]);
   return (
     <div className="space-y-5">
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
         <h3 className="font-semibold text-slate-700 mb-4">數據看板</h3>
-        <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {groupFilter || '全部組別'}</div>
+        <div className="text-xs text-slate-400 mb-3">{attendDate} ／ {rGroup || '全部組別'}</div>
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div className="text-center p-3 bg-[#F5F2EC] rounded-xl">
             <div className="text-2xl font-bold text-slate-700">{totalCount}</div>
@@ -5534,7 +5551,7 @@ function WorkerSelfCheck() {
 // phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
 // 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
 function Attendance({ phoneOnly = false }) {
-  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign } = useApp();
+  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
   const toast = useToast();
 
   // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
@@ -5565,7 +5582,6 @@ function Attendance({ phoneOnly = false }) {
     else setSubTab(prev => (prev === 'phone' ? 'attend' : prev));
   }, [phoneOnly]);
   const [attendDate, setAttendDate] = useState(todayStr);
-  const [groupFilter, setGroupFilter] = useState('');
   const [addModal, setAddModal] = useState(false);
   const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
   const [phoneScope, setPhoneScope] = useState('all');   // all | long | temp
@@ -5599,7 +5615,8 @@ function Attendance({ phoneOnly = false }) {
         // 本地已有的日期優先（避免輪詢覆蓋尚未存檔的手動新增臨時人員）
         setExtras(prev => ({ ...newExtras, ...prev }));
       // 非 vendor 同時更新員工/廠商/倉別等維護資料（儀表板在職人數來源）
-      if (!isVendor) {
+      // 本地有未存檔變更時跳過，避免用伺服器舊資料蓋掉剛匯入的班表
+      if (!isVendor && !hasUnsavedChanges()) {
         if (Array.isArray(data?.employees) && data.employees.length > 0) setEmployees(data.employees);
         if (Array.isArray(data?.vendors)   && data.vendors.length   > 0) setVendors(data.vendors);
         if (Array.isArray(data?.warehouses)&& data.warehouses.length> 0) setWarehouses(data.warehouses);
@@ -5621,15 +5638,36 @@ function Attendance({ phoneOnly = false }) {
     return () => clearInterval(id);
   }, [syncFromServer]);
 
+  // 與上方篩選列同一份來源：倉別設定的課別組別清單（不再掃員工資料，
+  // 否則已從課別移除、但員工欄位還掛著的舊組別會殘留在選單裡）。
+  // 順序沿用倉別設定的宣告順序，不另外排序。
   const groupOptions = useMemo(() => {
-    const fromShiftType = employees.map(e => e.shiftType).filter(Boolean);
-    const fromGroup = employees.map(e => e.group).filter(Boolean);
-    const fromExtras = Object.values(extras).flat().map(e => e.group).filter(Boolean);
-    const custom = attendSettings.groups ?? [];
-    return [...new Set([...fromShiftType, ...fromGroup, ...fromExtras, ...custom])].sort();
-  }, [employees, extras, attendSettings.groups]);
+    const picked = [];
+    for (const w of warehouses) {
+      if (selectedWarehouse && w.id !== selectedWarehouse) continue;
+      for (const d of (w.departments ?? [])) {
+        if (selectedDept && d.id !== selectedDept) continue;
+        picked.push(...(d.groups ?? []));
+      }
+    }
+    return [...new Set(picked)];
+  }, [warehouses, selectedWarehouse, selectedDept]);
 
   const ABSENT_CODES = new Set(['休', '例', '國']);
+
+  // 人員上班時間：由員工的班別（shiftTypeId）帶出起訖時間，供點名時核對
+  const shiftTypes = shiftTypesByWh[selectedWarehouse ?? 'default'] ?? [];
+  const fmtHHMM = t => `${String(t ?? '').slice(0, 2)}:${String(t ?? '').slice(2)}`;
+  const shiftInfo = emp => {
+    const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
+    return st ? { name: st.name, time: `${fmtHHMM(st.startTime)}~${fmtHHMM(st.endTime)}` } : null;
+  };
+
+  // 本日被排除的人員，供名單上方還原
+  const excludedEmps = useMemo(() => {
+    const day = attendData[attendDate] ?? {};
+    return employees.filter(e => day[e.id]?._excluded);
+  }, [employees, attendData, attendDate]);
 
   const scopedEmps = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
@@ -5637,7 +5675,7 @@ function Attendance({ phoneOnly = false }) {
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
-    if (groupFilter) list = list.filter(e => e.shiftType === groupFilter || e.group === groupFilter);
+    if (selectedGroup) list = list.filter(e => e.shiftType === selectedGroup || e.group === selectedGroup);
     // 班表當日排休/例/國 → 不出現在點名名單，
     // 但若因作業需求臨時來上班且已產生簽到／手機控管紀錄，仍須顯示，
     // 否則資料存進去卻沒有任何畫面呈現，幹部端等於看不到這個人。
@@ -5647,8 +5685,10 @@ function Attendance({ phoneOnly = false }) {
     const dayRecs = attendData[attendDate] ?? {};
     list = list.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[attendDk])
                             || hasAttendActivity(dayRecs[e.id]));
+    // 幹部手動排除於當日名單者（調班、支援他課等）；班表與清冊不受影響
+    list = list.filter(e => !dayRecs[e.id]?._excluded);
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, groupFilter, attendDate, schedule, attendData]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, attendDate, schedule, attendData]);
 
   // 排休卻來上班者的 id，供名單上標示區隔
   const offDutyPresentIds = useMemo(() => {
@@ -5830,8 +5870,11 @@ function Attendance({ phoneOnly = false }) {
     const dateLabel = `${m}/${d}（${dow}）`;
 
     // 課別標頭
-    const deptLabel = selectedDept || selectedWarehouse || '';
-    const groupLabel = reportGroup || groupFilter || '';
+    // selectedDept / selectedWarehouse 存的是 id，須轉成名稱才能給人看
+    const whObjR = warehouses.find(w => w.id === selectedWarehouse);
+    const deptLabel = whObjR?.departments?.find(d => d.id === selectedDept)?.name
+                      ?? whObjR?.name ?? '';
+    const groupLabel = reportGroup || selectedGroup || '';
     const header = deptLabel ? `${deptLabel}${groupLabel ? `（${groupLabel}）` : ''}` : groupLabel;
 
     // 統計輔助
@@ -5940,6 +5983,24 @@ function Attendance({ phoneOnly = false }) {
         </div>
       </div>
 
+      {excludedEmps.length > 0 && (
+        <div className="bg-slate-50 border border-[#DDD9D0] rounded-xl px-4 py-3">
+          <div className="text-xs text-slate-500 mb-2">
+            本日已移出名單 {excludedEmps.length} 人（班表與清冊未變動，點姓名可還原）
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {excludedEmps.map(e => (
+              <button key={e.id}
+                onClick={() => { setRecord(e.id, { _excluded: false }); toast(`已還原 ${e.name}`, 'success'); }}
+                className="px-2 py-1 rounded-lg border border-[#DDD9D0] bg-white text-xs text-slate-600
+                           hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700">
+                ↩ {e.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {Object.keys(vendorGroups).length === 0 && dateExtras.length === 0 ? (
         <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
       ) : (() => {
@@ -5993,6 +6054,15 @@ function Attendance({ phoneOnly = false }) {
                                   {offDutyPresentIds.has(emp.id) && (
                                     <div className="text-[11px] text-blue-600 font-medium">休假出勤</div>
                                   )}
+                                  {(() => {
+                                    const si = shiftInfo(emp);
+                                    return si ? (
+                                      <div className="text-[11px] text-indigo-600 whitespace-nowrap"
+                                           title={si.name}>
+                                        🕐 {si.time}
+                                      </div>
+                                    ) : null;
+                                  })()}
                                 </div>
                                 {rec.present ? (
                                   <>
@@ -6018,6 +6088,21 @@ function Attendance({ phoneOnly = false }) {
                                       className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-full sm:w-32" />
                                   </>
                                 )}
+                                {/* 僅將此人移出「當日」名單；班表與人員清冊不受影響，可隨時還原 */}
+                                <button
+                                  onClick={() => {
+                                    if (!window.confirm(`將「${emp.name}」移出 ${attendDate} 的點名名單？
+
+班表與人員清冊不會變動，可在名單上方還原。`)) return;
+                                    setRecord(emp.id, { _excluded: true });
+                                    toast(`已將 ${emp.name} 移出本日名單`, 'info');
+                                  }}
+                                  title="移出本日名單"
+                                  className="ml-auto shrink-0 w-7 h-7 rounded-lg border border-[#DDD9D0]
+                                             text-slate-400 hover:bg-red-50 hover:text-red-600 hover:border-red-300
+                                             flex items-center justify-center text-sm">
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           );
@@ -6562,10 +6647,10 @@ function Attendance({ phoneOnly = false }) {
       <div>
         {subTab === 'attend' && attendPane}
         {subTab === 'phone'  && phonePane}
-        {subTab === 'stats'  && <StatsPane attendDate={attendDate} groupFilter={groupFilter} totalCount={totalCount} presentCount={presentCount} absentCount={absentCount} attendRate={attendRate} groupOptions={groupOptions} exportStats={exportStats} />}
-        {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} groupFilter={groupFilter} />}
+        {subTab === 'stats'  && <StatsPane attendDate={attendDate} selectedGroup={selectedGroup} totalCount={totalCount} presentCount={presentCount} absentCount={absentCount} attendRate={attendRate} groupOptions={groupOptions} exportStats={exportStats} />}
+        {subTab === 'report' && <ReportPane generateReport={generateReport} groupOptions={groupOptions} attendDate={attendDate} selectedGroup={selectedGroup} />}
         {subTab === 'maint'  && <MaintPane attendSettings={attendSettings} setAttendSettings={setAttendSettings} groupOptions={groupOptions} />}
-        {subTab === 'import' && <ImportPane todayStr={todayStr} groupFilter={groupFilter} />}
+        {subTab === 'import' && <ImportPane todayStr={todayStr} />}
       </div>
 
       {addModal && (
@@ -6641,6 +6726,25 @@ function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
             className="px-3 py-1 border border-[#DDD9D0] rounded-lg text-xs hover:bg-[#F5F2EC] text-slate-600">編輯</button>
         </>
       )}
+    </div>
+  );
+}
+
+// 系統設定的可收合區塊：設定項目多，全部展開會讓頁面過長難以瀏覽。
+// 預設全部收合，點標題列展開；state 存在各自的元件內，切換分頁後回到預設。
+function SettingsSection({ title, desc, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-white border border-[#DDD9D0] rounded-xl overflow-hidden">
+      <button onClick={() => setOpen(v => !v)}
+        className="w-full flex items-start gap-2 px-5 py-3.5 text-left hover:bg-[#F5F2EC] transition-colors">
+        <span className="text-slate-400 text-xs mt-1 w-3 shrink-0">{open ? '▼' : '▶'}</span>
+        <span className="min-w-0">
+          <span className="block font-semibold text-slate-700">{title}</span>
+          {desc && !open && <span className="block text-xs text-slate-400 mt-0.5 truncate">{desc}</span>}
+        </span>
+      </button>
+      {open && <div className="px-5 pb-5 border-t border-[#DDD9D0] pt-4">{children}</div>}
     </div>
   );
 }
@@ -6802,8 +6906,7 @@ function Settings() {
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
       {/* ── 開放排班日期區間 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-3">開放排班日期區間</h3>
+      <SettingsSection title="開放排班日期區間" desc="設定後僅允許在此區間內編輯班表">
         <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
         <div className="flex gap-3 items-end flex-wrap">
           <div>
@@ -6830,11 +6933,10 @@ function Settings() {
             目前區間：{scheduleRange.start} ～ {scheduleRange.end}
           </p>
         )}
-      </div>
+      </SettingsSection>
 
       {/* ── 各課別鎖定與開放區間 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-1">各課別鎖定與開放區間</h3>
+      <SettingsSection title="各課別鎖定與開放區間" desc="各課可分別鎖定並自訂開放區間">
         <p className="text-xs text-slate-500 mb-2">
           班表編輯權限以<strong>課別</strong>為單位控管。各課排班完成時間不同，可在該課排完後單獨鎖定，不影響其他課別。
           <br />開放排班區間亦可依各課需求分別設定；<strong>未設定者沿用上方全域區間</strong>
@@ -6941,11 +7043,10 @@ function Settings() {
             ))}
           </div>
         )}
-      </div>
+      </SettingsSection>
 
       {/* ── 開放排班國定假日 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-        <h3 className="font-semibold text-slate-700 mb-1">開放排班國定假日</h3>
+      <SettingsSection title="開放排班國定假日" desc="勾選後班表中「國」顯示假日短名">
         <p className="text-xs text-slate-500 mb-4">
           依上方開放排班日期區間自動篩選範圍內的國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
           {!scheduleRange.start && <span className="text-teal-700 ml-1">（請先設定開放排班日期區間）</span>}
@@ -7007,14 +7108,13 @@ function Settings() {
             </div>
           );
         })()}
-      </div>
+      </SettingsSection>
 
       {/* ── 委外幹部排「國」開放鍵 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <SettingsSection title="委外幹部國定假日排班權限" desc="控制委外幹部能否自行安排「國」">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold text-slate-700">委外幹部國定假日排班權限</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500">
               開啟後，委外幹部可在班表中自行安排「國」定假日；關閉時點擊格子將自動跳過「國」。
             </p>
           </div>
@@ -7032,15 +7132,12 @@ function Settings() {
         <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-teal-700' : 'text-slate-400'}`}>
           {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
         </p>
-      </div>
+      </SettingsSection>
 
       {/* ── 廠商別維護 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <SettingsSection title="廠商別維護" desc="管理系統中所有委外廠商">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-slate-700">廠商別維護</h3>
-            <p className="text-xs text-slate-400 mt-0.5">管理系統中所有委外廠商，新增後即可在帳號管理與倉別設定中使用。</p>
-          </div>
+          <p className="text-xs text-slate-400">管理系統中所有委外廠商，新增後即可在帳號管理與倉別設定中使用。</p>
           <button onClick={openAddVd}
             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
             ➕ 新增廠商
@@ -7085,15 +7182,12 @@ function Settings() {
             </tbody>
           </table>
         </div>
-      </div>
+      </SettingsSection>
 
       {/* ── 倉別 × 課別 × 廠商別維護 ── */}
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <SettingsSection title="倉別 × 課別 × 廠商別維護" desc="每個倉可設定多個課別與所屬廠商">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-slate-700">倉別 × 課別 × 廠商別維護</h3>
-            <p className="text-xs text-slate-400 mt-0.5">每個倉可設定多個課別，每個課別再配置所屬廠商。</p>
-          </div>
+          <p className="text-xs text-slate-400">每個倉可設定多個課別，每個課別再配置所屬廠商。</p>
           <button onClick={openAddWh}
             disabled={vendors.length === 0}
             title={vendors.length === 0 ? '請先在「廠商別維護」新增廠商' : undefined}
@@ -7193,7 +7287,7 @@ function Settings() {
             </div>
           ))}
         </div>
-      </div>
+      </SettingsSection>
 
       {/* ── 廠商公司抬頭維護 ── */}
       {(() => {
@@ -7210,11 +7304,8 @@ function Settings() {
         };
 
         return (
-          <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
-            <div className="mb-3">
-              <h3 className="font-semibold text-slate-700">廠商公司抬頭</h3>
-              <p className="text-xs text-slate-400 mt-0.5">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
-            </div>
+          <SettingsSection title="廠商公司抬頭維護" desc="報表標題列顯示的廠商全名">
+            <p className="text-xs text-slate-400 mb-3">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
             {allVendors.length === 0 ? (
               <p className="text-sm text-slate-400 text-center py-4">尚未有廠商資料</p>
             ) : (
@@ -7229,7 +7320,7 @@ function Settings() {
                 ))}
               </div>
             )}
-          </div>
+          </SettingsSection>
         );
       })()}
 
@@ -8237,7 +8328,7 @@ function ShiftCodeTable() {
 
 function AccountManagement() {
   const { users, setUsers, vendors, warehouses, currentUser, employees,
-          setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup } = useApp();
+          setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup, selectedVendor } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
 
@@ -8250,6 +8341,7 @@ function AccountManagement() {
   const [apiUsersLoaded, setApiUsersLoaded] = useState(false);
   const [savingWhFor,    setSavingWhFor]    = useState(null);
   const [savingRoleFor,  setSavingRoleFor]  = useState(null);
+  const [vendorSearch,   setVendorSearch]   = useState('');
 
   const refreshApiUsers = useCallback(() => {
     if (!currentUser?._apiAuth) return;
@@ -8533,6 +8625,27 @@ function AccountManagement() {
       if (r?.ok) {
         const updated = await r.json();
         setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
+        // 廠商帳號分頁列的是本機 users 陣列，而此申請是直接寫入資料庫的，
+        // 核准後若不補進本機清單，帳號雖可登入卻不會出現在分頁上、也無法管理。
+        if (updated.role === ROLES.VENDOR) {
+          setUsers(prev => prev.some(x => x.username === updated.username)
+            ? prev.map(x => x.username === updated.username
+                ? { ...x, id: updated.id, approved: true, role: ROLES.VENDOR,
+                    name: updated.name, vendors: updated.vendors ?? [],
+                    allowedWarehouses: updated.allowedWarehouses ?? [] }
+                : x)
+            : [...prev, {
+                id: updated.id,
+                username: updated.username,
+                name: updated.name || updated.username,
+                role: ROLES.VENDOR,
+                approved: true,
+                vendors: updated.vendors ?? [],
+                allowedWarehouses: updated.allowedWarehouses ?? [],
+                permissions: getDefaultPermissions(ROLES.VENDOR),
+                mustChangePassword: false,
+              }]);
+        }
         toast(`已核准 ${updated.username}`, 'success');
       } else {
         toast('核准失敗', 'error');
@@ -8633,11 +8746,17 @@ function AccountManagement() {
     : selectedWarehouse
       ? new Set(warehouses.find(w => w.id === selectedWarehouse)?.departments?.flatMap(d => d.vendors ?? []) ?? [])
       : null;
-  const vendorUsers = users.filter(u =>
-    u.role === ROLES.VENDOR && u.approved !== false &&
-    (visibleVendorNames === null || (u.vendors ?? []).some(v => visibleVendorNames.has(v))) &&
-    (scopeVendorNames === null || (u.vendors ?? []).some(v => scopeVendorNames.has(v)))
-  );
+  const vendorUsers = users.filter(u => {
+    if (u.role !== ROLES.VENDOR || u.approved === false) return false;
+    const vs = u.vendors ?? [];
+    if (visibleVendorNames !== null && !vs.some(v => visibleVendorNames.has(v))) return false;
+    if (scopeVendorNames   !== null && !vs.some(v => scopeVendorNames.has(v)))   return false;
+    // 上方「廠商」篩選：先前未套用，導致選了廠商清單卻不會收斂
+    if (selectedVendor && !vs.includes(selectedVendor)) return false;
+    const q = vendorSearch.trim().toLowerCase();
+    if (q && !(`${u.username} ${u.name ?? ''}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
 
   const tabUsers = activeTab === 'staff' ? staffUsers : vendorUsers;
 
@@ -8647,6 +8766,8 @@ function AccountManagement() {
     warehouses, selectedWarehouse, selectedDept, selectedGroup
   );
   const workerEmpList = workerEmpListAll.filter(e =>
+    // 上方「廠商」篩選同樣要套用，否則選了廠商清單卻不會收斂
+    (!selectedVendor   || e.vendor === selectedVendor) &&
     (!workerSearchName || e.name?.includes(workerSearchName)) &&
     (!workerSearchId   || e.empId?.includes(workerSearchId))
   );
@@ -8692,13 +8813,26 @@ function AccountManagement() {
       {/* 標題列 */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-800">帳號與權限管理</h2>
-        <button onClick={openAdd}
-          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-          ➕ 新增帳號
-        </button>
+        <div className="flex items-center gap-2">
+          {/* 帳號清單只在進入頁面與切回分頁時抓取，新申請不會自動出現，故提供手動重新整理 */}
+          <button onClick={() => { refreshApiUsers(); toast('已重新載入帳號清單', 'success'); }}
+            className="px-3 py-1.5 bg-white border border-[#DDD9D0] text-slate-700 rounded-lg text-sm
+                       hover:bg-[#F5F2EC]">
+            🔄 重新整理
+          </button>
+          <button onClick={openAdd}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            ➕ 新增帳號
+          </button>
+        </div>
       </div>
 
-      {/* 待審核申請 */}
+      {/* 待審核申請：無資料時仍顯示一行說明，避免與「清單未更新」混淆 */}
+      {pendingUsers.length === 0 && apiUsersLoaded && (
+        <p className="text-xs text-slate-400">
+          目前無待審核的廠商帳號申請（申請後請按上方「🔄 重新整理」）
+        </p>
+      )}
       {pendingUsers.length > 0 && (
         <div className="border border-amber-300 bg-amber-50 rounded-xl p-4 space-y-3">
           <h3 className="font-semibold text-amber-800 flex items-center gap-2">
@@ -9048,6 +9182,24 @@ function AccountManagement() {
         </div>
       )}
 
+      {activeTab === 'vendor' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input value={vendorSearch} onChange={e => setVendorSearch(e.target.value)}
+            placeholder="搜尋帳號／姓名…"
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-52" />
+          {vendorSearch && (
+            <button onClick={() => setVendorSearch('')}
+              className="px-3 py-1.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-lg hover:bg-[#F5F2EC]">
+              清除
+            </button>
+          )}
+          <span className="text-xs text-slate-400">
+            {selectedVendor ? `已依上方篩選「${selectedVendor}」` : '（可用上方倉別／課別／廠商一併篩選）'}
+            ・共 {vendorUsers.length} 筆
+          </span>
+        </div>
+      )}
+
       {(activeTab === 'vendor' || (activeTab === 'staff' && !apiUsersLoaded)) && (
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                       bg-slate-100 rounded-t-xl px-4 py-2.5 border border-[#DDD9D0]"
@@ -9372,6 +9524,9 @@ export default function App() {
   // ── Server-sync ──
   const serverSyncedRef = useRef(false);
   const saveDebouncerRef = useRef(null);
+  // 本地有尚未寫回伺服器的變更。背景輪詢期間若整份覆蓋 schedule 等狀態，
+  // 會把還在 debounce 中的匯入結果洗掉（匯入 → 輪詢取回舊資料覆蓋 → 存回舊資料）。
+  const dirtyRef = useRef(false);
   const forceSaveRef = useRef(false); // 匯入等重要操作後設 true，下次 effect 立即存
 
   const loadServerState = useCallback(async (token, roleOverride) => {
@@ -9551,6 +9706,9 @@ export default function App() {
     const role = currentUser?.role;
     const applySchedule = s => {
       if (!s) return;
+      // 本地仍有未寫回伺服器的變更（例如剛匯入班表、還在 2 秒 debounce 內）時，
+      // 一律不套用伺服器版本，否則會用舊資料蓋掉尚未存檔的內容並在下一次存檔寫回。
+      if (dirtyRef.current) return;
       if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
       if (s.vendors?.length > 0)    setVendors(s.vendors);
       if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
@@ -9720,17 +9878,19 @@ export default function App() {
       users, workerPwds,
     });
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    dirtyRef.current = true;
+    const done = ok => { if (ok) dirtyRef.current = false; };
     if (forceSaveRef.current) {
       // 匯入等重要操作後立即存，不經 setTimeout（避免關頁前 callback 被取消）
       forceSaveRef.current = false;
       fetch('/api/state', { method: 'PUT', headers, body })
-        .then(r => { if (!r.ok) console.warn('匯入後立即存檔失敗 HTTP', r.status); })
+        .then(r => { done(r.ok); if (!r.ok) console.warn('匯入後立即存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('匯入後立即存檔失敗:', e.message));
       return;
     }
     saveDebouncerRef.current = setTimeout(() => {
       fetch('/api/state', { method: 'PUT', headers, body })
-        .then(r => { if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
+        .then(r => { done(r.ok); if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign, scheduleRange,
@@ -9886,6 +10046,7 @@ export default function App() {
     currentUser,
     saveNow,
     triggerForceSave,
+    hasUnsavedChanges: () => dirtyRef.current,
   };
 
   const PAGE_MAP = {
