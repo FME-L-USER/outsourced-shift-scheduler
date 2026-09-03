@@ -1558,10 +1558,14 @@ function defaultStaffPageKeys(allowedWarehouses) {
 function buildPermsFromPagePerms(role, pagePerms, allowedWarehouses) {
   const base = getDefaultPermissions(role);
   if (role === ROLES.ADMIN) return base; // 管理員永遠全開
-  // 未設定（空陣列）＝採用預設值，而非關閉全部
+  // 未設定（空陣列）＝採用預設值，而非關閉全部。
+  // 預設值須依角色決定：廠商幹部若套用日翊的預設分頁，會看到不該看的頁面。
+  const roleDefaultKeys = role === ROLES.AREA
+    ? defaultStaffPageKeys(allowedWarehouses)
+    : NAV_ITEMS.filter(n => n.roles.includes(role) && base[n.key]?.view).map(n => n.key);
   const effective = (Array.isArray(pagePerms) && pagePerms.length > 0)
     ? pagePerms
-    : defaultStaffPageKeys(allowedWarehouses);
+    : roleDefaultKeys;
   const allowed = new Set(effective);
   const perms = { ...base };
   NAV_ITEMS.forEach(n => {
@@ -8574,22 +8578,45 @@ function AccountManagement() {
     if (editUser) {
       setUsers(prev => prev.map(u => u.id === saved.id ? saved : u));
       toast('帳號已更新：' + saved.username, 'success');
+      // 廠商帳號登入以資料庫為準，姓名／密碼／授權廠商／倉別須一併寫回
+      if (saved.role === ROLES.VENDOR) await syncVendorToDB(saved);
     } else {
-      setUsers(prev => [...prev, { ...saved, id: 'u' + Date.now(), approved: true, loginCount: 0, permissions: getDefaultPermissions(saved.role) }]);
+      const created = { ...saved, id: 'u' + Date.now(), approved: true, loginCount: 0,
+                        permissions: getDefaultPermissions(saved.role) };
+      setUsers(prev => [...prev, created]);
       toast('帳號已新增：' + saved.username, 'success');
+      // 未寫入資料庫的廠商帳號無法登入（歷來已發生過）
+      if (created.role === ROLES.VENDOR) await syncVendorToDB(created);
     }
     setShowModal(false);
   };
 
-  const handleDelete = id => {
+  const handleDelete = async id => {
     const target = users.find(u => u.id === id);
     if (target?.system) { toast('系統帳號不可刪除', 'error'); return; }
     setUsers(prev => prev.filter(u => u.id !== id));
+    // 只刪本機會留下仍可登入的資料庫帳號
+    await deleteFromDB(target);
     toast('帳號已刪除', 'info');
   };
 
   // 寫入 DB 失敗時務必提示：否則畫面顯示建立成功、實際 DB 沒有帳號，
   // 使用者要到登入失敗時才會發現（歷來已發生過一次）
+  // 廠商帳號同時存在於本機 users 與資料庫 users 表，登入一律以資料庫為準。
+  // 任何只改本機的操作（編輯、刪除、撤銷）都不會生效，刪除更會留下仍可登入的帳號。
+  const deleteFromDB = async (u) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token || !u) return;
+    const dbId = apiUsers.find(a => a.id === u.id || a.username === u.username)?.id;
+    if (!dbId) return;   // 資料庫沒有這筆，僅本機資料
+    const r = await fetch(`/api/users/${dbId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => null);
+    if (r?.ok) setApiUsers(prev => prev.filter(a => a.id !== dbId));
+    else toast(`帳號 ${u.username} 未能自資料庫刪除，該帳號可能仍可登入`, 'error');
+  };
+
   const syncVendorToDB = async (u) => {
     const token = localStorage.getItem('sms_jwt');
     if (!token) return;
@@ -8677,27 +8704,59 @@ function AccountManagement() {
     toast('申請已拒絕並刪除', 'info');
   };
 
-  const toggleApproved = u => {
+  const toggleApproved = async u => {
     if (u.system) { toast('系統帳號不可停用', 'error'); return; }
-    setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: !x.approved } : x));
+    const next = !u.approved;
+    setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: next } : x));
     toast((u.approved ? '已停用：' : '已啟用：') + u.username, u.approved ? 'warn' : 'success');
+
+    // 登入以資料庫的 approved 為準，只改本機會讓「已停用」的帳號仍可登入
+    const dbId = apiUsers.find(a => a.id === u.id || a.username === u.username)?.id;
+    if (!dbId) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    const r = await fetch(`/api/users/${dbId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ approved: next }),
+    }).catch(() => null);
+    if (r?.ok) {
+      const updated = await r.json();
+      setApiUsers(prev => prev.map(a => a.id === updated.id ? updated : a));
+    } else {
+      toast(`${u.username} 的狀態未能寫入資料庫，該帳號可能仍可登入`, 'error');
+    }
   };
 
   const togglePerm = (userId, pageKey, featKey, val) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id !== userId) return u;
-      const perms = { ...u.permissions };
-      const page  = { ...perms[pageKey] };
-      if (featKey === 'view') {
-        page.view = val;
-        if (!val) PAGE_PERMISSIONS.find(p => p.key === pageKey)?.features.forEach(f => { page[f.key] = false; });
-      } else {
-        page[featKey] = val;
-        if (val) page.view = true;
-      }
-      perms[pageKey] = page;
-      return { ...u, permissions: perms };
-    }));
+    const target = users.find(u => u.id === userId);
+    if (!target) return;
+    const perms = { ...(target.permissions ?? getDefaultPermissions(target.role)) };
+    const page  = { ...perms[pageKey] };
+    if (featKey === 'view') {
+      page.view = val;
+      if (!val) PAGE_PERMISSIONS.find(p => p.key === pageKey)?.features.forEach(f => { page[f.key] = false; });
+    } else {
+      page[featKey] = val;
+      if (val) page.view = true;
+    }
+    perms[pageKey] = page;
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, permissions: perms } : u));
+
+    // 透過帳號申請建立的廠商帳號登入時讀的是資料庫的 page_perms 欄位，
+    // 只改本機 users 不會生效，故同一份設定須一併寫回資料庫。
+    if (!apiUsers.some(a => a.id === userId)) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    const pages = Object.entries(perms).filter(([, v]) => v?.view).map(([k]) => k);
+    fetch(`/api/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ page_perms: pages }),
+    })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(updated => setApiUsers(prev => prev.map(u => u.id === updated.id ? updated : u)))
+      .catch(() => toast('權限已在本機更新，但寫入伺服器失敗，請重試', 'error'));
   };
 
   const toggleVendor = v => setForm(p => ({
@@ -8797,8 +8856,11 @@ function AccountManagement() {
     await syncVendorToDB(newUser);
   };
 
-  const handleDowngradeToWorker = (emp) => {
+  const handleDowngradeToWorker = async (emp) => {
+    const target = users.find(u => u.role === ROLES.VENDOR && u.employeeId === emp.id);
     setUsers(prev => prev.filter(u => !(u.role === ROLES.VENDOR && u.employeeId === emp.id)));
+    // 同上：資料庫的帳號未刪除的話，撤銷後仍可登入
+    await deleteFromDB(target);
     toast(`已撤銷 ${emp.name} 的委外幹部權限`, 'info');
   };
 
@@ -10102,6 +10164,18 @@ export default function App() {
             }
           } else {
             setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+            // 廠商帳號以資料庫的 password_hash 驗證登入，只改本機會使新密碼無效
+            if (updated.role === ROLES.VENDOR) {
+              const token = localStorage.getItem(JWT_KEY);
+              if (token) {
+                fetch('/api/auth/vendor-password', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ passwordHash: updated.password }),
+                }).then(r => { if (!r.ok) console.warn('廠商密碼寫入資料庫失敗 HTTP', r.status); })
+                  .catch(e => console.warn('廠商密碼寫入資料庫失敗:', e.message));
+              }
+            }
           }
           setCurrentUser({ ...updated, mustChangePassword: false });
         }} />

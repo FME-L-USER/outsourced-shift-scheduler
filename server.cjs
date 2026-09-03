@@ -1266,6 +1266,29 @@ app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
   }
 });
 
+// ── PUT /api/auth/vendor-password ────────────────────────
+// 委外幹部自行變更密碼（首次登入強制改密碼亦走此路徑）。
+// 廠商帳號登入是以 DB 的 password_hash 驗證，只改本機會導致新密碼無效、
+// 舊密碼仍可登入，故必須寫回資料庫。僅能改自己的密碼。
+app.put('/api/auth/vendor-password', requireAuth, async (req, res) => {
+  if (req.user?.role !== 'vendor') return res.status(403).json({ error: '無存取權限' });
+  const { passwordHash } = req.body ?? {};
+  if (!passwordHash || !String(passwordHash).startsWith('pbkdf2:')) {
+    return res.status(400).json({ error: '密碼格式錯誤' });
+  }
+  try {
+    const { rowCount } = await pool.query(
+      'UPDATE users SET password_hash=$1 WHERE username=$2 AND role=$3',
+      [String(passwordHash), req.user.username, 'vendor']
+    );
+    if (rowCount === 0) return res.status(404).json({ error: '找不到此帳號' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('vendor-password error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 // ── POST /api/auth/vendor-apply （公開）───────────────────
 // 廠商幹部帳號申請：申請者尚未登入，故為公開端點。
 // 一律建立 approved=false，需管理員核准後才能登入。
