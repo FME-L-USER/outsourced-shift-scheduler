@@ -942,18 +942,52 @@ app.put('/api/state', requireAuth, async (req, res) => {
   if (Array.isArray(rest.warehouses) && rest.warehouses.length === 0) delete rest.warehouses;
   if (Object.keys(rest).length === 0) return res.json({ ok: true });
   // schedule：逐員工、逐日 merge（避免 admin/area 多裝置同時存檔時，後存者的舊快照蓋掉先存者剛異動的其他員工資料）
-  if (rest.schedule && Object.keys(rest.schedule).length > 0) {
+  // workerPwds：逐員編 merge。委外人員是自己透過 PUT /api/auth/worker-password 設定密碼的，
+  // 管理員端的 workerPwds 快照永遠較舊；若整份覆蓋會把剛設好的密碼洗掉，
+  // 該員下次登入就會被當成首次登入而再次要求設定密碼。
+  if ((rest.schedule && Object.keys(rest.schedule).length > 0) ||
+      (rest.workerPwds && Object.keys(rest.workerPwds).length >= 0) ||
+      (Array.isArray(rest.employees) && rest.employees.length > 0) ||
+      (Array.isArray(rest.warehouses) && rest.warehouses.length > 0)) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
-      const curSchedule = curRows[0]?.data?.schedule ?? {};
-      const mergedSchedule = { ...curSchedule };
-      for (const [empId, days] of Object.entries(rest.schedule)) {
-        if (days && Object.keys(days).length > 0)
-          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
+      const cur = curRows[0]?.data ?? {};
+      if (rest.schedule && Object.keys(rest.schedule).length > 0) {
+        const curSchedule = cur.schedule ?? {};
+        const mergedSchedule = { ...curSchedule };
+        for (const [empId, days] of Object.entries(rest.schedule)) {
+          if (days && Object.keys(days).length > 0)
+            mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
+        }
+        rest.schedule = mergedSchedule;
       }
-      rest.schedule = mergedSchedule;
+      if (rest.workerPwds) {
+        // 伺服器現值優先：本人剛設定的密碼不可被他人的舊快照覆蓋
+        rest.workerPwds = { ...rest.workerPwds, ...(cur.workerPwds ?? {}) };
+      }
+      // warehouses：日翊(area)僅能異動自己 allowed_warehouses 內的倉別，其餘沿用伺服器現值，
+      // 且不得新增或刪除倉別。前端已做收斂，但伺服器端原本未區分 admin/area，
+      // 故在此把關；同時可避免日翊的舊快照覆蓋其他倉別的設定。
+      if (Array.isArray(rest.warehouses) && role === 'area') {
+        const allowed = new Set(req.user?.allowed_warehouses ?? []);
+        const incomingById = new Map(rest.warehouses.map(w => [w.id, w]));
+        rest.warehouses = (cur.warehouses ?? []).map(w =>
+          (allowed.has(w.id) && incomingById.has(w.id)) ? incomingById.get(w.id) : w);
+      }
+      // employees：逐筆合併欄位。多位日翊同時登入時，每個瀏覽器每 2 秒送出自己的
+      // employees 快照；若整份覆蓋，別人剛設定的欄位（例如 shiftTypeId 班別指派）
+      // 會被尚未同步到該設定的舊快照洗掉。
+      // 作法：以送出的清單為準（保留刪除語意），但同一筆人員中「現值有、來源沒有」
+      // 的欄位予以保留；來源明確帶值的欄位仍會覆蓋，故正常編輯不受影響。
+      if (Array.isArray(rest.employees) && rest.employees.length > 0) {
+        const curById = new Map((cur.employees ?? []).map(e => [e.id, e]));
+        rest.employees = rest.employees.map(e => {
+          const prev = curById.get(e.id);
+          return prev ? { ...prev, ...e } : e;
+        });
+      }
     } catch (e) {
-      console.error('PUT /api/state schedule merge 讀取失敗:', e.message);
+      console.error('PUT /api/state merge 讀取失敗:', e.message);
     }
   }
   try {

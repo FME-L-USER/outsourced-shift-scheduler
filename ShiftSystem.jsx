@@ -277,7 +277,7 @@ function getDefaultPermissions(role) {
     const isWorker = role === ROLES.WORKER;
     const pageVisible =
       isAdmin ? true :
-      isArea  ? !['settings','accounts'].includes(page.key) :
+      isArea  ? page.key !== 'accounts' :   // 系統設定預設開放（頁內僅限本倉可設定的項目）
       isWorker ? page.key === 'schedule' :
       // 廠商幹部：預設僅開放班表管理與報表匯出，其餘（點名表、手機控管、
       // 人員清冊等）一律關閉，需由管理員個別開啟
@@ -287,7 +287,7 @@ function getDefaultPermissions(role) {
     page.features.forEach(f => {
       const on = pageVisible && (
         isAdmin ? true :
-        isArea  ? !['deleteEmployee','clearAll','lockSchedule','manageWarehouse','addAccount','editAccount','deleteAccount'].includes(f.key) :
+        isArea  ? !['deleteEmployee','clearAll','addAccount','editAccount','deleteAccount'].includes(f.key) :
         role === ROLES.WORKER ? f.key === 'editSchedule' :
         // 報表匯出頁若不含匯出功能等同無用，故與頁面一併開放
         ['editSchedule','exportExcel'].includes(f.key)
@@ -626,6 +626,20 @@ function hasAttendActivity(rec) {
   if (!rec) return false;
   if (rec.signedIn || rec.signedOut || rec.phoneSubmitted || rec.phoneNotSubmitted || rec.present) return true;
   return PHONE_SLOT_KEYS.some(k => rec[`${k}Taken`] || rec[`${k}Returned`]);
+}
+
+// 班別清單依倉別分開儲存，但員工只存 shiftTypeId、未記錄來源倉別。
+// 若指派時選的是「全部倉別」或其他倉別，之後切換倉別就會查不到而顯示未指派
+// （資料仍在，只是查錯清單）。故先查當前倉別，找不到再跨所有倉別搜尋一次。
+function findShiftType(shiftTypesByWh, whKey, id) {
+  if (!id) return null;
+  const here = (shiftTypesByWh?.[whKey] ?? SHIFT_TYPE_DEFAULTS).find(t => t.id === id);
+  if (here) return here;
+  for (const list of Object.values(shiftTypesByWh ?? {})) {
+    const hit = Array.isArray(list) ? list.find(t => t.id === id) : null;
+    if (hit) return hit;
+  }
+  return SHIFT_TYPE_DEFAULTS.find(t => t.id === id) ?? null;
 }
 
 // 名稱比對用正規化：去掉半形/全形空白、零寬字元，避免「三彥 」被當成新廠商
@@ -1506,7 +1520,9 @@ const NAV_ITEMS = [
   // 廠商幹部可否看到由權限決定（預設關閉）；roles 未列入時權限勾選會失效
   { key: 'reports',      label: '報表匯出',     icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftcodes',   label: '班別代號表',   icon: '📖', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
-  { key: 'settings',     label: '系統設定',     icon: '⚙️', roles: [ROLES.ADMIN] },
+  // 日翊可獲授權進入，但頁內僅開放「各課別鎖定與開放區間」；
+  // 倉別／課別／廠商維護等破壞性與全域設定仍限管理員
+  { key: 'settings',     label: '系統設定',     icon: '⚙️', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'accounts',     label: '帳號與權限',   icon: '🔑', roles: [ROLES.ADMIN] },
 ];
 
@@ -2668,7 +2684,7 @@ function ScheduleTable() {
   // month/year 明確傳入，避免 range mode 跨月時用錯 selectedMonth
   const getDisplayCode = useCallback((emp, rawCode, day, month = selectedMonth, year = selectedYear) => {
     if (!emp.shiftTypeId) return rawCode;
-    const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
+    const st = findShiftType(shiftTypesByWh, selectedWarehouse ?? 'default', emp.shiftTypeId);
     if (!st) return rawCode;
     const timeStr = `${st.startTime.slice(0,2)}:${st.startTime.slice(2)}`;
     const row = shiftCodeRows.find(r => String(r[0]).trim() === timeStr);
@@ -2879,15 +2895,28 @@ function ScheduleTable() {
     }
 
     const current = schedule[empId]?.[dk] ?? '';
-    const idx = SHIFT_CYCLE.indexOf(current);
-    let next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
+    // 可選代碼依角色決定：
+    //   委外人員／委外幹部（含幫自己與幫他人排）一律只能在 V ↔ 休 之間切換，不可排「例」；
+    //   「國」僅在系統設定開啟「委外幹部國定假日排班權限」時供委外幹部選用。
+    //   最終排定仍由日翊員工負責，故 admin/area 維持完整循環。
+    const isOutsourced = currentUser.role === ROLES.WORKER || currentUser.role === ROLES.VENDOR;
+    let next;
+    if (isOutsourced) {
+      const allowed = ['V', '休'];
+      if (currentUser.role === ROLES.VENDOR && vendorHolidayOpen) allowed.push('國');
+      const i = allowed.indexOf(current);          // 目前是「例」等不可選代碼時 i=-1 → 回到 V
+      next = allowed[(i + 1) % allowed.length];
+    } else {
+      const idx = SHIFT_CYCLE.indexOf(current);
+      next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
+    }
 
     // 「國」只在該日為開放國定假日時才可選
     if (next === '國') {
       const [hy, hm, hd] = dk.split('-').map(Number);
       const isOpenHoliday = openHolidays.includes(`${hy}-${hm}-${hd}`);
       if (!isOpenHoliday) {
-        next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
+        next = isOutsourced ? 'V' : SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
       } else {
         // 「國」數量上限 = openHolidays 天數
         const empSched = schedule[empId] ?? {};
@@ -2903,25 +2932,11 @@ function ScheduleTable() {
       }
     }
 
-    // 委外幹部排「國」：依系統設定開放鍵決定
-    if (currentUser.role === ROLES.VENDOR && next === '國' && !vendorHolidayOpen) {
-      next = SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
-    }
-
-    // WORKER：只能在 V ↔ 休 之間切換
-    if (currentUser.role === ROLES.WORKER) {
-      next = current === '休' ? 'V' : '休';
-    }
-
-    // 一週一例：超額時自動改為「休」；委外幹部仍顯示錯誤並阻擋
+    // 一週一例：僅日翊員工可排「例」，超額時自動改為「休」
     if (next === '例') {
       const existingLeaves = getWeeklyLeaves(empId, dk);
       const alreadyLeave = schedule[empId]?.[dk] === '例';
       if (!alreadyLeave && existingLeaves >= 1) {
-        if (currentUser.role === ROLES.VENDOR) {
-          toast('委外幹部每週限排一天例休，本週已達上限。', 'error');
-          return;
-        }
         next = '休';
         toast('本週已有例休，自動改排休假（休）。', 'info');
       }
@@ -3776,7 +3791,7 @@ function ScheduleTable() {
                     </td>
                     <td className="hidden sm:table-cell px-2 py-2 border-r border-slate-100 text-center">
                       {(() => {
-                        const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
+                        const st = findShiftType(shiftTypesByWh, selectedWarehouse ?? 'default', emp.shiftTypeId);
                         return st
                           ? <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700 whitespace-nowrap">{st.name}</span>
                           : <span className="text-slate-300 text-xs">—</span>;
@@ -5660,10 +5675,9 @@ function Attendance({ phoneOnly = false }) {
   const ABSENT_CODES = new Set(['休', '例', '國']);
 
   // 人員上班時間：由員工的班別（shiftTypeId）帶出起訖時間，供點名時核對
-  const shiftTypes = shiftTypesByWh[selectedWarehouse ?? 'default'] ?? [];
   const fmtHHMM = t => `${String(t ?? '').slice(0, 2)}:${String(t ?? '').slice(2)}`;
   const shiftInfo = emp => {
-    const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
+    const st = findShiftType(shiftTypesByWh, selectedWarehouse ?? 'default', emp.shiftTypeId);
     return st ? { name: st.name, time: `${fmtHHMM(st.startTime)}~${fmtHHMM(st.endTime)}` } : null;
   };
 
@@ -6059,13 +6073,19 @@ function Attendance({ phoneOnly = false }) {
                                     <div className="text-[11px] text-blue-600 font-medium">休假出勤</div>
                                   )}
                                   {(() => {
+                                    // 未指派班別時明確標示，避免與「功能失效」混淆
                                     const si = shiftInfo(emp);
                                     return si ? (
                                       <div className="text-[11px] text-indigo-600 whitespace-nowrap"
                                            title={si.name}>
                                         🕐 {si.time}
                                       </div>
-                                    ) : null;
+                                    ) : (
+                                      <div className="text-[11px] text-slate-300 whitespace-nowrap"
+                                           title="請至「人員班別設定」指派班別">
+                                        🕐 未設班別
+                                      </div>
+                                    );
                                   })()}
                                 </div>
                                 {rec.present ? (
@@ -6769,6 +6789,9 @@ function Settings() {
   } = useApp();
   const toast = useToast();
 
+  // 系統設定含破壞性（刪除倉別／課別／廠商）與全域設定，日翊僅開放課別鎖定與開放區間
+  const isAdminUser = currentUser?.role === ROLES.ADMIN;
+
   // 課別鎖定／開放區間只列出自己權責範圍內的倉別：
   // 管理員為全倉；其餘角色依 allowedWarehouses（未指派則不顯示任何倉別）。
   const lockableWarehouses = useMemo(() => {
@@ -6910,28 +6933,37 @@ function Settings() {
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
       {/* ── 開放排班日期區間 ── */}
-      <SettingsSection title="開放排班日期區間" desc="設定後僅允許在此區間內編輯班表">
+      <SettingsSection title="開放排班日期區間"
+        desc={isAdminUser ? '設定後僅允許在此區間內編輯班表' : '全域設定，僅管理員可修改'}>
         <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
-        <div className="flex gap-3 items-end flex-wrap">
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">開始日期</label>
-            <input type="date" value={start} onChange={e => setStart(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+        {/* 全域區間影響所有倉別，日翊僅供檢視；各課別可於下方自訂 */}
+        {isAdminUser ? (
+          <div className="flex gap-3 items-end flex-wrap">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">開始日期</label>
+              <input type="date" value={start} onChange={e => setStart(e.target.value)}
+                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">結束日期</label>
+              <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <button onClick={saveRange}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+              儲存
+            </button>
+            <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
+              className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+              清除
+            </button>
           </div>
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">結束日期</label>
-            <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-          </div>
-          <button onClick={saveRange}
-            className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-            儲存
-          </button>
-          <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
-            className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
-            清除
-          </button>
-        </div>
+        ) : (
+          <p className="text-sm text-slate-600 bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-2">
+            🔒 此為全域設定，僅管理員可修改。若貴課需要不同的開放區間，請於下方
+            「各課別鎖定與開放區間」自訂。
+          </p>
+        )}
         {scheduleRange.start && (
           <p className="mt-3 text-xs text-teal-700">
             目前區間：{scheduleRange.start} ～ {scheduleRange.end}
@@ -7050,7 +7082,7 @@ function Settings() {
       </SettingsSection>
 
       {/* ── 開放排班國定假日 ── */}
-      <SettingsSection title="開放排班國定假日" desc="勾選後班表中「國」顯示假日短名">
+      {isAdminUser && (<SettingsSection title="開放排班國定假日" desc="勾選後班表中「國」顯示假日短名">
         <p className="text-xs text-slate-500 mb-4">
           依上方開放排班日期區間自動篩選範圍內的國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
           {!scheduleRange.start && <span className="text-teal-700 ml-1">（請先設定開放排班日期區間）</span>}
@@ -7112,10 +7144,10 @@ function Settings() {
             </div>
           );
         })()}
-      </SettingsSection>
+      </SettingsSection>)}
 
       {/* ── 委外幹部排「國」開放鍵 ── */}
-      <SettingsSection title="委外幹部國定假日排班權限" desc="控制委外幹部能否自行安排「國」">
+      {isAdminUser && (<SettingsSection title="委外幹部國定假日排班權限" desc="控制委外幹部能否自行安排「國」">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-slate-500">
@@ -7136,10 +7168,10 @@ function Settings() {
         <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-teal-700' : 'text-slate-400'}`}>
           {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
         </p>
-      </SettingsSection>
+      </SettingsSection>)}
 
       {/* ── 廠商別維護 ── */}
-      <SettingsSection title="廠商別維護" desc="管理系統中所有委外廠商">
+      {isAdminUser && (<SettingsSection title="廠商別維護" desc="管理系統中所有委外廠商">
         <div className="flex items-center justify-between mb-4">
           <p className="text-xs text-slate-400">管理系統中所有委外廠商，新增後即可在帳號管理與倉別設定中使用。</p>
           <button onClick={openAddVd}
@@ -7186,18 +7218,25 @@ function Settings() {
             </tbody>
           </table>
         </div>
-      </SettingsSection>
+      </SettingsSection>)}
 
       {/* ── 倉別 × 課別 × 廠商別維護 ── */}
-      <SettingsSection title="倉別 × 課別 × 廠商別維護" desc="每個倉可設定多個課別與所屬廠商">
+      <SettingsSection title="倉別 × 課別 × 廠商別維護"
+        desc={isAdminUser ? '每個倉可設定多個課別與所屬廠商' : '可設定所屬倉別的課別與廠商配置'}>
         <div className="flex items-center justify-between mb-4">
-          <p className="text-xs text-slate-400">每個倉可設定多個課別，每個課別再配置所屬廠商。</p>
-          <button onClick={openAddWh}
-            disabled={vendors.length === 0}
-            title={vendors.length === 0 ? '請先在「廠商別維護」新增廠商' : undefined}
-            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-            ➕ 新增倉別
-          </button>
+          <p className="text-xs text-slate-400">
+            每個倉可設定多個課別，每個課別再配置所屬廠商。
+            {!isAdminUser && '（僅顯示您負責的倉別；倉別本身的新增／編輯／刪除限管理員）'}
+          </p>
+          {/* 倉別的新增／編輯／刪除影響全系統，一律限管理員 */}
+          {isAdminUser && (
+            <button onClick={openAddWh}
+              disabled={vendors.length === 0}
+              title={vendors.length === 0 ? '請先在「廠商別維護」新增廠商' : undefined}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
+              ➕ 新增倉別
+            </button>
+          )}
         </div>
         {vendors.length === 0 && (
           <div className="mb-4 flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
@@ -7205,12 +7244,14 @@ function Settings() {
           </div>
         )}
 
-        {warehouses.length === 0 && (
-          <p className="text-sm text-slate-400 text-center py-6">尚未設定任何倉別</p>
+        {lockableWarehouses.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-6">
+            {warehouses.length === 0 ? '尚未設定任何倉別' : '您尚未被指派可管理的倉別'}
+          </p>
         )}
 
         <div className="space-y-4">
-          {warehouses.map(wh => (
+          {lockableWarehouses.map(wh => (
             <div key={wh.id} className="border border-[#DDD9D0] rounded-xl overflow-hidden">
               {/* 倉別 header */}
               <div className="flex items-center justify-between bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0]">
@@ -7220,14 +7261,16 @@ function Settings() {
                     className="px-2.5 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">
                     ＋ 新增課別
                   </button>
-                  <button onClick={() => openEditWh(wh)}
-                    className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
-                    編輯
-                  </button>
-                  <button onClick={() => deleteWh(wh.id)}
-                    className="px-2.5 py-1 text-xs border border-red-200 rounded-lg hover:bg-red-50 text-red-600">
-                    刪除
-                  </button>
+                  {isAdminUser && <>
+                    <button onClick={() => openEditWh(wh)}
+                      className="px-2.5 py-1 text-xs border border-[#DDD9D0] rounded-lg hover:bg-white text-slate-600">
+                      編輯
+                    </button>
+                    <button onClick={() => deleteWh(wh.id)}
+                      className="px-2.5 py-1 text-xs border border-red-200 rounded-lg hover:bg-red-50 text-red-600">
+                      刪除
+                    </button>
+                  </>}
                 </div>
               </div>
 
@@ -7291,7 +7334,7 @@ function Settings() {
             </div>
           ))}
         </div>
-      </SettingsSection>
+      </SettingsSection>)}
 
       {/* ── 廠商公司抬頭維護 ── */}
       {(() => {
@@ -7307,6 +7350,7 @@ function Settings() {
           toast('已儲存：' + vendorName, 'success');
         };
 
+        if (!isAdminUser) return null;
         return (
           <SettingsSection title="廠商公司抬頭維護" desc="報表標題列顯示的廠商全名">
             <p className="text-xs text-slate-400 mb-3">設定匯出 Excel / PDF 報表標題列顯示的廠商全名。</p>
@@ -7878,7 +7922,9 @@ function ShiftSetup() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleEmps.map((emp, idx) => {
-                const st = shiftTypes.find(t => t.id === emp.shiftTypeId);
+                const st = findShiftType(shiftTypesByWh, whKey, emp.shiftTypeId);
+                // 指派來自其他倉別的班別時，補進選項才不會顯示成「未指派」
+                const stFromOtherWh = st && !sortedShiftTypes.some(t => t.id === st.id);
                 return (
                   <tr key={emp.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}>
                     <td className="px-4 py-2 font-mono text-xs text-slate-500">{emp.empId}</td>
@@ -7889,6 +7935,7 @@ function ShiftSetup() {
                         onChange={e => assignShift(emp.id, e.target.value)}
                         className="px-2 py-1 border border-[#DDD9D0] rounded text-xs">
                         <option value="">── 未指派 ──</option>
+                        {stFromOtherWh && <option value={st.id}>{st.name}（其他倉別）</option>}
                         {sortedShiftTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                     </td>
@@ -9194,6 +9241,7 @@ function AccountManagement() {
                           <p className="text-xs text-slate-500 mb-2">
                             勾選此帳號可看到的分頁。預設為全選，但「手機控管」屬大肚倉作業，
                             非大肚倉的員工預設不勾選（仍可手動開啟）。全部不勾＝還原為預設值。
+                            「系統設定」僅開放本倉可設定的項目，倉別新增／刪除等全域操作仍限管理員。
                           </p>
                           <div className="flex items-center gap-2 mb-2">
                             <button
