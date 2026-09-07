@@ -1,0 +1,1012 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>委外人力排班作業平台｜日翊員工／管理員操作手冊</title>
+<style>
+  :root{
+    --brand:#2563eb; --brand-dark:#1e40af; --brand-soft:#eff6ff;
+    --ink:#1e293b; --ink-2:#475569; --ink-3:#94a3b8;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+    --warn:#ea580c; --warn-bg:#fff7ed;
+    --tip:#059669;  --tip-bg:#ecfdf5;
+    /* 以下為系統實際使用的色票，示意圖沿用以求一致 */
+    --sms-sidebar:#1a2f5e; --sms-sidebar-active:#2563eb;
+    --sms-surface-2:#F5F2EC; --sms-border:#DDD9D0;
+    --nav-w:270px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",-apple-system,sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  a{color:var(--brand); text-decoration:none}
+
+  header.top{
+    position:sticky; top:0; z-index:50;
+    background:var(--brand-dark); color:#fff;
+    padding:14px 24px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    box-shadow:0 1px 8px rgba(0,0,0,.15);
+  }
+  header.top .co{font-size:13px; opacity:.75; letter-spacing:.5px}
+  header.top h1{font-size:17px; margin:0; font-weight:700}
+  header.top .ver{margin-left:auto; font-size:12px; opacity:.8}
+  #navToggle{display:none; background:rgba(255,255,255,.15); border:0; color:#fff;
+    font-size:18px; width:36px; height:36px; border-radius:8px; cursor:pointer}
+
+  .wrap{display:flex; align-items:flex-start}
+  nav.toc{
+    width:var(--nav-w); flex-shrink:0; position:sticky; top:60px;
+    height:calc(100vh - 60px); overflow-y:auto;
+    background:var(--card); border-right:1px solid var(--line); padding:18px 0 40px;
+  }
+  nav.toc .toc-title{font-size:11px; font-weight:700; color:var(--ink-3);
+    letter-spacing:1.5px; padding:0 20px 10px}
+  nav.toc a{display:block; padding:7px 20px; font-size:14px; color:var(--ink-2);
+    border-left:3px solid transparent}
+  nav.toc a:hover{background:var(--brand-soft); color:var(--brand)}
+  nav.toc a.sub{padding-left:36px; font-size:13px; color:var(--ink-3)}
+  nav.toc a.active{background:var(--brand-soft); color:var(--brand);
+    border-left-color:var(--brand); font-weight:600}
+
+  main{flex:1; min-width:0; padding:32px 40px 80px; max-width:1000px}
+
+  h2{font-size:22px; margin:44px 0 16px; padding-bottom:10px;
+    border-bottom:2px solid var(--brand); color:var(--brand-dark); scroll-margin-top:76px}
+  h2:first-of-type{margin-top:8px}
+  h3{font-size:17px; margin:28px 0 12px; color:var(--ink); scroll-margin-top:76px}
+  p{margin:10px 0}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0; background:var(--card);
+    font-size:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); border-radius:8px; overflow:hidden}
+  th{background:var(--brand); color:#fff; text-align:left; font-weight:600; padding:10px 14px}
+  td{padding:10px 14px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  .tbl-wrap{overflow-x:auto}
+
+  .callout{border-left:4px solid; border-radius:0 8px 8px 0; padding:12px 16px; margin:16px 0; font-size:14px}
+  .callout p{margin:4px 0}
+  .callout>strong{display:block; margin-bottom:2px}
+  .c-info{border-color:var(--brand); background:var(--brand-soft); color:#1e3a8a}
+  .c-warn{border-color:var(--warn); background:var(--warn-bg); color:#7c2d12}
+  .c-tip {border-color:var(--tip);  background:var(--tip-bg);  color:#065f46}
+
+  ol.steps{counter-reset:s; list-style:none; padding:0; margin:16px 0}
+  ol.steps>li{counter-increment:s; position:relative; padding:12px 16px 12px 52px;
+    background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px}
+  ol.steps>li::before{content:counter(s); position:absolute; left:14px; top:12px;
+    width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff;
+    font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center}
+
+  code{background:#f1f5f9; padding:2px 7px; border-radius:5px;
+    font-family:"Consolas","Monaco",monospace; font-size:13px; color:#be123c}
+
+  /* ── 畫面示意圖容器 ── */
+  figure.shot{
+    margin:20px 0 24px; background:#eef1f5; border:1px solid var(--line);
+    border-radius:12px; padding:16px; overflow-x:auto;
+  }
+  figure.shot figcaption{
+    font-size:12px; color:var(--ink-3); margin-bottom:12px;
+    display:flex; align-items:center; gap:8px;
+  }
+  figure.shot figcaption .tag{
+    background:#64748b; color:#fff; border-radius:999px;
+    padding:2px 9px; font-size:11px; font-weight:700; letter-spacing:.5px;
+  }
+  .ui{
+    background:#fff; border-radius:10px; overflow:hidden;
+    box-shadow:0 4px 16px rgba(15,23,42,.12); font-size:13px;
+    min-width:520px;
+  }
+  /* 標註圓點 */
+  .pin{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:20px; height:20px; border-radius:50%; background:#dc2626; color:#fff;
+    font-size:11px; font-weight:700; flex-shrink:0; vertical-align:middle;
+  }
+  .pin-abs{position:absolute; z-index:5; box-shadow:0 0 0 2px #fff}
+  .legend{list-style:none; padding:0; margin:10px 0 0; font-size:13.5px}
+  .legend li{display:flex; gap:9px; align-items:flex-start; margin:7px 0; color:var(--ink-2)}
+
+  /* ── 系統 UI 重繪元件（配色取自系統實際色票）── */
+  .ui-login{padding:26px 22px; text-align:center; background:#fff}
+  .ui-login .logo{width:42px;height:42px;border-radius:12px;background:#eff6ff;
+    display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:8px}
+  .ui-login h4{margin:4px 0 2px; font-size:16px; color:#1e293b}
+  .ui-login .sub{font-size:11.5px;color:#94a3b8;margin-bottom:16px}
+  .fld{text-align:left; margin-bottom:11px; position:relative}
+  .fld label{display:block;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:4px}
+  .box{border:1px solid var(--sms-border); border-radius:9px; padding:8px 11px;
+    background:#fff; color:#334155; font-size:13px; display:flex; align-items:center; gap:7px}
+  .box.ph{color:#a8b0bd}
+  .btn-primary{width:100%; background:var(--sms-sidebar); color:#fff; border-radius:9px;
+    padding:10px; font-weight:700; font-size:13.5px; text-align:center; margin-top:4px}
+  .hint{background:#eff6ff;border:1px solid #dbeafe;color:#1d4ed8;border-radius:7px;
+    padding:7px 10px;font-size:11.5px;text-align:left;margin-bottom:12px}
+  .rule{background:#f1f5f9;color:#64748b;border-radius:7px;padding:7px 10px;
+    font-size:11px;text-align:left;margin:10px 0}
+
+  /* 班表畫面 */
+  .ui-app{display:flex; min-height:250px}
+  .ui-side{width:120px; background:var(--sms-sidebar); color:#fff; padding:12px 8px; flex-shrink:0}
+  .ui-side .brand{font-size:11.5px;font-weight:700;padding:0 6px 12px;line-height:1.4}
+  .ui-side .brand span{display:block;font-size:9.5px;opacity:.55;font-weight:400}
+  .ui-side .item{display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:999px;
+    font-size:11.5px;color:rgba(255,255,255,.8);margin-bottom:3px}
+  .ui-side .item.on{background:#fff;color:var(--sms-sidebar);font-weight:700}
+  .ui-main{flex:1; background:#fff; padding:12px 14px; min-width:0}
+
+  .banner{border:1px solid; border-radius:9px; padding:8px 11px; font-size:12px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+  .banner.ok{background:#ecfdf5;border-color:#6ee7b7;color:#065f46}
+  .banner.no{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+  .banner b{font-size:12.5px}
+
+  table.sched{width:100%;border-collapse:collapse;font-size:11.5px;
+    box-shadow:none;border-radius:8px;overflow:hidden;margin:0}
+  table.sched th{background:var(--sms-sidebar);color:#fff;padding:5px 4px;text-align:center;
+    font-weight:600;font-size:11px;line-height:1.35}
+  table.sched th.nm{text-align:left;padding-left:10px;width:112px}
+  table.sched td{border-top:1px solid #eef2f7;padding:0;text-align:center;height:40px}
+  table.sched td.nm{text-align:left;padding:5px 10px;background:#fff;line-height:1.35}
+  table.sched td.nm b{display:block;font-size:12px;color:#1e293b}
+  table.sched td.nm span{font-size:10px;color:#94a3b8;font-family:Consolas,monospace}
+  .cd{display:block;width:100%;height:100%;line-height:40px;font-weight:700;font-size:12.5px}
+  .cd-v{background:#dcfce7;color:#14532d}
+  .cd-r{background:#ffedd5;color:#7c2d12}
+  .cd-e{background:#fef9c3;color:#713f12}
+  .cd-n{background:#dbeafe;color:#1e3a8a}
+  .cd-hl{outline:2px solid #dc2626; outline-offset:-2px; position:relative}
+
+  .cell{display:inline-flex;align-items:center;justify-content:center;min-width:34px;
+    padding:3px 9px;border-radius:6px;font-weight:700;font-size:14px;margin:0 2px}
+  .cell-v{background:#dcfce7;color:#166534}
+  .cell-r{background:#ffedd5;color:#9a3412}
+  .cell-e{background:#fef9c3;color:#854d0e}
+  .cell-n{background:#dbeafe;color:#1e40af}
+
+  .toast{border-radius:9px;padding:9px 13px;font-size:12.5px;font-weight:600;
+    display:inline-flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(15,23,42,.14)}
+  .toast-err{background:#dc2626;color:#fff}
+  .toast-warn{background:#f59e0b;color:#fff}
+
+  .beforeafter{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:center}
+  .ba-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;text-align:center}
+  .ba-box .lbl{font-size:11px;color:#94a3b8;margin-bottom:7px}
+  .ba-arrow{font-size:22px;color:#94a3b8}
+
+  .flow{background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 18px; margin:16px 0; font-family:"Consolas",monospace;
+    font-size:13px; color:var(--ink-2); white-space:pre; overflow-x:auto; line-height:1.9}
+  .faq-q{font-weight:700; color:var(--brand-dark); margin:22px 0 4px}
+  .faq-q::before{content:"Q"; display:inline-block; background:var(--brand); color:#fff;
+    width:20px;height:20px;border-radius:50%;text-align:center;line-height:20px;
+    font-size:12px;margin-right:8px}
+  .faq-a{margin:0 0 6px 28px; color:var(--ink-2)}
+
+  footer{border-top:1px solid var(--line); margin-top:56px; padding:20px 40px 40px;
+    font-size:12px; color:var(--ink-3); text-align:center}
+
+  @media (max-width:900px){
+    #navToggle{display:block}
+    nav.toc{position:fixed; top:60px; left:0; z-index:40; height:calc(100vh - 60px);
+      transform:translateX(-100%); transition:transform .25s; box-shadow:4px 0 16px rgba(0,0,0,.12)}
+    nav.toc.open{transform:translateX(0)}
+    main{padding:22px 16px 60px}
+    header.top h1{font-size:15px}
+    header.top .ver{width:100%; margin-left:0}
+  }
+  @media print{
+    nav.toc,#navToggle{display:none}
+    header.top{position:static}
+    main{max-width:none}
+    figure.shot{break-inside:avoid}
+  }
+</style>
+
+<header class="top">
+  <button id="navToggle" aria-label="開啟目錄">☰</button>
+  <div>
+    <div class="co">日翊文化行銷股份有限公司　|　物流本部</div>
+    <h1>委外人力排班作業平台　日翊員工／管理員操作手冊</h1>
+  </div>
+  <div class="ver">v1.0　|　2026/09/07</div>
+</header>
+
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="toc-title">目錄</div>
+  <a href="#s1">1. 系統基本資訊</a>
+  <a href="#s2">2. 登入與角色</a>
+  <a href="#s3">3. 共通操作：篩選列</a>
+  <a href="#s4">4. 儀表板</a>
+  <a href="#s5">5. 班表管理</a>
+  <a href="#s5-1" class="sub">5.1 認識班表畫面</a>
+  <a href="#s5-2" class="sub">5.2 編輯班別</a>
+  <a href="#s5-3" class="sub">5.3 匯入班表</a>
+  <a href="#s5-4" class="sub">5.4 一週一例與連續上班警示</a>
+  <a href="#s5-5" class="sub">5.5 國定假日轉換與匯出</a>
+  <a href="#s6">6. 點名表</a>
+  <a href="#s6-1" class="sub">6.1 點名</a>
+  <a href="#s6-2" class="sub">6.2 匯入臨時人力</a>
+  <a href="#s6-3" class="sub">6.3 統計與回報</a>
+  <a href="#s7">7. 手機控管</a>
+  <a href="#s8">8. 人員清冊與作業區</a>
+  <a href="#s9">9. 人員班別設定</a>
+  <a href="#s10">10. 報表匯出</a>
+  <a href="#s11">11. 系統設定</a>
+  <a href="#s11-1" class="sub">11.1 每期日期區間</a>
+  <a href="#s11-2" class="sub">11.2 各課別鎖定與開放區間</a>
+  <a href="#s11-3" class="sub">11.3 作業區設定</a>
+  <a href="#s11-4" class="sub">11.4 其他設定</a>
+  <a href="#s12">12. 帳號與權限管理</a>
+  <a href="#s13">13. 常見問題 FAQ</a>
+  <a href="#s14">14. 版本紀錄</a>
+</nav>
+
+<main>
+<style>
+  /* 管理端手冊專用的畫面示意元件（沿用系統實際色票） */
+  .fbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#fff;
+    border-bottom:1px solid var(--sms-border);padding:8px 10px;font-size:11.5px;color:#475569}
+  .fbar .lb{color:#64748b;font-weight:600;white-space:nowrap}
+  .sel{border:1px solid var(--sms-border);border-radius:8px;padding:4px 8px;background:#fff;
+    color:#1e293b;font-size:11.5px;display:inline-flex;align-items:center;gap:14px;white-space:nowrap}
+  .sel::after{content:"▾";color:#94a3b8;font-size:10px}
+  .sel.on{border-color:#2563eb;background:#eff6ff;color:#1d4ed8;font-weight:700}
+  .sel.off{color:#a8b0bd;background:#f8fafc}
+  .chip{border:1px solid var(--sms-border);border-radius:8px;padding:3px 9px;font-size:11px;color:#64748b;background:#fff}
+
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--sms-border);margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:6px 14px;font-size:12px;color:#64748b;border:1px solid transparent;border-bottom:0;
+    border-radius:9px 9px 0 0;display:inline-flex;align-items:center;gap:6px}
+  .tab.on{background:#fff;border-color:var(--sms-border);color:#1d4ed8;font-weight:700;
+    box-shadow:0 -2px 0 #2563eb inset}
+  .tab .n{background:#e2e8f0;color:#475569;border-radius:999px;padding:0 7px;font-size:10.5px;font-weight:700}
+  .tab.on .n{background:#dbeafe;color:#1d4ed8}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .kpi{border:1px solid var(--sms-border);border-left:3px solid #2563eb;border-radius:10px;
+    padding:9px 11px;background:#fff}
+  .kpi .t{font-size:10.5px;color:#94a3b8}
+  .kpi .v{font-size:21px;font-weight:800;color:#1e293b;line-height:1.3}
+  .kpi .f{font-size:10px;color:#64748b}
+  .kpi.g{border-left-color:#059669}.kpi.o{border-left-color:#f59e0b}.kpi.c{border-left-color:#0891b2}
+
+  table.grid{width:100%;border-collapse:collapse;font-size:11.5px;margin:0;box-shadow:none;border-radius:8px;overflow:hidden}
+  table.grid th{background:#f1f5f9;color:#64748b;font-size:10.5px;font-weight:700;
+    letter-spacing:.5px;padding:6px 9px;text-align:left}
+  table.grid td{border-top:1px solid #eef2f7;padding:6px 9px;color:#334155;vertical-align:middle}
+  .tag{display:inline-block;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:600}
+  .tag-p{background:#f3e8ff;color:#7e22ce}.tag-g{background:#dcfce7;color:#15803d}
+  .tag-b{background:#dbeafe;color:#1d4ed8}.tag-o{background:#ffedd5;color:#c2410c}
+  .tag-r{background:#fee2e2;color:#b91c1c}.tag-s{background:#f1f5f9;color:#64748b}
+
+  .sec{border:1px solid var(--sms-border);border-radius:11px;padding:10px 13px;margin-bottom:7px;background:#fff}
+  .sec .st{font-size:12.5px;font-weight:700;color:#1e293b}
+  .sec .sd{font-size:10.5px;color:#94a3b8;margin-top:2px}
+  .sec.open{border-color:#c7d2fe;background:#fbfcff}
+
+  .lockgrid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}
+  .slot{border:1px solid #e2e8f0;border-radius:5px;text-align:center;font-size:9.5px;
+    padding:4px 0;color:#cbd5e1;background:#fff}
+  .slot.used{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8;font-weight:700}
+  .slot.temp{background:#fef3c7;border-color:#fcd34d;color:#92400e;font-weight:700}
+
+  .anno{position:relative}
+  .rowhl{outline:2px solid #dc2626;outline-offset:-2px;border-radius:6px}
+</style>
+
+
+
+<div class="callout c-info">
+  <strong>這本手冊寫給誰</strong>
+  <p>本手冊供<strong>日翊員工</strong>與<strong>系統管理員</strong>使用，說明委外人力排班作業平台管理端的全部功能。</p>
+  <p>委外幹部（廠商）與委外人員另有專屬手冊，可見功能較少，操作方式相同。</p>
+</div>
+
+<div class="callout c-tip">
+  <strong>關於本手冊的畫面</strong>
+  <p>書中所有畫面均為<strong>示意圖</strong>，以系統實際的版面與配色重繪，人名、員工編號與數字為虛構範例。實際畫面會因您的倉別與資料內容而不同。</p>
+</div>
+
+<h2 id="s1">1. 系統基本資訊</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:170px">項目</th><th>內容</th></tr>
+  <tr><td>系統名稱</td><td>委外人力排班作業平台</td></tr>
+  <tr><td>系統代號</td><td>VSP（Vendor Shift Platform）</td></tr>
+  <tr><td>系統用途</td><td>委外人力的班表編排、出勤點名、手機控管與報表產出</td></tr>
+  <tr><td>適用對象</td><td>本手冊適用<strong>日翊員工／管理員</strong></td></tr>
+  <tr><td>網路存取方式</td><td><strong>走網際網路</strong>——可從外部網路連線，不需連公司網路或 VPN</td></tr>
+  <tr><td>使用裝置</td><td>電腦（建議）、平板、手機皆可；點名表與手機控管已針對手機最佳化</td></tr>
+  <tr><td>系統網址（正式）</td><td><a href="https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app">https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app</a></td></tr>
+  <tr><td>資料儲存</td><td>雲端資料庫，全公司共用同一份資料；編輯後約 2 秒自動存檔，另有背景同步</td></tr>
+</table>
+</div>
+
+<div class="callout c-warn">
+  <strong>共用資料的觀念</strong>
+  <p>所有人看到的是<strong>同一份資料</strong>。您在畫面上的修改，其他人重新整理後就會看到；同樣地，別人的修改也會同步到您的畫面。</p>
+  <p>因此請避免多人同時大批修改同一課的班表，以免互相覆蓋。</p>
+</div>
+
+<h2 id="s2">2. 登入與角色</h2>
+
+<h3>2.1 登入畫面</h3>
+<p>開啟系統網址後，先選擇<strong>登入身份</strong>，再輸入帳號密碼。日翊員工請選「日翊員工」，使用公司 AD 帳號（與電腦登入帳號相同）。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 1</span>登入畫面</figcaption>
+  <div class="ui" style="max-width:360px;margin:0 auto">
+    <div class="ui-login">
+      <div class="logo">🗂️</div>
+      <h4>委外人力排班作業平台</h4>
+      <div class="sub">歡迎回來，請選擇身分後登入</div>
+      <div class="fld"><label>登入身分</label><div class="box">日翊員工<span style="margin-left:auto;color:#94a3b8">▾</span></div>
+        <span class="pin pin-abs" style="left:-9px;top:22px">1</span></div>
+      <div class="fld"><label>AD 帳號</label><div class="box ph">請輸入公司帳號</div>
+        <span class="pin pin-abs" style="left:-9px;top:22px">2</span></div>
+      <div class="fld"><label>密碼</label><div class="box ph">請輸入密碼</div></div>
+      <div class="btn-primary">登入</div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>登入身分</strong>：日翊員工／委外幹部／委外人員（大肚倉另有「臨時人力」）。選錯身分會登入失敗。</span></li>
+    <li><span class="pin">2</span><span><strong>AD 帳號</strong>：即公司電腦的登入帳號，密碼與 AD 同步，<strong>不需另外設定</strong>；改了 AD 密碼這裡就跟著改。</span></li>
+  </ul>
+</figure>
+
+<h3>2.2 四種角色</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:110px">角色</th><th style="width:120px">登入方式</th><th>可做的事</th></tr>
+  <tr><td><span class="tag tag-r">管理員</span></td><td>AD 帳號</td><td>全部功能、全部倉別，含帳號與權限管理、全域系統設定</td></tr>
+  <tr><td><span class="tag tag-p">日翊</span></td><td>AD 帳號</td><td>依「可用倉別」限定；可編輯所轄倉的班表、點名、清冊，及所轄倉的課別鎖定與開放區間</td></tr>
+  <tr><td><span class="tag tag-b">委外幹部</span></td><td>自行申請、管理員核准</td><td>只看得到自己廠商的人；可代排班表、點名，功能由管理員逐項開放</td></tr>
+  <tr><td><span class="tag tag-o">委外人員</span></td><td>員工編號＋自設密碼</td><td>只看自己的班表，一週可自選一天休假</td></tr>
+</table>
+</div>
+
+<h2 id="s3">3. 共通操作：篩選列</h2>
+<p>畫面最上方那一列是<strong>全系統共用的篩選條件</strong>，切換分頁後不會重置。幾乎每個分頁看到的資料範圍，都由這一列決定。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 2</span>頂端篩選列</figcaption>
+  <div class="ui">
+    <div class="fbar">
+      <span class="lb">🏭 倉別：</span><span class="sel on">大肚倉</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">課別：</span><span class="sel on">L035 大肚理貨課</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">組別：</span><span class="sel">全部組別</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">作業區：</span><span class="sel">全部作業區</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">廠商：</span><span class="sel">全部廠商</span>
+      <span class="chip">清除篩選</span>
+    </div>
+    <div style="padding:26px 14px;color:#cbd5e1;font-size:12px;text-align:center">（以下為各分頁內容）</div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>由左往右層層收斂</strong>：選了倉別才會出現該倉的課別，選了課別才會出現該課的組別。換倉別時，下層條件會自動清空。</span></li>
+    <li><span class="pin">2</span><span><strong>作業區</strong>：於人員清冊逐人指派（O2O、團預購、收發、廠退、外場、小白單…）。選「未設定」可快速找出還沒指派的人。</span></li>
+    <li><span class="pin">3</span><span><strong>清除篩選</strong>：一次還原成全部條件。找不到人時請先按這顆。</span></li>
+  </ul>
+</figure>
+
+<div class="callout c-warn">
+  <strong>找不到人時，九成是篩選條件沒清</strong>
+  <p>例如班表上少了幾個人、點名表人數對不起來，請先確認上方是不是還停在某一課或某一組。</p>
+</div>
+
+<h2 id="s4">4. 儀表板</h2>
+<p>登入後的第一個畫面，用來快速掌握當日人力狀況。上方四張卡片會隨篩選條件與查詢日期變動。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 3</span>儀表板</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">🏭 倉別：</span><span class="sel on">大肚倉</span>
+      <span class="lb">課別：</span><span class="sel">全部課別</span>
+      <span style="margin-left:auto" class="chip">查詢日期：2026 年 9 月 7 日</span><span class="chip" style="background:#dcfce7;border-color:#86efac;color:#15803d">今日</span></div>
+    <div style="padding:12px 14px">
+      <div class="kpis">
+        <div class="kpi"><div class="t">長期在職總人數</div><div class="v">142</div><div class="f">在職中　5 廠商</div></div>
+        <div class="kpi c"><div class="t">今日應出勤（排班）</div><div class="v">65</div><div class="f" style="color:#dc2626">↓ 13 較上週</div></div>
+        <div class="kpi g"><div class="t">今日實際到班（長期）</div><div class="v">34</div><div class="f">✓ 已點名　排班 65 人</div></div>
+        <div class="kpi o"><div class="t">今日實際到班（臨時）</div><div class="v">12</div><div class="f">✓ 已點名</div></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <div style="flex:1;border:1px solid var(--sms-border);border-radius:10px;padding:10px 12px">
+          <div style="font-size:11.5px;font-weight:700;color:#334155">各廠商在職人力分布</div>
+          <div style="font-size:10px;color:#94a3b8;margin-bottom:8px">今日在職 142 人</div>
+          <div style="height:74px;display:flex;align-items:flex-end;gap:6px">
+            <div style="flex:1;height:70%;background:#2563eb;border-radius:4px"></div>
+            <div style="flex:1;height:45%;background:#059669;border-radius:4px"></div>
+            <div style="flex:1;height:30%;background:#f59e0b;border-radius:4px"></div>
+            <div style="flex:1;height:22%;background:#8b5cf6;border-radius:4px"></div>
+          </div>
+        </div>
+        <div style="flex:1;border:1px solid var(--sms-border);border-radius:10px;padding:10px 12px">
+          <div style="font-size:11.5px;font-weight:700;color:#334155">各廠商到班率（9/7・今日）</div>
+          <div style="font-size:10px;color:#94a3b8;margin-bottom:8px">■ 長期到班率　■ 臨時到班率</div>
+          <div style="font-size:10.5px;color:#475569;line-height:2">
+            三彥　<span style="display:inline-block;width:58%;height:9px;background:#0d9488;border-radius:3px;vertical-align:middle"></span> 58%<br>
+            承奕　<span style="display:inline-block;width:57%;height:9px;background:#0d9488;border-radius:3px;vertical-align:middle"></span> 57%<br>
+            信邦　<span style="display:inline-block;width:63%;height:9px;background:#0d9488;border-radius:3px;vertical-align:middle"></span> 63%
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>應出勤</strong>來自班表（當日班別為「V」的人數）；<strong>實際到班</strong>來自點名表。兩者差距即為未到人數。</span></li>
+    <li><span class="pin">2</span><span>長期與臨時人力<strong>分開統計</strong>。臨時人力來自點名表的派工匯入。</span></li>
+  </ul>
+</figure>
+
+<h2 id="s5">5. 班表管理</h2>
+
+<h3 id="s5-1">5.1 認識班表畫面</h3>
+<figure class="shot">
+  <figcaption><span class="tag">畫面 4</span>班表管理</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">倉別：</span><span class="sel on">大肚倉</span><span class="lb">課別：</span><span class="sel on">L037 大肚運務課</span><span class="lb">組別：</span><span class="sel on">運務組-日班</span></div>
+    <div style="padding:10px 12px">
+      <div class="banner no" style="position:relative">📅 <b>本期：2026-9-7 ～ 2026-10-4</b>（+1 期）　|　大肚運務課 開放排班：2026-9-1 ～ 2026-9-20
+        <span class="pin pin-abs" style="left:-9px;top:8px">1</span></div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px">
+        <span class="chip">◀</span><span class="chip" style="background:#f1f5f9">📅 2026-9-7 ～ 2026-10-4</span><span class="chip">▶</span>
+        <span class="chip" style="background:#334155;color:#fff;border-color:#334155">✨ 功能 ▾</span>
+        <span class="chip" style="background:#1d4ed8;color:#fff;border-color:#1d4ed8">📥 匯入班表</span>
+        <span class="chip" style="background:#ea580c;color:#fff;border-color:#ea580c">✏️ 修正一週一例</span>
+      </div>
+      <div style="font-size:10.5px;color:#64748b;margin-bottom:7px">
+        <span class="cell cell-v" style="font-size:11px;min-width:24px;padding:1px 7px">V</span> 上班
+        <span class="cell cell-e" style="font-size:11px;min-width:24px;padding:1px 7px">例</span> 例休
+        <span class="cell cell-r" style="font-size:11px;min-width:24px;padding:1px 7px">休</span> 休假
+        <span class="cell cell-n" style="font-size:11px;min-width:24px;padding:1px 7px">國</span> 國定假日
+        　（點擊格子切換班別）</div>
+      <table class="sched">
+        <tr><th class="nm">人員姓名</th><th>9/7<br>一</th><th>9/8<br>二</th><th>9/9<br>三</th><th>9/10<br>四</th><th>9/11<br>五</th><th style="color:#fca5a5">9/12<br>六</th><th style="color:#fca5a5">9/13<br>日</th><th>9/14<br>一</th></tr>
+        <tr><td class="nm"><b>趙子濱</b><span>CY11304034</span></td>
+          <td><span class="cd cd-r cd-hl">休</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-e">例</span></td>
+          <td><span class="cd cd-r">休</span></td><td><span class="cd cd-v">V</span></td></tr>
+        <tr><td class="nm"><b>陳明仁</b><span>SY11301255</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-e">例</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td>
+          <td><span class="cd cd-r">休</span></td><td style="background:#f1f5f9"><span class="cd" style="color:#cbd5e1">–</span></td></tr>
+        <tr style="background:#f8fafc"><td class="nm" style="background:#f8fafc"><b style="font-size:11px;color:#64748b">出勤人數</b></td>
+          <td>1</td><td>2</td><td>1</td><td>2</td><td>2</td><td>1</td><td>0</td><td>1</td></tr>
+      </table>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>上方橫幅</strong>：左邊是「每期日期區間」算出的本期起訖，右邊是這一課的<strong>開放排班區間</strong>。未設定開放區間的課，橫幅會顯示「僅供查看，不可編輯」。</span></li>
+    <li><span class="pin">2</span><span><strong>今日整欄有紅框</strong>（示意圖為 9/7），方便對位。</span></li>
+    <li><span class="pin">3</span><span><strong>灰底的日期</strong>（示意圖為陳明仁的 9/14）代表<strong>尚未開放排班</strong>，超出該課開放區間，不能編輯也不列入統計。</span></li>
+    <li><span class="pin">4</span><span>最底下是<strong>統計列</strong>：總人數／出勤人數／休假人數，隨編輯即時更新。</span></li>
+  </ul>
+</figure>
+
+<h3 id="s5-2">5.2 編輯班別</h3>
+<ol class="steps">
+  <li>上方篩選列選好<strong>倉別 → 課別 →（組別）</strong>。</li>
+  <li>確認橫幅顯示的開放區間<strong>涵蓋要修改的日期</strong>，且該課未被鎖定。</li>
+  <li><strong>直接點格子</strong>即可循環切換：V → 例 → 休 → 國 → 空白 → V。</li>
+  <li>改完不必按儲存，系統約 <strong>2 秒自動存檔</strong>；右上角會出現存檔提示。</li>
+</ol>
+<div class="callout c-info">
+  <strong>批次操作</strong>
+  <p>勾選人員左側的核取方塊後，可使用「功能」選單內的批次工具；「一鍵轉換國」會把設定過的國定假日整批帶入班表。</p>
+</div>
+
+<h3 id="s5-3">5.3 匯入班表</h3>
+<ol class="steps">
+  <li>按 <strong>下載匯入範本</strong>，取得含人員清單的 Excel。</li>
+  <li>在 Excel 內填入班別代號（V／例／休／國），<strong>不要更動員工編號欄</strong>。</li>
+  <li>按 <strong>匯入班表</strong> 選檔上傳，畫面會先顯示比對結果再確認寫入。</li>
+</ol>
+<div class="callout c-warn">
+  <strong>匯入只會覆蓋檔案內有值的日期</strong>
+  <p>空白儲存格不會清掉系統既有的班別。若要清空某一天，請在系統畫面上把格子點成空白。</p>
+</div>
+
+<h3 id="s5-4">5.4 一週一例與連續上班警示</h3>
+<p>系統依勞基法協助檢核兩件事：</p>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">檢核項目</th><th>系統行為</th></tr>
+  <tr><td>一週一例</td><td>每個曆週至少要有一天「例」。按<strong>修正一週一例</strong>可自動補上缺少的例休。</td></tr>
+  <tr><td>連續上班警示</td><td>連續排 <strong>6 天（含）以上</strong>「V」時，該區段格子以<strong>粉紅底</strong>提醒；連續 <strong>7 天（含）以上</strong>時，<strong>人員姓名再變成紅字加粗</strong>（已違反規定）。</td></tr>
+</table>
+</div>
+<div class="callout c-warn">
+  <strong>兩段式警示</strong>
+  <p><span style="display:inline-block;width:14px;height:14px;background:#fbcfe8;border-radius:3px;vertical-align:-2px"></span> <strong>粉紅底＝滿 6 天，提醒</strong>——快到上限了，請留意。</p>
+  <p><span style="color:#dc2626;font-weight:700">紅色姓名</span> <strong>＝滿 7 天，違規</strong>——必須調整。滑鼠移到姓名上會顯示實際連續天數。</p>
+  <p>計算會<strong>跨越週期邊界</strong>（上一期末段接本期開頭），但不會把尚未開放排班的未來日期算進去。</p>
+</div>
+<figure class="shot">
+  <figcaption><span class="tag">畫面 5</span>連續上班警示（粉紅底 ＋ 姓名紅字）</figcaption>
+  <div class="ui" style="min-width:auto;padding:12px">
+    <table class="sched">
+      <tr><th class="nm">人員姓名</th><th>9/1</th><th>9/2</th><th>9/3</th><th>9/4</th><th>9/5</th><th>9/6</th><th>9/7</th><th>9/8</th></tr>
+      <tr><td class="nm"><b style="color:#334155">陳美玉</b><span>CY11206606</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd cd-e">例</span></td><td><span class="cd cd-v">V</span></td></tr>
+      <tr><td class="nm"><b style="color:#dc2626;font-weight:800">洪維亨</b><span>CY11205972</span>
+          <span class="pin pin-abs" style="left:-9px;top:12px">2</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td>
+        <td><span class="cd" style="background:#fbcfe8;color:#831843">V</span></td><td><span class="cd cd-e">例</span></td></tr>
+    </table>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>陳美玉</strong>：9/1～9/6 連續 <strong>6 天</strong>，該區段粉紅底提醒，姓名維持黑字。</span></li>
+    <li><span class="pin">2</span><span><strong>洪維亨</strong>：9/1～9/7 連續 <strong>7 天</strong>，除了粉紅底，<strong>姓名變紅字加粗</strong>表示已違規。</span></li>
+    <li><span class="pin">3</span><span>在該區段中插入一天「例」或「休」即可解除警示。</span></li>
+    <li><span class="pin">4</span><span>警示<strong>只看已開放排班的日期</strong>，尚未開放的未來日期不會誤報。</span></li>
+  </ul>
+</figure>
+
+<h3 id="s5-5">5.5 國定假日轉換與匯出</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">功能</th><th>說明</th></tr>
+  <tr><td>顯示記號</td><td>切換是否在格子上顯示國定假日短名（如「中秋」）。</td></tr>
+  <tr><td>一鍵轉換國</td><td>把系統設定中已勾選的國定假日，整批寫入班表為「國」。</td></tr>
+  <tr><td>代碼轉換匯出</td><td>把班別代號轉成人資系統可讀的班別代碼後匯出 Excel。</td></tr>
+  <tr><td>列印報表</td><td>產生可直接列印的班表版面。</td></tr>
+</table>
+</div>
+
+<h2 id="s6">6. 點名表</h2>
+<p>點名表共有五個子頁：<strong>點名／統計／回報／維護／匯入</strong>。</p>
+
+<h3 id="s6-1">6.1 點名</h3>
+<figure class="shot">
+  <figcaption><span class="tag">畫面 6</span>點名表－點名</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">倉別：</span><span class="sel on">大肚倉</span><span class="lb">課別：</span><span class="sel on">L035 大肚理貨課</span><span class="lb">組別：</span><span class="sel">全部組別</span></div>
+    <div style="padding:10px 12px">
+      <div class="tabs"><span class="tab on">點名</span><span class="tab">統計</span><span class="tab">回報</span><span class="tab">維護</span><span class="tab">匯入</span></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:9px">
+        <span class="chip">📅 點名出勤日期　2026-09-07</span>
+        <span class="chip" style="background:#dcfce7;border-color:#86efac;color:#15803d">實到 34/65 人</span>
+        <span class="chip">🔄 同步</span><span class="chip">👤 手動新增</span>
+      </div>
+      <div style="border:1px solid #bfdbfe;border-radius:10px;overflow:hidden;margin-bottom:8px">
+        <div style="background:#2563eb;color:#fff;padding:6px 11px;font-size:11.5px;font-weight:700;display:flex;gap:8px;align-items:center">
+          👥 三彥 <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:0 7px;font-size:10px">7/12 人</span>
+          <span style="opacity:.75;font-size:10px">長期</span>
+          <span style="margin-left:auto;font-size:10.5px">全選到班</span></div>
+        <div style="padding:7px 10px;display:flex;gap:9px;align-items:center;font-size:11.5px">
+          <span style="width:15px;height:15px;border:2px solid #2563eb;border-radius:4px;background:#2563eb;color:#fff;font-size:10px;text-align:center;line-height:13px">✓</span>
+          <span><b style="font-size:13px">柯麗蘭</b><br><span style="font-size:10px;color:#94a3b8">SY10800390　🕐 09:00~18:00</span></span>
+          <span class="sel" style="margin-left:auto">正常到班（無遲到早退）</span></div>
+        <div style="padding:7px 10px;display:flex;gap:9px;align-items:center;font-size:11.5px;background:#fff1f2;border-top:1px solid #f1f5f9">
+          <span style="width:15px;height:15px;border:2px solid #cbd5e1;border-radius:4px"></span>
+          <span><b style="font-size:13px">陳郁如</b><br><span style="font-size:10px;color:#94a3b8">SY11301398　🕐 18:00~00:00</span></span>
+          <span class="sel off" style="margin-left:auto">請選假別</span>
+          <span class="pin pin-abs" style="right:-9px;top:12px">2</span></div>
+      </div>
+      <div style="border:1px solid #fcd34d;border-radius:10px;overflow:hidden" class="anno">
+        <div style="background:#f59e0b;color:#fff;padding:6px 11px;font-size:11.5px;font-weight:700">
+          👥 三彥 <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:0 7px;font-size:10px">0/1 人</span>
+          <span style="opacity:.8;font-size:10px">臨時</span></div>
+        <div style="padding:7px 10px;display:flex;gap:9px;align-items:center;font-size:11.5px;background:#fff7ed">
+          <span style="width:15px;height:15px;border:2px solid #cbd5e1;border-radius:4px"></span>
+          <span><b style="font-size:13px">林嘉寶</b><br><span style="font-size:10px;color:#94a3b8">派工匯入</span></span>
+          <span class="sel off" style="margin-left:auto">請選假別</span>
+          <span class="pin pin-abs" style="left:-9px;top:6px">3</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>依廠商分卡</strong>，卡片標題顯示「已到／應到」人數，可整卡「全選到班」。</span></li>
+    <li><span class="pin">2</span><span><strong>未勾到班的人列底色為淡紅</strong>，右側下拉要選假別（事假、病假、特休…）；已到班則選遲到早退狀態。</span></li>
+    <li><span class="pin">3</span><span><strong>橘色卡＝臨時人力</strong>，來自「匯入」子頁的派工名單，與長期人員分開統計。</span></li>
+  </ul>
+</figure>
+
+<h3 id="s6-2">6.2 匯入臨時人力</h3>
+
+<div class="callout c-info">
+  <strong>檔案來源</strong>
+  <p>匯入的檔案為<strong>委外人力系統</strong>的：</p>
+  <div class="flow">派工模組 → 派工管理 → 派工申請 → 匯出「派工管理職缺狀態表」</div>
+  <p>匯出的 Excel 不需另外整理，直接上傳即可；系統會自動辨識「報到日期」「報名狀態」「姓名」「廠商」四個欄位。</p>
+</div>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 7</span>點名表－匯入派工表</figcaption>
+  <div class="ui">
+    <div class="fbar" style="position:relative;padding-right:34px"><span class="lb">倉別：</span><span class="sel on">大肚倉</span><span class="lb">課別：</span><span class="sel on">L037 大肚運務課</span>
+      <span class="lb">組別：</span><span class="sel on">運務組-日班</span>
+      <span class="pin pin-abs" style="right:8px;top:8px">1</span></div>
+    <div style="padding:10px 12px;background:#f8fafc">
+      <div class="tabs"><span class="tab">點名</span><span class="tab">統計</span><span class="tab">回報</span><span class="tab">維護</span><span class="tab on">匯入</span></div>
+      <div style="border:1px solid var(--sms-border);border-radius:11px;background:#fff;padding:12px 14px">
+        <div style="font-size:13px;font-weight:700;color:#334155">匯入派工表</div>
+        <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">支援 Excel (.xlsx) 檔案。系統自動識別「報到日期（民國年）」、「報名狀態＝成功」，匯入為臨時人員。</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;position:relative">
+          <span class="pin pin-abs" style="left:-9px;top:16px">2</span>
+          <div><div style="font-size:10px;font-weight:600;color:#475569;margin-bottom:3px">匯入起日</div>
+            <span class="box" style="font-size:11.5px;padding:5px 9px">2026-09-07</span></div>
+          <div><div style="font-size:10px;font-weight:600;color:#475569;margin-bottom:3px">匯入迄日</div>
+            <span class="box" style="font-size:11.5px;padding:5px 9px">2026-09-11</span></div>
+        </div>
+        <div style="margin-top:11px;background:#f0fdfa;border:1px solid #99f6e4;color:#1d4ed8;
+                    border-radius:8px;padding:6px 10px;font-size:11.5px;position:relative">
+          ✅ 匯入組別：運務組-日班
+          <span class="pin pin-abs" style="left:-9px;top:5px">3</span></div>
+        <div style="font-size:10px;font-weight:600;color:#475569;margin:11px 0 5px">上傳派工表檔案</div>
+        <div style="border:2px dashed #93c5fd;border-radius:11px;padding:12px 14px;display:flex;gap:10px;align-items:center">
+          <span style="font-size:20px">📂</span>
+          <div><div style="font-size:11.5px;font-weight:600;color:#334155">點擊選擇 Excel 檔案</div>
+            <div style="font-size:10px;color:#94a3b8">支援 .xlsx</div></div>
+        </div>
+      </div>
+      <div style="border:1px solid var(--sms-border);border-radius:11px;background:#fff;padding:10px 14px;margin-top:8px;font-size:10.5px;color:#64748b">
+        <div style="font-weight:700;color:#475569;margin-bottom:5px">📋 必備欄位說明</div>
+        <div>• <b>報到日期</b>：民國年格式（113/07/15）自動轉換西元年</div>
+        <div>• <b>報名狀態</b>：只匯入標示「成功」的資料</div>
+        <div>• <b>姓名／名字</b>：人員名稱（必填）</div>
+        <div>• <b>廠商／公司</b>：派工單位</div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>先在上方篩選列選好組別</strong>——這一步決定這批臨時人力歸屬哪一組，也決定之後用倉別／課別篩選找不找得到他們。</span></li>
+    <li><span class="pin">2</span><span><strong>匯入起日／迄日</strong>：只讀取這個區間內的報到日期，區間外的資料列會被略過。</span></li>
+    <li><span class="pin">3</span><span><strong>綠色提示列＝組別已選定</strong>。若還沒選組別，這裡會變成琥珀色的「⚠️ 請先在上方篩選列選擇組別」，上傳區也會反灰無法點選。</span></li>
+  </ul>
+</figure>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 8</span>解析結果預覽與確認匯入</figcaption>
+  <div class="ui">
+    <div style="padding:12px 14px;background:#f8fafc">
+      <div style="border:1px solid var(--sms-border);border-radius:11px;background:#fff;padding:12px 14px">
+        <div style="display:flex;align-items:center;margin-bottom:9px">
+          <span style="font-size:13px;font-weight:700;color:#334155">解析結果預覽</span>
+          <span style="margin-left:auto;background:#dcfce7;color:#15803d;border-radius:999px;
+                       padding:2px 11px;font-size:11.5px;font-weight:700">共 24 筆</span>
+          <span class="pin pin-abs" style="right:-9px;top:8px">1</span></div>
+        <div style="border:1px solid #f1f5f9;border-radius:8px;overflow:hidden;margin-bottom:10px">
+          <table class="grid">
+            <tr><th>報到日期</th><th>姓名</th><th>廠商</th></tr>
+            <tr><td>2026-09-07</td><td><b>林嘉寶</b></td><td style="color:#94a3b8">三彥</td></tr>
+            <tr><td>2026-09-08</td><td><b>林嘉寶</b></td><td style="color:#94a3b8">三彥</td></tr>
+            <tr><td>2026-09-08</td><td><b>王大同</b></td><td style="color:#94a3b8">承奕</td></tr>
+            <tr><td colspan="3" style="text-align:center;color:#cbd5e1">… 僅顯示前 50 筆</td></tr>
+          </table>
+        </div>
+        <div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:8px;
+                    padding:7px 10px;font-size:10.5px;margin-bottom:10px;position:relative">
+          ⚠️ 匯入將覆蓋「運務組-日班」於 2026-09-07 ～ 2026-09-11 期間的舊有臨時人員資料，長期人員不受影響。
+          <span class="pin pin-abs" style="left:-9px;top:5px">2</span></div>
+        <div style="background:#1a2f5e;color:#fff;border-radius:11px;padding:8px;text-align:center;
+                    font-size:12px;font-weight:700;position:relative">✅ 確認匯入 24 筆臨時人員
+          <span class="pin pin-abs" style="left:-9px;top:8px">3</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>解析筆數</strong>：只計「報名狀態＝成功」且報到日期落在區間內的資料。若顯示 0 筆且底色轉紅，請檢查 Excel 的狀態欄是否標示「成功」。</span></li>
+    <li><span class="pin">2</span><span><strong>覆蓋範圍提醒</strong>：同一組別、同一區間的舊匯入資料會先被清除再寫入。<strong>長期人員與其他組別不受影響</strong>。</span></li>
+    <li><span class="pin">3</span><span>確認無誤後按此鈕才會真正寫入。按下前隨時可以改日期或重新選檔。</span></li>
+  </ul>
+</figure>
+
+<ol class="steps">
+  <li>先在上方篩選列<strong>選好要匯入的組別</strong>——這一步決定這批臨時人力歸屬哪一組。</li>
+  <li>進入<strong>匯入</strong>子頁，設定報到日期區間，選擇派工 Excel——即委外人力系統「派工模組 → 派工管理 → 派工申請」匯出的<strong>派工管理職缺狀態表</strong>。</li>
+  <li>系統只讀取「<strong>報名狀態＝成功</strong>」的資料列，解析後顯示筆數。</li>
+  <li>確認無誤後按匯入。同一區間內舊的匯入資料會先被清除再寫入。</li>
+</ol>
+<div class="callout c-warn">
+  <strong>匯入前一定要先選對組別</strong>
+  <p>臨時人力的組別是取「按下匯入當下，上方篩選列選的組別」。若選錯，這批人會掛到錯的課，之後用倉別／課別篩選就找不到他們。</p>
+  <p>若組別後來被拆分或改名（例如「運務組」改為「運務組-日班」），舊資料的組別不會自動跟著改，需要重新匯入或請管理員修正。</p>
+</div>
+
+<h3 id="s6-3">6.3 統計與回報</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:110px">子頁</th><th>用途</th></tr>
+  <tr><td>統計</td><td>當日到班率、各廠商應到／實到人數，可匯出 Excel。</td></tr>
+  <tr><td>回報</td><td>產生當日出勤回報表，供轉發給廠商或主管。</td></tr>
+  <tr><td>維護</td><td>維護假別、遲到早退狀態等下拉選單的選項內容。</td></tr>
+</table>
+</div>
+
+<h2 id="s7">7. 手機控管</h2>
+<p>管制人員上班期間的手機保管，目前<strong>大肚倉</strong>在使用。分「長期人力」與「臨時人力」兩個子頁。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 9</span>手機控管與櫃號</figcaption>
+  <div class="ui">
+    <div style="padding:10px 12px">
+      <div class="tabs"><span class="tab on">全部 <span class="n">66</span></span><span class="tab">長期 <span class="n">65</span></span><span class="tab">臨時人力 <span class="n">1</span></span></div>
+      <div style="border:1px solid var(--sms-border);border-radius:10px;overflow:hidden;margin-bottom:10px">
+        <div style="padding:8px 11px;display:flex;gap:9px;align-items:center;font-size:11.5px;border-bottom:1px solid #f1f5f9">
+          <span><b style="font-size:13px">柯麗蘭</b><br><span style="font-size:10px;color:#94a3b8">SY10800390　日班-理貨組</span></span>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <span class="tag tag-g">✓ 已簽到</span>
+            <span class="tag tag-b">📱 上班繳交手機</span>
+            <span class="chip" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;font-weight:700">鐵櫃 一：12號格</span></span>
+          <span class="pin pin-abs" style="right:-9px;top:10px">2</span></div>
+        <div style="padding:8px 11px;display:flex;gap:9px;align-items:center;font-size:11.5px;background:#fff7ed">
+          <span><b style="font-size:13px">林嘉寶</b><br><span style="font-size:10px;color:#94a3b8">臨時人力・三彥</span></span>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <span class="tag tag-r">✗ 手機未交</span>
+            <span class="chip" style="background:#fffbeb;border-color:#fcd34d;color:#92400e;font-weight:700">鐵櫃 二：7號格</span></span></div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:#334155;margin-bottom:5px">櫃號總表　鐵櫃 一（日班-理貨組）　使用 12 / 75</div>
+      <div class="lockgrid">
+        <span class="slot used">1</span><span class="slot used">2</span><span class="slot used">3</span><span class="slot used">4</span><span class="slot used">5</span>
+        <span class="slot used">6</span><span class="slot used">7</span><span class="slot used">8</span><span class="slot used">9</span><span class="slot used">10</span>
+        <span class="slot used">11</span><span class="slot used">12</span><span class="slot">13</span><span class="slot">14</span><span class="slot">15</span>
+        <span class="slot">16</span><span class="slot">17</span><span class="slot">18</span><span class="slot">19</span><span class="slot">20</span>
+      </div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:5px">■ 已配發　□ 空格　（共 75 格，此處僅示意前 20 格）</div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>鐵櫃分配規則</strong>：鐵櫃一＝日班-理貨組；鐵櫃三＝中班-理貨組＋運務組；鐵櫃四＝日班-出貨組；鐵櫃二＝臨時人力。每櫃 75 格。</span></li>
+    <li><span class="pin">2</span><span><strong>櫃號自動配發</strong>，已配到的人固定不變，離職或移出後該格才會釋出給新人。</span></li>
+    <li><span class="pin">3</span><span><strong>手機未交</strong>可單獨勾選，用來記錄有簽到但沒交手機的情形。</span></li>
+    <li><span class="pin">4</span><span><strong>櫃號總表</strong>可匯出 Excel，供現場張貼對照。</span></li>
+  </ul>
+</figure>
+
+<h2 id="s8">8. 人員清冊與作業區</h2>
+<p>人員清冊是所有委外人員的主檔，班表、點名表、報表都以此為準。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 10</span>人員清冊</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">倉別：</span><span class="sel on">大肚倉</span><span class="lb">課別：</span><span class="sel on">L037 大肚運務課</span>
+      <span class="lb">作業區：</span><span class="sel on">堆高機</span></div>
+    <div style="padding:10px 12px">
+      <div style="display:flex;gap:6px;margin-bottom:9px;align-items:center">
+        <span style="font-size:14px;font-weight:700;color:#1e293b">人員清冊</span>
+        <span style="margin-left:auto;display:flex;gap:5px">
+          <span class="chip" style="background:#059669;color:#fff;border-color:#059669">📥 匯入 Excel</span>
+          <span class="chip" style="background:#7c3aed;color:#fff;border-color:#7c3aed">📤 匯出清冊</span>
+          <span class="chip" style="background:#2563eb;color:#fff;border-color:#2563eb">➕ 新增人員</span></span></div>
+      <table class="grid">
+        <tr><th>員編</th><th>姓名</th><th>廠商</th><th>課別</th><th>組別</th><th>作業區</th><th>狀態</th><th>操作</th></tr>
+        <tr><td style="font-family:Consolas,monospace">CY11304034</td><td><b>趙子濱</b></td><td>承奕</td>
+          <td><span class="tag tag-p">大肚運務課</span></td><td><span class="tag tag-g">運務組-日班</span></td>
+          <td><span class="sel on">堆高機</span></td><td><span class="tag tag-g">在職</span></td>
+          <td><span style="color:#2563eb">編輯</span> <span style="color:#dc2626">移除</span></td></tr>
+        <tr><td style="font-family:Consolas,monospace">SY11301255</td><td><b>陳明仁</b></td><td>三彥</td>
+          <td><span class="tag tag-p">大肚運務課</span></td><td><span class="tag tag-r">運務組 ⚠</span></td>
+          <td><span class="sel off">未設定</span></td><td><span class="tag tag-g">在職</span></td>
+          <td><span style="color:#2563eb">編輯</span> <span style="color:#dc2626">移除</span></td></tr>
+      </table>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>作業區欄</strong>：直接在列上用下拉指派，改完自動存檔。可用「作業區＝未設定」快速找出還沒指派的人。</span></li>
+    <li><span class="pin">2</span><span><strong>紅色組別加 ⚠</strong>：該組別不在這一課的組別清單中（多半是匯入的 Excel 打錯字，或組別後來改名／拆分）。這些人用組別篩選時會被濾掉，請盡快修正。</span></li>
+    <li><span class="pin">3</span><span><strong>匯入 Excel</strong> 會依員工編號比對；已存在者更新欄位，不存在者新增。匯入不會刪人，離職請改狀態或移除。</span></li>
+  </ul>
+</figure>
+
+<h3>作業區是什麼</h3>
+<p>作業區用來標記人員的實際作業位置（O2O、團預購、收發、廠退、外場、小白單…），與課別／組別是<strong>兩套獨立的分類</strong>。指派後可在篩選列快速篩出特定作業區的人。清單內容於「系統設定 → 作業區設定」維護。</p>
+
+<h2 id="s9">9. 人員班別設定</h2>
+<p>設定每位人員的<strong>班別（上下班時間）</strong>，例如 09:00~18:00、18:00~00:00。設定後會顯示在點名表人員姓名下方，也是「代碼轉換匯出」的依據。</p>
+<div class="callout c-info">
+  <strong>班別與組別不同</strong>
+  <p>組別是編制單位（理貨組、運務組），班別是上下班時段。兩者各自獨立設定。</p>
+</div>
+
+<h2 id="s10">10. 報表匯出</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:170px">報表</th><th>內容</th></tr>
+  <tr><td>班表報表</td><td>依篩選條件產出期間班表，可列印或匯出 Excel。</td></tr>
+  <tr><td>出勤統計</td><td>期間內各廠商、各課別的應到／實到人數與到班率。</td></tr>
+  <tr><td>代碼轉換匯出</td><td>將班別代號轉為人資系統班別代碼後匯出。</td></tr>
+</table>
+</div>
+<p>報表的日期範圍取自各課別開放區間的聯集；匯出前請先確認上方篩選條件。</p>
+
+<h2 id="s11">11. 系統設定</h2>
+<figure class="shot">
+  <figcaption><span class="tag">畫面 11</span>系統設定</figcaption>
+  <div class="ui">
+    <div style="padding:12px 14px;background:#f8fafc">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:10px">系統設定</div>
+      <div class="sec"><div class="st">▶ 每期日期區間</div><div class="sd">定義一期涵蓋哪些日子，決定班表顯示與翻頁單位</div><span class="pin pin-abs" style="left:-9px;top:8px">1</span></div>
+      <div class="sec"><div class="st">▶ 各課別鎖定與開放區間</div><div class="sd">各課可分別鎖定並自訂開放區間</div><span class="pin pin-abs" style="left:-9px;top:8px">2</span></div>
+      <div class="sec open"><div class="st">▼ 作業區設定</div><div class="sd">維護可指派給人員的作業區項目</div>
+        <div style="margin-top:9px;display:flex;gap:6px;align-items:center">
+          <span class="box ph" style="font-size:11px;padding:5px 9px">輸入新作業區名稱</span>
+          <span class="chip" style="background:#2563eb;color:#fff;border-color:#2563eb">＋ 新增</span></div>
+        <div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
+          <span class="chip">O2O <span style="color:#94a3b8">12 人</span> ✕</span>
+          <span class="chip">團預購 <span style="color:#94a3b8">8 人</span> ✕</span>
+          <span class="chip">收發 <span style="color:#94a3b8">0 人</span> ✕</span>
+          <span class="chip">廠退 <span style="color:#94a3b8">3 人</span> ✕</span>
+          <span class="chip">外場 <span style="color:#94a3b8">21 人</span> ✕</span>
+          <span class="chip">小白單 <span style="color:#94a3b8">5 人</span> ✕</span></div>
+        <span class="pin pin-abs" style="left:-9px;top:8px">3</span></div>
+      <div class="sec"><div class="st">▶ 開放排班國定假日</div><div class="sd">勾選後班表中「國」顯示假日短名</div></div>
+      <div class="sec"><div class="st">▶ 委外幹部國定假日排班權限</div><div class="sd">控制委外幹部能否自行安排「國」</div></div>
+      <div class="sec"><div class="st">▶ 廠商別維護</div><div class="sd">管理系統中所有委外廠商</div></div>
+      <div class="sec"><div class="st">▶ 倉別 × 課別 × 廠商別維護</div><div class="sd">每個倉可設定多個課別與所屬廠商</div></div>
+    </div>
+  </div>
+</figure>
+
+<h3 id="s11-1">11.1 每期日期區間</h3>
+<p>目前排班<strong>不是按月份</strong>，而是依設定的週期。這裡定義「一期」涵蓋哪些日子，班表的翻頁單位與上方橫幅的「本期」就是依此計算。</p>
+<div class="callout c-info">
+  <strong>與開放排班區間的差別</strong>
+  <p><strong>每期日期區間</strong>＝班表怎麼分頁顯示（全公司一致）。</p>
+  <p><strong>各課別開放區間</strong>＝哪些日子可以編輯（每課各自設定）。兩者不必相同。</p>
+</div>
+
+<h3 id="s11-2">11.2 各課別鎖定與開放區間</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:130px">設定</th><th>效果</th></tr>
+  <tr><td>鎖定模式</td><td><strong>不鎖定</strong>／<strong>鎖定委外</strong>（僅日翊可編輯）／<strong>完全鎖定</strong>（皆不可編輯）</td></tr>
+  <tr><td>開放區間</td><td>填起訖日期後，只有區間內的日子可編輯。<strong>未設定＝該課只能查看班表</strong>，區間外的日期在班表上呈灰底。</td></tr>
+  <tr><td>清除</td><td>按「清除」會移除該課的開放區間，該課隨即變成僅可查看。</td></tr>
+</table>
+</div>
+<div class="callout c-warn">
+  <strong>日翊帳號只看得到、也只能改自己倉別的課</strong>
+  <p>各倉設定互不影響：大溪的日翊調整大溪的課，不會動到大肚已經設好的內容。</p>
+</div>
+
+<h3 id="s11-3">11.3 作業區設定</h3>
+<ol class="steps">
+  <li>在輸入框打上新作業區名稱，按<strong>新增</strong>。</li>
+  <li>每個作業區標籤旁會顯示<strong>目前指派人數</strong>。</li>
+  <li>按標籤上的 <strong>✕</strong> 可移除；若仍有人使用會先跳出確認，確認後那些人的作業區會一併清空。</li>
+</ol>
+
+<h3 id="s11-4">11.4 其他設定</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:190px">設定</th><th>說明</th></tr>
+  <tr><td>開放排班國定假日</td><td>勾選當年度要納入的國定假日；勾選後班表的「國」會顯示假日短名，並可用「一鍵轉換國」整批帶入。</td></tr>
+  <tr><td>委外幹部國定假日排班權限</td><td>關閉時，委外幹部只能點 V 與 休；開啟後才可自行安排「國」。</td></tr>
+  <tr><td>廠商別維護</td><td>維護全系統的委外廠商主檔。</td></tr>
+  <tr><td>倉別 × 課別 × 廠商別維護</td><td>設定各倉有哪些課、各課有哪些組別與配合廠商。<strong>組別清單在此維護</strong>，人員清冊的組別會據此檢核。</td></tr>
+</table>
+</div>
+
+<h2 id="s12">12. 帳號與權限管理</h2>
+<p>僅管理員可進入。分三個分頁：<strong>員工帳號／廠商帳號／委外人員</strong>。三個分頁都會套用上方篩選列的倉別條件。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 12</span>帳號與權限管理</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">倉別：</span><span class="sel on">岡山倉</span><span class="lb">課別：</span><span class="sel">全部課別</span></div>
+    <div style="padding:10px 12px">
+      <div style="display:flex;gap:6px;margin-bottom:9px;align-items:center">
+        <span style="font-size:14px;font-weight:700;color:#1e293b">帳號與權限管理</span>
+        <span style="margin-left:auto;display:flex;gap:5px">
+          <span class="chip">🔄 重新整理</span>
+          <span class="chip" style="background:#2563eb;color:#fff;border-color:#2563eb">＋ 新增帳號</span></span></div>
+      <div class="tabs"><span class="tab on">員工帳號 <span class="n">21</span></span><span class="tab">廠商帳號 <span class="n">0</span></span><span class="tab">委外人員 <span class="n">178</span></span></div>
+      <div style="border:1px solid var(--sms-border);border-radius:10px;overflow:hidden">
+        <div style="background:#f8fafc;padding:6px 11px;font-size:10.5px;font-weight:700;color:#64748b;display:flex">
+          AD 員工帳號（21 筆）<span style="margin-left:auto;font-weight:400;color:#94a3b8">可設定每位員工可使用的倉別</span></div>
+        <div style="padding:8px 11px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;border-top:1px solid #f1f5f9">
+          <b style="font-family:Consolas,monospace">jerry16899</b><span>黃則翰</span><span class="tag tag-p">日翊</span>
+          <span style="color:#94a3b8;font-size:10.5px">可用倉別：</span>
+          <span>☑ 大溪倉</span><span>☑ 大肚倉</span><span>☑ 岡山倉</span>
+          <span style="margin-left:auto;display:flex;gap:5px">
+            <span class="chip" style="background:#dc2626;color:#fff;border-color:#dc2626">升級為管理員</span>
+            <span class="chip">刪除</span></span>
+          <div style="width:100%;color:#2563eb;font-size:10.5px">▼ 分頁權限 (9/9（預設）)</div>
+          <span class="pin pin-abs" style="left:-9px;top:8px">1</span></div>
+        <div style="padding:8px 11px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;border-top:1px solid #f1f5f9">
+          <b style="font-family:Consolas,monospace">allthebest</b><span>賴建廷</span><span class="tag tag-p">日翊</span>
+          <span style="color:#94a3b8;font-size:10.5px">可用倉別：</span>
+          <span style="color:#cbd5e1">☐ 大溪倉</span><span style="color:#cbd5e1">☐ 大肚倉</span><span>☑ 岡山倉</span>
+          <div style="width:100%;color:#2563eb;font-size:10.5px">▼ 分頁權限 (7/9)</div></div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>可用倉別</strong>：勾選這個帳號能操作哪些倉。管理員可使用全部倉別，不受此設定與倉別篩選影響。</span></li>
+    <li><span class="pin">2</span><span><strong>分頁權限</strong>：展開後可逐項勾選這個帳號看得到哪些分頁與功能（例如是否開放手機控管、報表匯出）。</span></li>
+    <li><span class="pin">3</span><span><strong>倉別篩選</strong>：上方選岡山倉，就只列出可用倉別含岡山倉的帳號。</span></li>
+  </ul>
+</figure>
+
+<h3>廠商帳號的核准流程</h3>
+<ol class="steps">
+  <li>委外幹部自行在登入頁申請帳號，選擇所屬倉別、課別與廠商。</li>
+  <li>管理員在<strong>廠商帳號</strong>分頁上方看到待審核申請，按<strong>核准</strong>。</li>
+  <li>核准後按<strong>重新整理</strong>，該帳號才會出現在正式清單中。</li>
+  <li>展開<strong>分頁權限</strong>，勾選要開放的功能（預設為班表管理、報表匯出）。</li>
+</ol>
+<div class="callout c-warn">
+  <strong>核准後請務必按「重新整理」</strong>
+  <p>核准動作寫在伺服器，畫面上的清單需重新讀取才會更新。若核准完沒看到新帳號，多半是還沒重新整理。</p>
+</div>
+
+<h3>委外人員分頁</h3>
+<p>列出人員清冊中的委外人員，可將個別人員<strong>升級為委外幹部</strong>（產生可登入的幹部帳號），或取消升級。可用姓名、員工編號搜尋，並套用上方篩選條件。</p>
+
+<h2 id="s13">13. 常見問題 FAQ</h2>
+
+<p class="faq-q">班表上少了幾個人，去哪了？</p>
+<p class="faq-a">先按<strong>清除篩選</strong>。最常見的原因是上方還停在某一組別或作業區。若仍缺人，到人員清冊確認該員的組別有沒有標紅色 ⚠（無效組別會被組別篩選濾掉）。</p>
+
+<p class="faq-q">班表格子點不動？</p>
+<p class="faq-a">看上方橫幅：①該課是否已被<strong>鎖定</strong>；②要改的日期是否落在<strong>開放排班區間</strong>內（區間外會是灰底）；③該課是否根本<strong>尚未設定開放區間</strong>（顯示「僅供查看，不可編輯」）。</p>
+
+<p class="faq-q">我設定好的班別／國定假日怎麼不見了？</p>
+<p class="faq-a">系統為多人共用，若同時有人在別台電腦編輯同一份資料，較晚存檔者可能覆蓋。請重新整理確認目前實際值後再改一次，並避免多人同時大批修改同一課。</p>
+
+<p class="faq-q">粉紅底和姓名紅字差在哪？是誤判嗎？</p>
+<p class="faq-a"><strong>粉紅底</strong>＝連續 6 天（含）以上的提醒；<strong>姓名紅字</strong>＝連續 7 天（含）以上，已違反規定必須調整。警示只計算<strong>已開放排班區間內</strong>的日期，不會把尚未開放的未來日期算進去；會跨週期邊界計算，所以上一期末段接本期開頭也算得到。
+
+<p class="faq-q">匯入臨時人力的檔案要去哪裡拿？</p>
+<p class="faq-a">到<strong>委外人力系統</strong>的「派工模組 → 派工管理 → 派工申請」，匯出<strong>派工管理職缺狀態表</strong>，直接上傳該 Excel 即可，不需另外整理格式。</p>
+
+<p class="faq-q">臨時人力匯入後，用課別篩選卻找不到？</p>
+<p class="faq-a">臨時人力的所屬課別是由<strong>組別</strong>回推的。若匯入時選錯組別，或該組別後來被改名／拆分，就會對應不到課別。請重新匯入，或請管理員修正該筆資料的組別。</p>
+
+<p class="faq-q">日翊帳號改了設定，會不會影響其他倉？</p>
+<p class="faq-a">不會。各課別的鎖定與開放區間以倉別為界，各倉只能改自己倉的課，其他倉維持原設定。</p>
+
+<p class="faq-q">忘記密碼怎麼辦？</p>
+<p class="faq-a">日翊員工與管理員使用 AD 帳號，密碼與公司電腦相同，請依公司 AD 流程重設。委外幹部與委外人員請洽管理員協助重設。</p>
+
+<h2 id="s14">14. 版本紀錄</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:90px">版本</th><th style="width:110px">日期</th><th>異動內容</th></tr>
+  <tr><td>v1.0</td><td>2026/09/07</td><td>首版發行。涵蓋儀表板、班表管理、點名表、手機控管、人員清冊與作業區、人員班別設定、報表匯出、系統設定、帳號與權限管理。</td></tr>
+</table>
+</div>
+
+<div class="callout c-info">
+  <strong>維護單位與問題回報</strong>
+  <p>系統維護單位：日翊文化行銷股份有限公司　物流本部</p>
+  <p>操作問題請洽所屬倉別的日翊窗口；系統異常請回報系統管理員。</p>
+</div>
+
+</main>
+</div>
+
+<footer>
+  日翊文化行銷股份有限公司　物流本部　|　委外人力排班作業平台（VSP）　日翊員工／管理員操作手冊　v1.0<br>
+  本手冊之畫面均為示意圖，人名與員工編號為虛構範例。
+</footer>
+<script>
+(function(){
+  var toggle = document.getElementById('navToggle');
+  var toc = document.getElementById('toc');
+  toggle.addEventListener('click', function(){ toc.classList.toggle('open'); });
+  toc.addEventListener('click', function(e){
+    if (e.target.tagName === 'A' && window.innerWidth <= 900) toc.classList.remove('open');
+  });
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var targets = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function sync(){
+    var pos = window.scrollY + 100, current = 0;
+    for (var i = 0; i < targets.length; i++){
+      if (targets[i] && targets[i].offsetTop <= pos) current = i;
+    }
+    links.forEach(function(a, i){ a.classList.toggle('active', i === current); });
+  }
+  window.addEventListener('scroll', sync, { passive:true });
+  sync();
+})();
+</script>

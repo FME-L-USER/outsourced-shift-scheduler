@@ -1,0 +1,202 @@
+<style>
+  :root{
+    --brand:#2563eb; --brand-dark:#1e40af; --brand-soft:#eff6ff;
+    --ink:#1e293b; --ink-2:#475569; --ink-3:#94a3b8;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+    --warn:#ea580c; --warn-bg:#fff7ed;
+    --tip:#059669;  --tip-bg:#ecfdf5;
+    /* 以下為系統實際使用的色票，示意圖沿用以求一致 */
+    --sms-sidebar:#1a2f5e; --sms-sidebar-active:#2563eb;
+    --sms-surface-2:#F5F2EC; --sms-border:#DDD9D0;
+    --nav-w:270px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",-apple-system,sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  a{color:var(--brand); text-decoration:none}
+
+  header.top{
+    position:sticky; top:0; z-index:50;
+    background:var(--brand-dark); color:#fff;
+    padding:14px 24px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    box-shadow:0 1px 8px rgba(0,0,0,.15);
+  }
+  header.top .co{font-size:13px; opacity:.75; letter-spacing:.5px}
+  header.top h1{font-size:17px; margin:0; font-weight:700}
+  header.top .ver{margin-left:auto; font-size:12px; opacity:.8}
+  #navToggle{display:none; background:rgba(255,255,255,.15); border:0; color:#fff;
+    font-size:18px; width:36px; height:36px; border-radius:8px; cursor:pointer}
+
+  .wrap{display:flex; align-items:flex-start}
+  nav.toc{
+    width:var(--nav-w); flex-shrink:0; position:sticky; top:60px;
+    height:calc(100vh - 60px); overflow-y:auto;
+    background:var(--card); border-right:1px solid var(--line); padding:18px 0 40px;
+  }
+  nav.toc .toc-title{font-size:11px; font-weight:700; color:var(--ink-3);
+    letter-spacing:1.5px; padding:0 20px 10px}
+  nav.toc a{display:block; padding:7px 20px; font-size:14px; color:var(--ink-2);
+    border-left:3px solid transparent}
+  nav.toc a:hover{background:var(--brand-soft); color:var(--brand)}
+  nav.toc a.sub{padding-left:36px; font-size:13px; color:var(--ink-3)}
+  nav.toc a.active{background:var(--brand-soft); color:var(--brand);
+    border-left-color:var(--brand); font-weight:600}
+
+  main{flex:1; min-width:0; padding:32px 40px 80px; max-width:1000px}
+
+  h2{font-size:22px; margin:44px 0 16px; padding-bottom:10px;
+    border-bottom:2px solid var(--brand); color:var(--brand-dark); scroll-margin-top:76px}
+  h2:first-of-type{margin-top:8px}
+  h3{font-size:17px; margin:28px 0 12px; color:var(--ink); scroll-margin-top:76px}
+  p{margin:10px 0}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0; background:var(--card);
+    font-size:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); border-radius:8px; overflow:hidden}
+  th{background:var(--brand); color:#fff; text-align:left; font-weight:600; padding:10px 14px}
+  td{padding:10px 14px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  .tbl-wrap{overflow-x:auto}
+
+  .callout{border-left:4px solid; border-radius:0 8px 8px 0; padding:12px 16px; margin:16px 0; font-size:14px}
+  .callout p{margin:4px 0}
+  .callout>strong{display:block; margin-bottom:2px}
+  .c-info{border-color:var(--brand); background:var(--brand-soft); color:#1e3a8a}
+  .c-warn{border-color:var(--warn); background:var(--warn-bg); color:#7c2d12}
+  .c-tip {border-color:var(--tip);  background:var(--tip-bg);  color:#065f46}
+
+  ol.steps{counter-reset:s; list-style:none; padding:0; margin:16px 0}
+  ol.steps>li{counter-increment:s; position:relative; padding:12px 16px 12px 52px;
+    background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px}
+  ol.steps>li::before{content:counter(s); position:absolute; left:14px; top:12px;
+    width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff;
+    font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center}
+
+  code{background:#f1f5f9; padding:2px 7px; border-radius:5px;
+    font-family:"Consolas","Monaco",monospace; font-size:13px; color:#be123c}
+
+  /* ── 畫面示意圖容器 ── */
+  figure.shot{
+    margin:20px 0 24px; background:#eef1f5; border:1px solid var(--line);
+    border-radius:12px; padding:16px; overflow-x:auto;
+  }
+  figure.shot figcaption{
+    font-size:12px; color:var(--ink-3); margin-bottom:12px;
+    display:flex; align-items:center; gap:8px;
+  }
+  figure.shot figcaption .tag{
+    background:#64748b; color:#fff; border-radius:999px;
+    padding:2px 9px; font-size:11px; font-weight:700; letter-spacing:.5px;
+  }
+  .ui{
+    background:#fff; border-radius:10px; overflow:hidden;
+    box-shadow:0 4px 16px rgba(15,23,42,.12); font-size:13px;
+    min-width:520px;
+  }
+  /* 標註圓點 */
+  .pin{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:20px; height:20px; border-radius:50%; background:#dc2626; color:#fff;
+    font-size:11px; font-weight:700; flex-shrink:0; vertical-align:middle;
+  }
+  .pin-abs{position:absolute; z-index:5; box-shadow:0 0 0 2px #fff}
+  .legend{list-style:none; padding:0; margin:10px 0 0; font-size:13.5px}
+  .legend li{display:flex; gap:9px; align-items:flex-start; margin:7px 0; color:var(--ink-2)}
+
+  /* ── 系統 UI 重繪元件（配色取自系統實際色票）── */
+  .ui-login{padding:26px 22px; text-align:center; background:#fff}
+  .ui-login .logo{width:42px;height:42px;border-radius:12px;background:#eff6ff;
+    display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:8px}
+  .ui-login h4{margin:4px 0 2px; font-size:16px; color:#1e293b}
+  .ui-login .sub{font-size:11.5px;color:#94a3b8;margin-bottom:16px}
+  .fld{text-align:left; margin-bottom:11px; position:relative}
+  .fld label{display:block;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:4px}
+  .box{border:1px solid var(--sms-border); border-radius:9px; padding:8px 11px;
+    background:#fff; color:#334155; font-size:13px; display:flex; align-items:center; gap:7px}
+  .box.ph{color:#a8b0bd}
+  .btn-primary{width:100%; background:var(--sms-sidebar); color:#fff; border-radius:9px;
+    padding:10px; font-weight:700; font-size:13.5px; text-align:center; margin-top:4px}
+  .hint{background:#eff6ff;border:1px solid #dbeafe;color:#1d4ed8;border-radius:7px;
+    padding:7px 10px;font-size:11.5px;text-align:left;margin-bottom:12px}
+  .rule{background:#f1f5f9;color:#64748b;border-radius:7px;padding:7px 10px;
+    font-size:11px;text-align:left;margin:10px 0}
+
+  /* 班表畫面 */
+  .ui-app{display:flex; min-height:250px}
+  .ui-side{width:120px; background:var(--sms-sidebar); color:#fff; padding:12px 8px; flex-shrink:0}
+  .ui-side .brand{font-size:11.5px;font-weight:700;padding:0 6px 12px;line-height:1.4}
+  .ui-side .brand span{display:block;font-size:9.5px;opacity:.55;font-weight:400}
+  .ui-side .item{display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:999px;
+    font-size:11.5px;color:rgba(255,255,255,.8);margin-bottom:3px}
+  .ui-side .item.on{background:#fff;color:var(--sms-sidebar);font-weight:700}
+  .ui-main{flex:1; background:#fff; padding:12px 14px; min-width:0}
+
+  .banner{border:1px solid; border-radius:9px; padding:8px 11px; font-size:12px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+  .banner.ok{background:#ecfdf5;border-color:#6ee7b7;color:#065f46}
+  .banner.no{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+  .banner b{font-size:12.5px}
+
+  table.sched{width:100%;border-collapse:collapse;font-size:11.5px;
+    box-shadow:none;border-radius:8px;overflow:hidden;margin:0}
+  table.sched th{background:var(--sms-sidebar);color:#fff;padding:5px 4px;text-align:center;
+    font-weight:600;font-size:11px;line-height:1.35}
+  table.sched th.nm{text-align:left;padding-left:10px;width:112px}
+  table.sched td{border-top:1px solid #eef2f7;padding:0;text-align:center;height:40px}
+  table.sched td.nm{text-align:left;padding:5px 10px;background:#fff;line-height:1.35}
+  table.sched td.nm b{display:block;font-size:12px;color:#1e293b}
+  table.sched td.nm span{font-size:10px;color:#94a3b8;font-family:Consolas,monospace}
+  .cd{display:block;width:100%;height:100%;line-height:40px;font-weight:700;font-size:12.5px}
+  .cd-v{background:#dcfce7;color:#14532d}
+  .cd-r{background:#ffedd5;color:#7c2d12}
+  .cd-e{background:#fef9c3;color:#713f12}
+  .cd-n{background:#dbeafe;color:#1e3a8a}
+  .cd-hl{outline:2px solid #dc2626; outline-offset:-2px; position:relative}
+
+  .cell{display:inline-flex;align-items:center;justify-content:center;min-width:34px;
+    padding:3px 9px;border-radius:6px;font-weight:700;font-size:14px;margin:0 2px}
+  .cell-v{background:#dcfce7;color:#166534}
+  .cell-r{background:#ffedd5;color:#9a3412}
+  .cell-e{background:#fef9c3;color:#854d0e}
+  .cell-n{background:#dbeafe;color:#1e40af}
+
+  .toast{border-radius:9px;padding:9px 13px;font-size:12.5px;font-weight:600;
+    display:inline-flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(15,23,42,.14)}
+  .toast-err{background:#dc2626;color:#fff}
+  .toast-warn{background:#f59e0b;color:#fff}
+
+  .beforeafter{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:center}
+  .ba-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;text-align:center}
+  .ba-box .lbl{font-size:11px;color:#94a3b8;margin-bottom:7px}
+  .ba-arrow{font-size:22px;color:#94a3b8}
+
+  .flow{background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 18px; margin:16px 0; font-family:"Consolas",monospace;
+    font-size:13px; color:var(--ink-2); white-space:pre; overflow-x:auto; line-height:1.9}
+  .faq-q{font-weight:700; color:var(--brand-dark); margin:22px 0 4px}
+  .faq-q::before{content:"Q"; display:inline-block; background:var(--brand); color:#fff;
+    width:20px;height:20px;border-radius:50%;text-align:center;line-height:20px;
+    font-size:12px;margin-right:8px}
+  .faq-a{margin:0 0 6px 28px; color:var(--ink-2)}
+
+  footer{border-top:1px solid var(--line); margin-top:56px; padding:20px 40px 40px;
+    font-size:12px; color:var(--ink-3); text-align:center}
+
+  @media (max-width:900px){
+    #navToggle{display:block}
+    nav.toc{position:fixed; top:60px; left:0; z-index:40; height:calc(100vh - 60px);
+      transform:translateX(-100%); transition:transform .25s; box-shadow:4px 0 16px rgba(0,0,0,.12)}
+    nav.toc.open{transform:translateX(0)}
+    main{padding:22px 16px 60px}
+    header.top h1{font-size:15px}
+    header.top .ver{width:100%; margin-left:0}
+  }
+  @media print{
+    nav.toc,#navToggle{display:none}
+    header.top{position:static}
+    main{max-width:none}
+    figure.shot{break-inside:avoid}
+  }
+</style>

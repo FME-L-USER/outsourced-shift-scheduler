@@ -1,0 +1,318 @@
+<style>
+  .fbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#fff;
+    border-bottom:1px solid var(--sms-border);padding:8px 10px;font-size:11.5px;color:#475569}
+  .fbar .lb{color:#64748b;font-weight:600;white-space:nowrap}
+  .sel{border:1px solid var(--sms-border);border-radius:8px;padding:4px 8px;background:#fff;
+    color:#1e293b;font-size:11.5px;display:inline-flex;align-items:center;gap:14px;white-space:nowrap}
+  .sel::after{content:"▾";color:#94a3b8;font-size:10px}
+  .sel.on{border-color:#2563eb;background:#eff6ff;color:#1d4ed8;font-weight:700}
+  .sel.off{color:#a8b0bd;background:#f8fafc}
+  .chip{border:1px solid var(--sms-border);border-radius:8px;padding:3px 9px;font-size:11px;color:#64748b;background:#fff}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--sms-border);margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:6px 14px;font-size:12px;color:#64748b;border:1px solid transparent;border-bottom:0;
+    border-radius:9px 9px 0 0}
+  .tab.on{background:#fff;border-color:var(--sms-border);color:#1d4ed8;font-weight:700;
+    box-shadow:0 -2px 0 #2563eb inset}
+  .tag{display:inline-block;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:600}
+  .tag-g{background:#dcfce7;color:#15803d}.tag-b{background:#dbeafe;color:#1d4ed8}
+  .tag-r{background:#fee2e2;color:#b91c1c}.tag-s{background:#f1f5f9;color:#64748b}
+  table.grid{width:100%;border-collapse:collapse;font-size:11.5px;margin:0;box-shadow:none}
+  table.grid th{background:#f1f5f9;color:#64748b;font-size:10.5px;font-weight:700;padding:6px 9px;text-align:left}
+  table.grid td{border-top:1px solid #eef2f7;padding:6px 9px;color:#334155}
+  .noent{background:#f1f5f9;color:#cbd5e1;text-align:center;font-size:11px;padding:14px}
+</style>
+
+<!--TOC-->  <a href="#s1">1. 系統基本資訊</a>
+  <a href="#s2">2. 申請帳號與登入</a>
+  <a href="#s2-1" class="sub">2.1 申請帳號</a>
+  <a href="#s2-2" class="sub">2.2 登入</a>
+  <a href="#s2-3" class="sub">2.3 修改密碼</a>
+  <a href="#s3">3. 您看得到什麼</a>
+  <a href="#s4">4. 篩選列</a>
+  <a href="#s5">5. 班表管理</a>
+  <a href="#s5-1" class="sub">5.1 認識班表畫面</a>
+  <a href="#s5-2" class="sub">5.2 代排班表的規則</a>
+  <a href="#s5-3" class="sub">5.3 不能編輯的情況</a>
+  <a href="#s6">6. 點名表</a>
+  <a href="#s7">7. 手機控管</a>
+  <a href="#s8">8. 報表匯出</a>
+  <a href="#s9">9. 常見問題 FAQ</a>
+  <a href="#s10">10. 版本紀錄</a>
+<!--/TOC-->
+
+<div class="callout c-info">
+  <strong>這本手冊寫給誰</strong>
+  <p>本手冊供<strong>委外幹部（廠商窗口）</strong>使用，說明如何申請帳號、代自己廠商的人員排班、以及點名等日常作業。</p>
+  <p>您可使用的功能由日翊管理員逐項開放，因此畫面上的分頁數量可能與本手冊不完全相同。</p>
+</div>
+
+<div class="callout c-tip">
+  <strong>關於本手冊的畫面</strong>
+  <p>書中所有畫面均為<strong>示意圖</strong>，以系統實際的版面與配色重繪，人名與員工編號為虛構範例。</p>
+</div>
+
+<h2 id="s1">1. 系統基本資訊</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:170px">項目</th><th>內容</th></tr>
+  <tr><td>系統名稱</td><td>委外人力排班作業平台（VSP）</td></tr>
+  <tr><td>適用對象</td><td>本手冊適用<strong>委外幹部</strong></td></tr>
+  <tr><td>網路存取方式</td><td><strong>走網際網路</strong>——用自己的手機或電腦，在任何地點都能登入，不需連公司網路或 VPN</td></tr>
+  <tr><td>系統網址（正式）</td><td><a href="https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app">https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app</a></td></tr>
+  <tr><td>資料儲存</td><td>編輯後約 2 秒自動存檔，不需按儲存鍵</td></tr>
+</table>
+</div>
+
+<h2 id="s2">2. 申請帳號與登入</h2>
+
+<h3 id="s2-1">2.1 申請帳號</h3>
+<p>委外幹部帳號需自行申請，並由日翊管理員核准後才能使用。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 1</span>申請帳號</figcaption>
+  <div class="ui" style="max-width:370px;margin:0 auto">
+    <div class="ui-login">
+      <div class="logo">🗂️</div>
+      <h4>申請委外幹部帳號</h4>
+      <div class="sub">送出後需經日翊管理員核准</div>
+      <div class="fld"><label>倉別</label><div class="box">大肚倉<span style="margin-left:auto;color:#94a3b8">▾</span></div></div>
+      <div class="fld"><label>課別</label><div class="box">L037 大肚運務課<span style="margin-left:auto;color:#94a3b8">▾</span></div>
+        <span class="pin pin-abs" style="left:-9px;top:22px">1</span></div>
+      <div class="fld"><label>廠商</label><div class="box">三彥<span style="margin-left:auto;color:#94a3b8">▾</span></div>
+        <span class="pin pin-abs" style="left:-9px;top:22px">2</span></div>
+      <div class="fld"><label>帳號</label><div class="box ph">請設定登入帳號</div></div>
+      <div class="fld"><label>密碼</label><div class="box ph">請設定密碼</div></div>
+      <div class="btn-primary">送出申請</div>
+      <div class="rule">送出後請聯繫日翊窗口，核准後即可登入。</div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>課別要選對</strong>：選錯課別會看不到自己的人員，需請管理員修改。</span></li>
+    <li><span class="pin">2</span><span><strong>廠商決定您看得到誰</strong>：登入後只會看到這個廠商的人員。</span></li>
+  </ul>
+</figure>
+
+<div class="callout c-warn">
+  <strong>申請後不會自動生效</strong>
+  <p>需日翊管理員核准並設定分頁權限後才能登入。申請完請主動通知窗口。</p>
+</div>
+
+<h3 id="s2-2">2.2 登入</h3>
+<ol class="steps">
+  <li>開啟系統網址。</li>
+  <li>登入身分選擇 <strong>委外幹部</strong>。</li>
+  <li>輸入申請時設定的帳號與密碼。</li>
+</ol>
+
+<h3 id="s2-3">2.3 修改密碼</h3>
+<p>首次登入時，系統會要求先設定新密碼。之後若要更換，可在畫面右上角的帳號選單中修改。</p>
+<div class="callout c-tip">
+  <strong>忘記密碼</strong>
+  <p>請聯繫日翊管理員協助重設，無法自行取回。</p>
+</div>
+
+<h2 id="s3">3. 您看得到什麼</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">範圍</th><th>說明</th></tr>
+  <tr><td>人員範圍</td><td>只看得到<strong>自己廠商</strong>的人員，其他廠商的資料完全不會出現。</td></tr>
+  <tr><td>預設分頁</td><td>班表管理、報表匯出。其餘分頁（點名表、手機控管等）需由管理員另行開放。</td></tr>
+  <tr><td>不開放的功能</td><td>人員清冊維護、系統設定、帳號與權限管理，僅日翊人員可使用。</td></tr>
+</table>
+</div>
+<div class="callout c-info">
+  <strong>看不到某個分頁？</strong>
+  <p>代表該功能尚未對您的帳號開放，請洽日翊窗口。管理員開通後，請<strong>重新登入</strong>才會看到。</p>
+</div>
+
+<h2 id="s4">4. 篩選列</h2>
+<p>畫面最上方是共用的篩選條件，決定各分頁看到的資料範圍。切換分頁時不會重置。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 2</span>頂端篩選列</figcaption>
+  <div class="ui">
+    <div class="fbar">
+      <span class="lb">🏭 倉別：</span><span class="sel on">大肚倉</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">課別：</span><span class="sel on">L037 大肚運務課</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">組別：</span><span class="sel">全部組別</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">作業區：</span><span class="sel">全部作業區</span><span style="color:#cbd5e1">›</span>
+      <span class="lb">廠商：</span><span class="sel on">三彥</span>
+      <span class="chip">清除篩選</span>
+    </div>
+    <div style="padding:24px 14px;color:#cbd5e1;font-size:12px;text-align:center">（以下為各分頁內容）</div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span>條件由左往右層層收斂；換倉別時下層條件會自動清空。</span></li>
+    <li><span class="pin">2</span><span><strong>找不到人時先按「清除篩選」</strong>，九成是條件還停在某一組。</span></li>
+  </ul>
+</figure>
+
+<h2 id="s5">5. 班表管理</h2>
+
+<h3 id="s5-1">5.1 認識班表畫面</h3>
+<figure class="shot">
+  <figcaption><span class="tag">畫面 3</span>班表管理</figcaption>
+  <div class="ui">
+    <div class="fbar"><span class="lb">倉別：</span><span class="sel on">大肚倉</span><span class="lb">課別：</span><span class="sel on">L037 大肚運務課</span><span class="lb">廠商：</span><span class="sel on">三彥</span></div>
+    <div style="padding:10px 12px">
+      <div class="banner no" style="position:relative">📅 <b>本期：2026-9-7 ～ 2026-10-4</b>　|　大肚運務課 開放排班：2026-9-1 ～ 2026-9-20
+        <span class="pin pin-abs" style="left:-9px;top:8px">1</span></div>
+      <div style="font-size:10.5px;color:#64748b;margin-bottom:7px">
+        <span class="cell cell-v" style="font-size:11px;min-width:24px;padding:1px 7px">V</span> 上班
+        <span class="cell cell-r" style="font-size:11px;min-width:24px;padding:1px 7px">休</span> 休假
+        <span style="color:#cbd5e1">　（點擊格子切換）</span></div>
+      <table class="sched">
+        <tr><th class="nm">人員姓名</th><th>9/7<br>一</th><th>9/8<br>二</th><th>9/9<br>三</th><th>9/10<br>四</th><th>9/11<br>五</th><th style="color:#fca5a5">9/12<br>六</th><th style="color:#fca5a5">9/13<br>日</th></tr>
+        <tr><td class="nm"><b>陳明仁</b><span>SY11301255</span></td>
+          <td><span class="cd cd-v cd-hl">V</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-r">休</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-v">V</span></td><td><span class="cd cd-e">例</span></td>
+          <td><span class="cd cd-v">V</span></td></tr>
+        <tr><td class="nm"><b>曾芳暖</b><span>SY11205212</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-r">休</span></td><td><span class="cd cd-v">V</span></td>
+          <td><span class="cd cd-v">V</span></td><td><span class="cd cd-e">例</span></td><td><span class="cd cd-v">V</span></td>
+          <td style="background:#f1f5f9"><span class="cd" style="color:#cbd5e1">–</span></td></tr>
+      </table>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>上方橫幅</strong>顯示本期起訖與這一課的<strong>開放排班區間</strong>。只有區間內的日子能改。</span></li>
+    <li><span class="pin">2</span><span><strong>今日整欄有紅框</strong>（示意圖為 9/7）。</span></li>
+    <li><span class="pin">3</span><span><strong>灰底</strong>代表尚未開放排班的日期，不能編輯。</span></li>
+    <li><span class="pin">4</span><span><strong>例</strong>（黃色）由日翊安排，您無法自行設定。</span></li>
+  </ul>
+</figure>
+
+<h3 id="s5-2">5.2 代排班表的規則</h3>
+<div class="callout c-warn">
+  <strong>委外幹部的排班限制</strong>
+  <p>不論是幫自己排，或是幫其他人員排，都適用以下限制：</p>
+  <p>① <strong>一週只能選一天休假</strong>。</p>
+  <p>② <strong>只能點選 V（上班）與 休（休假）</strong>，不能點「例」。</p>
+  <p>③ 「國」（國定假日）預設不可選；除非日翊在系統設定開啟「委外幹部國定假日排班權限」。</p>
+  <p>最終班表仍由日翊人員排定確認。</p>
+</div>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 4</span>點擊格子的切換順序</figcaption>
+  <div class="ui" style="min-width:auto;padding:16px">
+    <div class="beforeafter">
+      <div class="ba-box"><div class="lbl">點一下</div><span class="cell cell-v">V</span></div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-box"><div class="lbl">再點一下</div><span class="cell cell-r">休</span></div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-box"><div class="lbl">再點一下</div><span class="cell cell-v">V</span></div>
+    </div>
+    <div style="text-align:center;margin-top:14px">
+      <span class="toast toast-warn">⚠ 一週僅能選擇一天休假</span>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span>在 <strong>V ↔ 休</strong> 之間來回切換，不會出現「例」與「國」。</span></li>
+    <li><span class="pin">2</span><span>該週已經有一天休假時再點第二天，會跳出提示且不會生效。要改休哪天，請先把原本那天點回 V。</span></li>
+  </ul>
+</figure>
+
+<h3 id="s5-3">5.3 不能編輯的情況</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:180px">情況</th><th>畫面表現</th><th>處理方式</th></tr>
+  <tr><td>該課尚未設定開放區間</td><td>橫幅顯示「僅供查看，不可編輯」</td><td>洽日翊窗口設定</td></tr>
+  <tr><td>日期在開放區間之外</td><td>格子呈<strong>灰底</strong></td><td>等該期間開放</td></tr>
+  <tr><td>該課已被鎖定</td><td>橫幅顯示「已鎖定」，點擊無反應</td><td>洽日翊窗口</td></tr>
+  <tr><td>該週已有一天休假</td><td>跳出橘色提示</td><td>先把原本的休假改回 V</td></tr>
+</table>
+</div>
+
+<h2 id="s6">6. 點名表</h2>
+<p>若管理員已開放此分頁，您可為自己廠商的人員點名。</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">畫面 5</span>點名表</figcaption>
+  <div class="ui">
+    <div style="padding:10px 12px">
+      <div class="tabs"><span class="tab on">點名</span><span class="tab">統計</span><span class="tab">回報</span></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:9px">
+        <span class="chip">📅 2026-09-07</span>
+        <span class="chip" style="background:#dcfce7;border-color:#86efac;color:#15803d">實到 7/12 人</span></div>
+      <div style="border:1px solid #bfdbfe;border-radius:10px;overflow:hidden">
+        <div style="background:#2563eb;color:#fff;padding:6px 11px;font-size:11.5px;font-weight:700;display:flex;gap:8px">
+          👥 三彥 <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:0 7px;font-size:10px">7/12 人</span>
+          <span style="margin-left:auto;font-size:10.5px">全選到班</span></div>
+        <div style="padding:7px 10px;display:flex;gap:9px;align-items:center;font-size:11.5px">
+          <span style="width:15px;height:15px;border:2px solid #2563eb;border-radius:4px;background:#2563eb;color:#fff;font-size:10px;text-align:center;line-height:13px">✓</span>
+          <span><b style="font-size:13px">陳明仁</b><br><span style="font-size:10px;color:#94a3b8">SY11301255　🕐 09:00~18:00</span></span>
+          <span class="sel" style="margin-left:auto">正常到班（無遲到早退）</span>
+          <span class="pin pin-abs" style="right:-9px;top:12px">1</span></div>
+        <div style="padding:7px 10px;display:flex;gap:9px;align-items:center;font-size:11.5px;background:#fff1f2;border-top:1px solid #f1f5f9">
+          <span style="width:15px;height:15px;border:2px solid #cbd5e1;border-radius:4px"></span>
+          <span><b style="font-size:13px">曾芳暖</b><br><span style="font-size:10px;color:#94a3b8">SY11205212　🕐 18:00~00:00</span></span>
+          <span class="sel off" style="margin-left:auto">請選假別</span>
+          <span class="pin pin-abs" style="right:-9px;top:12px">2</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>勾選＝已到班</strong>，右側再選遲到早退狀態。可用「全選到班」一次勾完再改個別例外。</span></li>
+    <li><span class="pin">2</span><span><strong>未勾選的列底色為淡紅</strong>，右側請選假別（事假、病假、特休…）。</span></li>
+    <li><span class="pin">3</span><span>點名結果自動存檔；日翊端會即時看到。</span></li>
+  </ul>
+</figure>
+
+<h2 id="s7">7. 手機控管</h2>
+<p>若管理員已開放此分頁，可記錄人員上班時的手機繳交狀況。</p>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">項目</th><th>說明</th></tr>
+  <tr><td>上班繳交手機</td><td>勾選代表已繳交，系統會顯示該員的鐵櫃與格號。</td></tr>
+  <tr><td>手機未交</td><td>用於已簽到但未繳交手機的情形。</td></tr>
+  <tr><td>櫃號</td><td>由系統自動配發（如「鐵櫃 三：24號格」），配到後固定不變。</td></tr>
+</table>
+</div>
+<div class="callout c-info">
+  <strong>目前僅大肚倉使用</strong>
+  <p>其他倉別若未使用此作業，管理員通常不會開放此分頁。</p>
+</div>
+
+<h2 id="s8">8. 報表匯出</h2>
+<p>可依上方篩選條件匯出自己廠商的班表與出勤統計。匯出前請先確認倉別、課別與日期範圍。</p>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">報表</th><th>內容</th></tr>
+  <tr><td>班表報表</td><td>期間內的班表，可列印或匯出 Excel。</td></tr>
+  <tr><td>出勤統計</td><td>期間內的應到／實到人數與到班率。</td></tr>
+</table>
+</div>
+
+<h2 id="s9">9. 常見問題 FAQ</h2>
+
+<p class="faq-q">為什麼我點不了「例」？</p>
+<p class="faq-a">委外幹部只能點 V 與 休。「例」由日翊統一安排，這是系統的固定限制。</p>
+
+<p class="faq-q">為什麼點第二天休假沒反應？</p>
+<p class="faq-a">一週只能選一天休假。請先把該週原本的休假日點回 V，再點新的日期。</p>
+
+<p class="faq-q">班表格子是灰色的，改不了？</p>
+<p class="faq-a">灰底代表該日期<strong>尚未開放排班</strong>。可查看上方橫幅顯示的開放區間，或洽日翊窗口。</p>
+
+<p class="faq-q">我申請了帳號但登不進去？</p>
+<p class="faq-a">帳號需經日翊管理員核准。請主動通知窗口，核准後即可登入。</p>
+
+<p class="faq-q">管理員說已經開放某個功能，我卻看不到？</p>
+<p class="faq-a">請<strong>登出後重新登入</strong>。權限變更需重新登入才會套用。</p>
+
+<p class="faq-q">看不到某位人員？</p>
+<p class="faq-a">先按<strong>清除篩選</strong>。若仍看不到，可能是該員不屬於您的廠商，或人員清冊上的廠商欄有誤，請洽日翊窗口。</p>
+
+<h2 id="s10">10. 版本紀錄</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:90px">版本</th><th style="width:110px">日期</th><th>異動內容</th></tr>
+  <tr><td>v1.0</td><td>2026/09/07</td><td>首版發行。涵蓋申請帳號、登入、篩選列、班表管理（含一週一天休假與只能選 V／休的限制）、點名表、手機控管、報表匯出。</td></tr>
+</table>
+</div>
+
+<div class="callout c-info">
+  <strong>維護單位與問題回報</strong>
+  <p>系統維護單位：日翊文化行銷股份有限公司　物流本部</p>
+  <p>操作問題與帳號申請，請洽所屬倉別的日翊窗口。</p>
+</div>

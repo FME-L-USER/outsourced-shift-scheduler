@@ -1,0 +1,21 @@
+<script>
+(function(){
+  var toggle = document.getElementById('navToggle');
+  var toc = document.getElementById('toc');
+  toggle.addEventListener('click', function(){ toc.classList.toggle('open'); });
+  toc.addEventListener('click', function(e){
+    if (e.target.tagName === 'A' && window.innerWidth <= 900) toc.classList.remove('open');
+  });
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var targets = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function sync(){
+    var pos = window.scrollY + 100, current = 0;
+    for (var i = 0; i < targets.length; i++){
+      if (targets[i] && targets[i].offsetTop <= pos) current = i;
+    }
+    links.forEach(function(a, i){ a.classList.toggle('active', i === current); });
+  }
+  window.addEventListener('scroll', sync, { passive:true });
+  sync();
+})();
+</script>
