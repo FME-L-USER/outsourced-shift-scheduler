@@ -2807,6 +2807,9 @@ function ScheduleTable() {
     setViewOffset(todayPeriodOffset(viewPeriod));
   }, [viewPeriod]);
   // 今日所在欄位以紅框標示，方便在長班表中快速定位
+  // 今日整欄的紅框以行內樣式套用：格子本身已有 border-r border-slate-100，
+  // 用 Tailwind 的 border-red-500 會因產生順序不同而不一定勝出
+  const TODAY_LINE = '2px solid #ef4444';
   const todayDk = (() => {
     const d = new Date();
     return dateKey(d.getFullYear(), d.getMonth() + 1, d.getDate());
@@ -3810,8 +3813,10 @@ function ScheduleTable() {
                   <th key={dk}
                     className={`px-1 py-1 w-14 min-w-[54px] text-center
                                 ${weekBand ? 'bg-[#F5F2EC]0' : ''}
-                                ${dk === todayDk ? 'border-t-2 border-l-2 border-r-2 border-red-500' : ''}
-                                ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}`}>
+                                ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}`}
+                    style={dk === todayDk
+                      ? { borderTop: TODAY_LINE, borderLeft: TODAY_LINE, borderRight: TODAY_LINE }
+                      : undefined}>
                     <div className="text-[15px] font-bold leading-tight whitespace-nowrap">{month}/{day}</div>
                     <div className={`text-[13px] ${isWeekend ? 'text-yellow-300' : weekBand ? 'text-slate-200' : 'text-slate-300'}`}>{wd}</div>
                   </th>
@@ -3885,10 +3890,12 @@ function ScheduleTable() {
                           className={`text-center py-2 border-r border-slate-100 cursor-pointer
                                       select-none transition-colors font-bold text-base
                                       ${warnDks.has(dk) ? 'bg-pink-200 text-slate-900' : info.color}
-                                      ${dk === todayDk ? '!border-l-2 !border-r-2 border-red-500' : ''}
                                       ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}
                                       ${locked ? 'cursor-not-allowed opacity-60' : 'hover:opacity-75'}`}
-                          style={weekBand ? { filter: 'brightness(0.93)' } : undefined}>
+                          style={{
+                            ...(weekBand ? { filter: 'brightness(0.93)' } : {}),
+                            ...(dk === todayDk ? { borderLeft: TODAY_LINE, borderRight: TODAY_LINE } : {}),
+                          }}>
                           {displayCode || <span className="text-slate-300">·</span>}
                         </td>
                       );
@@ -3920,9 +3927,11 @@ function ScheduleTable() {
                     <td className="hidden sm:table-cell" />
                     {dayHeaders.map(({ dk }) => (
                       <td key={dk}
-                        className={`px-1 py-1.5 text-center font-semibold ${color}
-                          ${dk === todayDk ? 'border-l-2 border-r-2 border-red-500' : ''}
-                          ${dk === todayDk && isLastStatRow ? 'border-b-2' : ''}`}>{fn(dk)}</td>
+                        className={`px-1 py-1.5 text-center font-semibold ${color}`}
+                        style={dk === todayDk
+                          ? { borderLeft: TODAY_LINE, borderRight: TODAY_LINE,
+                              ...(isLastStatRow ? { borderBottom: TODAY_LINE } : {}) }
+                          : undefined}>{fn(dk)}</td>
                     ))}
                     <td className="px-2 py-1.5" />
                     <td className="px-2 py-1.5" />
