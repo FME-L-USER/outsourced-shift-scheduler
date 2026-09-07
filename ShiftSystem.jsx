@@ -2900,7 +2900,7 @@ function ScheduleTable() {
   // 鎖定與開放區間皆以「課別」為單位：各課排班完成時間不同，需可分別設定
   const isEditable = useCallback((dk, emp) => {
     if (!lockAllowsEdit(emp?.dept ? deptLocks[emp.dept] : 'none', currentUser?.role)) return false;
-    // 該課別若有自訂開放區間則優先採用，否則沿用全域設定
+    // 開放排班區間一律以該課別的設定為準（全域設定已取消）
     // 該課別未設定開放區間＝尚未開放，任何角色都不可編輯
     const range = resolveRange(deptRanges, emp?.dept);
     if (!range.start || !range.end) return false;
@@ -3833,6 +3833,12 @@ function ScheduleTable() {
                 // 連續6天上班警示（僅對當區幹部/管理員顯示，廠商不顯示）
                 const runInfo = getWorkRunInfo(emp.id);
                 const warnDks = currentUser.role === ROLES.VENDOR ? new Set() : runInfo.warn;
+                // 該課開放區間結束日之後＝尚未開放排班。班表把空白顯示為 V，
+                // 若照常著色會讓人誤以為已排班，故一律灰底且不顯示假的 V。
+                const empOpenEnd = (() => {
+                  const r = resolveRange(deptRanges, emp.dept);
+                  return r.end ? parseLocal(r.end) : null;
+                })();
                 return (
                   <tr key={emp.id}
                     className={`${checkedEmpIds.has(emp.id) ? 'bg-red-50' : rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#F5F2EC]'}`}>
@@ -3869,9 +3875,15 @@ function ScheduleTable() {
                       })()}
                     </td>
                     {dayHeaders.map(({ dk, day, month, year, isWeekend, isMonthStart }, colIdx) => {
-                      const code = schedule[emp.id]?.[dk] ?? 'V';
-                      if (code === 'V') workDays++;
-                      else if (code === '休' || code === '例' || code === '國') leaveDays++;
+                      const rawCell = schedule[emp.id]?.[dk];
+                      // 尚未開放的未來日期：無明確排班者不顯示內容，有排班者以灰字呈現
+                      const notOpenYet = !!empOpenEnd
+                        && new Date(year, month - 1, day) > empOpenEnd;
+                      const code = rawCell ?? 'V';
+                      if (!notOpenYet || rawCell !== undefined) {
+                        if (code === 'V') workDays++;
+                        else if (code === '休' || code === '例' || code === '國') leaveDays++;
+                      }
                       const holidayLabel = code === '國' ? getHolidayLabel(day, month, year) : null;
                       const displayCode = showConverted
                         ? (() => {
@@ -3886,17 +3898,24 @@ function ScheduleTable() {
                       return (
                         <td key={dk}
                           onClick={() => handleCellClick(emp.id, dk)}
-                          title={holidayLabel ? `國定假日：${holidayLabel}` : displayCode !== code ? `班別代號：${displayCode}` : undefined}
+                          title={notOpenYet
+                            ? '此日期尚未開放排班'
+                            : holidayLabel ? `國定假日：${holidayLabel}`
+                            : displayCode !== code ? `班別代號：${displayCode}` : undefined}
                           className={`text-center py-2 border-r border-slate-100 cursor-pointer
                                       select-none transition-colors font-bold text-base
-                                      ${warnDks.has(dk) ? 'bg-pink-200 text-slate-900' : info.color}
+                                      ${notOpenYet
+                                        ? 'bg-slate-100 text-slate-400'
+                                        : warnDks.has(dk) ? 'bg-pink-200 text-slate-900' : info.color}
                                       ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}
                                       ${locked ? 'cursor-not-allowed opacity-60' : 'hover:opacity-75'}`}
                           style={{
                             ...(weekBand ? { filter: 'brightness(0.93)' } : {}),
                             ...(dk === todayDk ? { borderLeft: TODAY_LINE, borderRight: TODAY_LINE } : {}),
                           }}>
-                          {displayCode || <span className="text-slate-300">·</span>}
+                          {notOpenYet && rawCell === undefined
+                            ? <span className="text-slate-300">·</span>
+                            : (displayCode || <span className="text-slate-300">·</span>)}
                         </td>
                       );
                     })}
@@ -7182,8 +7201,8 @@ function Settings() {
                             });
                             return (
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className={`text-xs shrink-0 ${custom ? 'text-indigo-600 font-medium' : 'text-slate-400'}`}>
-                                  {custom ? '自訂區間' : '沿用全域'}
+                                <span className={`text-xs shrink-0 ${custom ? 'text-indigo-600 font-medium' : 'text-amber-600 font-medium'}`}>
+                                  {custom ? '開放區間' : '尚未設定'}
                                 </span>
                                 <input type="date" value={r.start ?? ''} onChange={e => set('start', e.target.value)}
                                   className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
@@ -7191,7 +7210,7 @@ function Settings() {
                                 <input type="date" value={r.end ?? ''} onChange={e => set('end', e.target.value)}
                                   className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
                                 {custom && (
-                                  <button onClick={() => { setDeptRanges(prev => { const n = { ...prev }; delete n[d.name]; return n; }); toast(`${d.name}：已改為沿用全域區間`, 'info'); }}
+                                  <button onClick={() => { setDeptRanges(prev => { const n = { ...prev }; delete n[d.name]; return n; }); toast(`${d.name}：已清除開放區間，該課將僅能查看班表`, 'warn'); }}
                                     className="px-2 py-1 text-xs rounded-lg border border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC]">
                                     清除
                                   </button>
