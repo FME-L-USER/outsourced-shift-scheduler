@@ -185,6 +185,10 @@ const VENDOR_COMPANY_NAMES = {
   '智遠': '智遠管理顧問有限公司',
 };
 
+/** 作業區種子清單。每位人員可指派一個作業區；空字串＝未設定。
+ *  清單可於系統設定增修，此處僅為初次啟用時的預設值。 */
+const SEED_WORK_AREAS = ['O2O', '團預購', '收發', '廠退', '外場', '小白單'];
+
 /** 廠商種子資料（從 VENDOR_MAP 展開） */
 const SEED_VENDORS = Object.entries(VENDOR_MAP).map(([code, name]) => ({
   id: 'vd_' + code.toLowerCase(),
@@ -672,12 +676,45 @@ function isUnknownGroup(warehouses, emp) {
   return !!valid && !valid.has(emp.group);
 }
 
+// 臨時人員（extras）只帶「組別 + 廠商」，沒有倉別/課別欄位，
+// 故倉別與課別必須由組別回推：找出哪個倉、哪個課的 groups 含這個組別。
+function deptOfGroup(warehouses, groupName) {
+  if (!groupName) return null;
+  for (const w of warehouses ?? [])
+    for (const d of (w.departments ?? []))
+      if ((d.groups ?? []).includes(groupName)) return { whId: w.id, whName: w.name, deptName: d.name };
+  return null;
+}
+// 依上方篩選列（倉別／課別／組別／廠商）篩選當日臨時人員。
+// 組別已不存在於任何課（例如拆分前的舊「運務組」）時，一旦有倉別或課別條件即不顯示，
+// 避免大肚理貨課的畫面上跑出運務課的臨時人力。
+function filterExtrasByScope(list, warehouses, selectedWarehouse, selectedDeptName, selectedGroup, selectedVendor) {
+  return (list ?? []).filter(e => {
+    if (selectedVendor && e.vendor !== selectedVendor) return false;
+    if (selectedGroup) return !e.group || e.group === selectedGroup;
+    if (selectedDeptName || selectedWarehouse) {
+      const owner = deptOfGroup(warehouses, e.group);
+      if (!owner) return false;
+      if (selectedDeptName  && owner.deptName !== selectedDeptName) return false;
+      if (selectedWarehouse && owner.whId     !== selectedWarehouse) return false;
+    }
+    return true;
+  });
+}
+
 // 名稱比對用正規化：去掉半形/全形空白、零寬字元，避免「三彥 」被當成新廠商
 function normName(v) {
   return (v ?? '').toString().replace(/[\s　​﻿]/g, '');
 }
 
-function filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup) {
+// 依作業區篩選；'__none__' 代表尚未指派作業區者
+function filterByWorkArea(list, area) {
+  if (!area) return list;
+  if (area === '__none__') return list.filter(e => !e.workArea);
+  return list.filter(e => e.workArea === area);
+}
+
+function filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea) {
   if (selectedDept) {
     const wh   = warehouses.find(w => w.id === selectedWarehouse);
     const dept = wh?.departments?.find(d => d.id === selectedDept);
@@ -701,7 +738,7 @@ function filterByScope(list, warehouses, selectedWarehouse, selectedDept, select
     }
     // 倉庫未設定課別時不過濾（顯示全部員工）
   }
-  return list;
+  return filterByWorkArea(list, selectedWorkArea);
 }
 
 // ─────────────────────────────────────────────
@@ -1712,6 +1749,8 @@ function WarehouseDeptBar() {
     selectedWarehouse, setSelectedWarehouse,
     selectedDept,      setSelectedDept,
     selectedGroup,     setSelectedGroup,
+    selectedWorkArea,  setSelectedWorkArea,
+    workAreas,         setWorkAreas,
     selectedVendor,    setSelectedVendor,
   } = useApp();
 
@@ -1765,13 +1804,14 @@ function WarehouseDeptBar() {
     return [...allV].sort();
   })();
 
-  const hasFilter = selectedWarehouse || selectedDept || selectedGroup || selectedVendor;
+  const hasFilter = selectedWarehouse || selectedDept || selectedGroup || selectedVendor || selectedWorkArea;
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
   const filterLabel = [
     selectedWarehouse ? visibleWarehouses.find(w=>w.id===selectedWarehouse)?.name : null,
     selectedDept ? deptObj?.name : null,
     selectedGroup || null,
+    selectedWorkArea === '__none__' ? '未設定作業區' : (selectedWorkArea || null),
     selectedVendor || null,
   ].filter(Boolean).join(' › ') || '全部';
 
@@ -1800,6 +1840,14 @@ function WarehouseDeptBar() {
         {groups.map(g => <option key={g} value={g}>{g}</option>)}
       </select>
       <span className="text-slate-400">›</span>
+      <span className="text-slate-500 font-medium whitespace-nowrap">作業區：</span>
+      <select value={selectedWorkArea ?? ''} onChange={e => setSelectedWorkArea(e.target.value || null)}
+        className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <option value="">全部作業區</option>
+        {workAreas.map(a => <option key={a} value={a}>{a}</option>)}
+        <option value="__none__">未設定</option>
+      </select>
+      <span className="text-slate-400">›</span>
       <span className="text-slate-500 font-medium whitespace-nowrap">廠商：</span>
       <select value={selectedVendor ?? ''} onChange={e => handleVendorChange(e.target.value)}
         className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
@@ -1807,7 +1855,7 @@ function WarehouseDeptBar() {
         {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
       </select>
       {hasFilter && (
-        <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setMobileFilterOpen(false); }}
+        <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setSelectedWorkArea(null); setMobileFilterOpen(false); }}
           className="px-2 py-0.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
           清除篩選
         </button>
@@ -1863,6 +1911,15 @@ function WarehouseDeptBar() {
               </select>
             </div>
             <div className="flex items-center gap-2">
+              <span className="text-slate-500 w-12 shrink-0">作業區</span>
+              <select value={selectedWorkArea ?? ''} onChange={e => setSelectedWorkArea(e.target.value || null)}
+                className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                <option value="">全部作業區</option>
+                {workAreas.map(a => <option key={a} value={a}>{a}</option>)}
+                <option value="__none__">未設定</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
               <span className="text-slate-500 w-12 shrink-0">廠商</span>
               <select value={selectedVendor ?? ''} onChange={e => handleVendorChange(e.target.value)}
                 className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
@@ -1871,7 +1928,7 @@ function WarehouseDeptBar() {
               </select>
             </div>
             {hasFilter && (
-              <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setMobileFilterOpen(false); }}
+              <button onClick={() => { setSelectedWarehouse(null); setSelectedDept(null); setSelectedGroup(null); setSelectedVendor(null); setSelectedWorkArea(null); setMobileFilterOpen(false); }}
                 className="self-start px-3 py-1 text-xs text-slate-500 border border-[#DDD9D0] rounded-full hover:bg-slate-100">
                 清除篩選
               </button>
@@ -1945,7 +2002,7 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, ope
 function Dashboard() {
   const {
     employees, schedule, currentUser, selectedYear, selectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
     attendData, extras,
   } = useApp();
 
@@ -1965,14 +2022,14 @@ function Dashboard() {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor) && e.status !== '離職')
       : employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
-    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
+    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea]);
 
   // 儀表板用：不過濾 vendor 角色，讓各廠商長期人員都能算到
   const dashEmployees = useMemo(() => {
     const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
-    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-  }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
+    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+  }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea]);
 
   // 前周同星期日期
   const prevWeekDate = useMemo(() => {
@@ -2066,7 +2123,7 @@ function Dashboard() {
       tempPresent:  s.tempPresent  ?? 0,
       tempExpected: s.tempExpected ?? 0,
     }));
-  }, [dashEmployees, employees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup, selectedWarehouse]);
+  }, [dashEmployees, employees, schedule, dashYear, dashMonth, safeDay, prevWeekDate, GROUP_COLS, attendData, extras, selectedGroup, selectedWorkArea, selectedWarehouse]);
 
   const selectedDayWorking = vendorStats.reduce((acc, s) => acc + s.working, 0);
 
@@ -2574,7 +2631,7 @@ function ScheduleTable() {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     deptLocks, deptRanges, periodRange, openHolidays, vendorHolidayOpen,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
     selectedVendor,
   } = useApp();
   const toast = useToast();
@@ -2680,20 +2737,18 @@ function ScheduleTable() {
     const first = dayHeaders[0];
     const last = dayHeaders[dayHeaders.length - 1];
     const inPeriod = new Set(dayHeaders.map(h => h.dk));
+    // 往前多看 7 天，讓上一期延續過來的連續上班也能被抓到；
+    // 但「不往未來延伸」——下一期的班多半是匯入時的預設 V，尚未實際排定，
+    // 若一併計入會產生假警示。下一期的檢核等排到那一期時自然會做。
     const cur = new Date(first.year, first.month - 1, first.day);
     cur.setDate(cur.getDate() - MAX_WORK_RUN);
     const stop = new Date(last.year, last.month - 1, last.day);
-    stop.setDate(stop.getDate() + MAX_WORK_RUN);
 
-    // 未來尚未排班的日子不納入連續天數計算。
-    // 班表把空白顯示為 V，若一併計入，期末那幾天還沒排的空白會把人推過 7 天門檻，
-    // 產生假警示。故以「該員最後一筆實際排定的日期」為界，之後一律不計。
-    const lastScheduled = Object.keys(row).reduce((mx, k) => {
-      const [ky, km, kd] = k.split('-').map(Number);
-      if (!ky || !km || !kd) return mx;
-      const t = new Date(ky, km - 1, kd).getTime();
-      return t > mx ? t : mx;
-    }, -Infinity);
+    // 該課開放區間結束日之後的日子在畫面上呈灰底、視為尚未開放，同樣不納入計算
+    const openEnd = (() => {
+      const r = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept);
+      return r.end ? parseLocal(r.end).getTime() : Infinity;
+    })();
 
     let max = 0;
     const warn = new Set();
@@ -2709,7 +2764,7 @@ function ScheduleTable() {
       run = []; touches = false;
     };
     while (cur <= stop) {
-      if (cur.getTime() > lastScheduled) break;   // 之後皆為尚未排班的日子
+      if (cur.getTime() > openEnd) break;   // 尚未開放排班的日子不計
       const dk = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
       const within = inPeriod.has(dk);
       const isWork = within ? ((row[dk] ?? 'V') === 'V') : (row[dk] === 'V');
@@ -2864,7 +2919,7 @@ function ScheduleTable() {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
@@ -2874,7 +2929,7 @@ function ScheduleTable() {
       );
     }
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, nameSearch]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch]);
 
   /** 計算當週某代碼出現次數（週一～週日） */
   const getWeeklyCode = useCallback((empId, dk, code) => {
@@ -3619,7 +3674,7 @@ function ScheduleTable() {
     win.document.close();
     win.focus();
     setTimeout(() => win.print(), 400);
-  }, [visibleEmployees, schedule, dayHeaders, selectedYear, selectedMonth, selectedWarehouse, selectedDept, selectedGroup, warehouses, rangeMode, viewRange, showConverted, getDisplayCode, getHolidayLabel, toast]);
+  }, [visibleEmployees, schedule, dayHeaders, selectedYear, selectedMonth, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, warehouses, rangeMode, viewRange, showConverted, getDisplayCode, getHolidayLabel, toast]);
 
   return (
     <div className="p-6 space-y-4">
@@ -3994,8 +4049,8 @@ function fuzzyMatch(headers) {
 
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
-    warehouses, setWarehouses, vendors, setVendors,
-    selectedWarehouse, selectedDept, selectedGroup, saveNow, triggerForceSave } = useApp();
+    warehouses, setWarehouses, vendors, setVendors, workAreas,
+    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, saveNow, triggerForceSave } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -4011,17 +4066,17 @@ function EmployeeRoster() {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     if (filterVendor !== '全部') list = list.filter(e => e.vendor === filterVendor);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(e => e.name.toLowerCase().includes(q) || e.empId.toLowerCase().includes(q));
     }
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, filterVendor, search]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search]);
 
   // 篩選條件變動時重置到第1頁
-  useEffect(() => { setPage(1); }, [selectedWarehouse, selectedDept, selectedGroup, filterVendor, search]);
+  useEffect(() => { setPage(1); }, [selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search]);
 
   const totalPages  = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const pagedVisible = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -4393,14 +4448,14 @@ function EmployeeRoster() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                {['員編','姓名','廠商','課別','組別','狀態','操作'].map(h => (
+                {['員編','姓名','廠商','課別','組別','作業區','狀態','操作'].map(h => (
                   <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pagedVisible.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-slate-400">無人員資料</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-slate-400">無人員資料</td></tr>
               )}
               {pagedVisible.map(emp => (
                 <tr key={emp.id} className="hover:bg-[#F5F2EC]">
@@ -4425,6 +4480,22 @@ function EmployeeRoster() {
                           {isUnknownGroup(warehouses, emp) && '⚠ '}{emp.group}
                         </span>
                       : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    {/* 直接於清單指派，省去逐一開啟編輯視窗 */}
+                    <select value={emp.workArea ?? ''}
+                      onChange={e => setEmployees(prev => prev.map(x =>
+                        x.id === emp.id ? { ...x, workArea: e.target.value } : x))}
+                      className={`border rounded-lg px-2 py-1 text-xs
+                        ${emp.workArea
+                          ? 'border-[#DDD9D0] text-slate-700'
+                          : 'border-[#DDD9D0] text-slate-400'}`}>
+                      <option value="">未設定</option>
+                      {workAreas.map(a => <option key={a} value={a}>{a}</option>)}
+                      {/* 指派值已從清單移除時仍需顯示，否則會靜默變成未設定 */}
+                      {emp.workArea && !workAreas.includes(emp.workArea) &&
+                        <option value={emp.workArea}>{emp.workArea}（已停用）</option>}
+                    </select>
                   </td>
                   <td className="px-4 py-2.5">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium
@@ -4503,7 +4574,7 @@ function EmployeeRoster() {
 
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    warehouses, selectedWarehouse, selectedDept, selectedGroup,
+    warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
     vendorCompanyNames, currentUser, deptRanges } = useApp();
   const toast = useToast();
 
@@ -4557,8 +4628,8 @@ function Reports() {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup]);
+    return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea]);
 
   const buildVendorSheet = (vendor) => {
     const emps       = scopedEmployees.filter(e => e.vendor === vendor);
@@ -5695,7 +5766,7 @@ function WorkerSelfCheck() {
 // phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
 // 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
 function Attendance({ phoneOnly = false }) {
-  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
+  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, selectedWorkArea, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
   const toast = useToast();
 
   // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
@@ -5816,7 +5887,7 @@ function Attendance({ phoneOnly = false }) {
     let list = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (selectedGroup) list = list.filter(e => e.shiftType === selectedGroup || e.group === selectedGroup);
     // 班表當日排休/例/國 → 不出現在點名名單，
@@ -5831,7 +5902,7 @@ function Attendance({ phoneOnly = false }) {
     // 幹部手動排除於當日名單者（調班、支援他課等）；班表與清冊不受影響
     list = list.filter(e => !dayRecs[e.id]?._excluded);
     return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedVendor, attendDate, schedule, attendData]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, attendDate, schedule, attendData]);
 
   // 排休卻來上班者的 id，供名單上標示區隔
   const offDutyPresentIds = useMemo(() => {
@@ -5843,10 +5914,15 @@ function Attendance({ phoneOnly = false }) {
       .map(e => e.id));
   }, [scopedEmps, attendDate, attendData, schedule]);
 
-  const dateExtras = (extras[attendDate] ?? []).filter(e =>
-    (!selectedGroup || !e.group || e.group === selectedGroup) &&
-    (!selectedVendor || e.vendor === selectedVendor)
-  );
+  const attendDeptName = useMemo(() => {
+    if (!selectedDept) return null;
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    return wh?.departments?.find(d => d.id === selectedDept)?.name ?? null;
+  }, [warehouses, selectedWarehouse, selectedDept]);
+
+  const dateExtras = useMemo(() => filterExtrasByScope(extras[attendDate], warehouses,
+    selectedWarehouse, attendDeptName, selectedGroup, selectedVendor),
+    [extras, attendDate, warehouses, selectedWarehouse, attendDeptName, selectedGroup, selectedVendor]);
 
   const vendorGroups = useMemo(() => {
     const map = {};
@@ -5861,15 +5937,13 @@ function Attendance({ phoneOnly = false }) {
   // 臨時人員依廠商分組（含匯入 + 手動新增）
   const extrasVendorGroups = useMemo(() => {
     const map = {};
-    (extras[attendDate] ?? []).forEach(e => {
-      // 依目前選擇的組別篩選，無組別限制時全部顯示
-      if (selectedGroup && e.group && e.group !== selectedGroup) return;
+    dateExtras.forEach(e => {
       const v = e.vendor || '未分配';
       if (!map[v]) map[v] = [];
       map[v].push(e);
     });
     return map;
-  }, [extras, attendDate, selectedGroup]);
+  }, [dateExtras]);
 
   const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
 
@@ -5997,7 +6071,7 @@ function Attendance({ phoneOnly = false }) {
     let longList = currentUser.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    longList = filterByScope(longList, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    longList = filterByScope(longList, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     if (reportGroup) longList = longList.filter(e => e.shiftType === reportGroup || e.group === reportGroup);
     const [ry, rm, rd] = reportDate.split('-').map(Number);
     const reportDk = dateKey(ry, rm, rd);
@@ -6911,6 +6985,8 @@ function Settings() {
     vendorCompanyNames, setVendorCompanyNames,
     vendors, setVendors,
     warehouses, setWarehouses,
+    workAreas, setWorkAreas,
+    employees, setEmployees,
     selectedYear, currentUser,
   } = useApp();
   const toast = useToast();
@@ -6919,6 +6995,25 @@ function Settings() {
   const isAdminUser = currentUser?.role === ROLES.ADMIN;
   // 全域區間已取消，國定假日改以各課別區間的聯集決定篩選範圍
   const unionRange = useMemo(() => unionDeptRange(deptRanges), [deptRanges]);
+
+  // ── 作業區設定 ──
+  const [areaInput, setAreaInput] = useState('');
+  const addArea = () => {
+    const v = areaInput.trim();
+    if (!v) { toast('請輸入作業區名稱', 'error'); return; }
+    if (workAreas.includes(v)) { toast(`「${v}」已存在`, 'warn'); return; }
+    setWorkAreas([...workAreas, v]);
+    setAreaInput('');
+    toast(`已新增作業區：${v}`, 'success');
+  };
+  const removeArea = (a, used) => {
+    // 仍有人員指派時需確認，刪除後那些人會變成「未設定」
+    if (used > 0 && !window.confirm(`目前有 ${used} 位人員指派為「${a}」。
+刪除後這些人的作業區會變成「未設定」，確定刪除？`)) return;
+    setWorkAreas(workAreas.filter(x => x !== a));
+    if (used > 0) setEmployees(prev => prev.map(e => e.workArea === a ? { ...e, workArea: '' } : e));
+    toast(`已刪除作業區：${a}`, 'info');
+  };
 
   // ── 每期日期區間 ──
   const [pStart, setPStart] = useState(periodRange.start ?? '');
@@ -7230,6 +7325,44 @@ function Settings() {
       </SettingsSection>
 
       {/* ── 開放排班國定假日 ── */}
+      {/* ── 作業區設定 ── */}
+      {isAdminUser && (<SettingsSection title="作業區設定" desc="維護可指派給人員的作業區項目">
+        <p className="text-xs text-slate-500 mb-3">
+          作業區指派到<strong>每一位人員</strong>（於人員清冊設定），可用於上方篩選列快速篩出特定作業區的人。
+          <br />未指派者在篩選列以「未設定」歸類。
+        </p>
+        <div className="flex gap-2 mb-3 flex-wrap">
+          <input value={areaInput} onChange={e => setAreaInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addArea(); }}
+            placeholder="輸入新作業區名稱"
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48" />
+          <button onClick={addArea}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            ➕ 新增
+          </button>
+        </div>
+        {workAreas.length === 0 ? (
+          <p className="text-sm text-slate-400">尚未設定任何作業區</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {workAreas.map(a => {
+              const used = employees.filter(e => e.workArea === a).length;
+              return (
+                <span key={a}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border
+                             border-[#DDD9D0] bg-white text-sm text-slate-700">
+                  {a}
+                  <span className="text-xs text-slate-400">{used} 人</span>
+                  <button onClick={() => removeArea(a, used)}
+                    title={used > 0 ? `仍有 ${used} 人使用此作業區` : '刪除'}
+                    className="text-slate-400 hover:text-red-600 font-bold">×</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </SettingsSection>)}
+
       {isAdminUser && (<SettingsSection title="開放排班國定假日" desc="勾選後班表中「國」顯示假日短名">
         <p className="text-xs text-slate-500 mb-4">
           依各課別開放排班區間的整體範圍自動篩選國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
@@ -7809,7 +7942,7 @@ const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
 });
 
 function ShiftSetup() {
-  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, currentUser,
+  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, currentUser,
           shiftTypesByWh, setShiftTypesByWh } = useApp();
   const toast = useToast();
 
@@ -7967,7 +8100,7 @@ function ShiftSetup() {
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup);
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     const filtered = list.filter(e => {
       if (filterVendor && e.vendor !== filterVendor) return false;
       if (filterShift  && e.shiftTypeId !== filterShift) return false;
@@ -8527,7 +8660,7 @@ function ShiftCodeTable() {
 
 function AccountManagement() {
   const { users, setUsers, vendors, warehouses, currentUser, employees,
-          setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup, selectedVendor } = useApp();
+          setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
 
@@ -8993,6 +9126,15 @@ function AccountManagement() {
   })();
   const staffUsers   = users.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role) && u.approved !== false);
 
+  // 員工帳號 tab：依上方「倉別」篩選（比對該帳號的可用倉別）。
+  // 管理員可使用全部倉別，故不受倉別篩選影響，一律顯示。
+  const staffApiUsers = apiUsers.filter(u => {
+    if (![ROLES.ADMIN, ROLES.AREA].includes(u.role)) return false;
+    if (selectedWarehouse && u.role !== ROLES.ADMIN
+        && !(u.allowedWarehouses ?? []).includes(selectedWarehouse)) return false;
+    return true;
+  });
+
   // Tab 2: 廠商帳號 — 依登入員工的倉別×課別×廠商別綁定過濾可見廠商
   const allowedWhForFilter = currentUser?.role === ROLES.ADMIN ? null : (currentUser?.allowedWarehouses ?? []);
   const visibleVendorNames = allowedWhForFilter === null
@@ -9028,7 +9170,7 @@ function AccountManagement() {
   // 委外人員 tab：從員工清冊取得，依上方條件篩選，標示是否已升級為幹部帳號
   const workerEmpListAll = filterByScope(
     employees.filter(e => e.status !== '離職' && e.vendor),
-    warehouses, selectedWarehouse, selectedDept, selectedGroup
+    warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea
   );
   const workerEmpList = workerEmpListAll.filter(e =>
     // 上方「廠商」篩選同樣要套用，否則選了廠商清單卻不會收斂
@@ -9071,7 +9213,7 @@ function AccountManagement() {
   };
 
   const TAB_CFG = [
-    { key: 'staff',  label: '員工帳號', icon: '🏢', count: apiUsersLoaded ? apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).length : staffUsers.length },
+    { key: 'staff',  label: '員工帳號', icon: '🏢', count: apiUsersLoaded ? staffApiUsers.length : staffUsers.length },
     { key: 'vendor', label: '廠商帳號', icon: '🤝', count: vendorUsers.length },
     { key: 'worker', label: '委外人員', icon: '👷', count: workerEmpListAll.length },
   ];
@@ -9301,11 +9443,11 @@ function AccountManagement() {
       {activeTab === 'staff' && apiUsersLoaded && (
         <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
           <div className="bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0] flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">AD 員工帳號（{apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).length} 筆）</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">AD 員工帳號（{staffApiUsers.length} 筆）</span>
             <span className="text-xs text-slate-400">可設定每位員工可使用的倉別</span>
           </div>
           <div className="divide-y divide-slate-100">
-            {apiUsers.filter(u => [ROLES.ADMIN, ROLES.AREA].includes(u.role)).map(u => (
+            {staffApiUsers.map(u => (
               <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
                 {u.display_name && <span className="text-sm text-slate-600 shrink-0">{u.display_name}</span>}
@@ -9737,6 +9879,9 @@ export default function App() {
   const [selectedWarehouse, setSelectedWarehouse] = useState(() => LS.get('sms_sel_wh',     null));
   const [selectedDept,      setSelectedDept]      = useState(() => LS.get('sms_sel_dept',   null));
   const [selectedGroup,     setSelectedGroup]     = useState(() => LS.get('sms_sel_grp',    null));
+  const [selectedWorkArea,  setSelectedWorkArea]  = useState(() => LS.get('sms_sel_area',   null));
+  // 作業區清單（可於系統設定增修）；人員的 workArea 欄位對應其中一項，空字串＝未設定
+  const [workAreas,         setWorkAreas]         = useState(() => LS.get('sms_work_areas', SEED_WORK_AREAS));
   const [selectedVendor,    setSelectedVendor]    = useState(() => LS.get('sms_sel_vendor', null));
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
   // 各課別鎖定狀態 { 課別名稱: 'none'|'partial'|'full' }：各課排班完成時間不同，需分別鎖定
@@ -9832,6 +9977,7 @@ export default function App() {
           systemLocked:       LS.get('sms_locked', false),
           deptLocks:          LS.get('sms_dept_locks', {}),
           deptRanges:         LS.get('sms_dept_ranges', {}),
+          workAreas:          LS.get('sms_work_areas', SEED_WORK_AREAS),
           periodRange:        LS.get('sms_period_range', {}),
           lockerAssign:       LS.get('sms_locker_assign', {}),
           scheduleRange:      LS.get('sms_range', {}),
@@ -9879,6 +10025,7 @@ export default function App() {
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
               if (s.periodRange)             setPeriodRange(s.periodRange);
+              if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -9908,6 +10055,7 @@ export default function App() {
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
               if (s.periodRange)             setPeriodRange(s.periodRange);
+              if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -9940,6 +10088,7 @@ export default function App() {
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
+        if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
         if (state?.lockerAssign)           setLockerAssign(state.lockerAssign);
         if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
@@ -10004,6 +10153,7 @@ export default function App() {
       if (s.deptLocks)               setDeptLocks(s.deptLocks);
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
               if (s.periodRange)             setPeriodRange(s.periodRange);
+              if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
       if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
       if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -10104,6 +10254,8 @@ export default function App() {
   useEffect(() => { LS.set('sms_sel_wh',    selectedWarehouse);   }, [selectedWarehouse]);
   useEffect(() => { LS.set('sms_sel_dept',  selectedDept);        }, [selectedDept]);
   useEffect(() => { LS.set('sms_sel_grp',   selectedGroup);       }, [selectedGroup]);
+  useEffect(() => { LS.set('sms_sel_area',  selectedWorkArea);    }, [selectedWorkArea]);
+  useEffect(() => { LS.set('sms_work_areas', workAreas);          }, [workAreas]);
   useEffect(() => { LS.set('sms_schedule',   schedule,      storageWarn); }, [schedule]);
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
   useEffect(() => { LS.set('sms_dept_locks',     deptLocks);     }, [deptLocks]);
@@ -10132,7 +10284,7 @@ export default function App() {
   // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
   const latestStateRef = useRef({});
   latestStateRef.current = {
-    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign,
+    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
@@ -10159,7 +10311,7 @@ export default function App() {
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
     const body = JSON.stringify({
-      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign,
+      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
@@ -10180,7 +10332,7 @@ export default function App() {
         .then(r => { done(r.ok); if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
-  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign, scheduleRange,
+  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
@@ -10311,6 +10463,8 @@ export default function App() {
     selectedWarehouse, setSelectedWarehouse,
     selectedDept, setSelectedDept,
     selectedGroup, setSelectedGroup,
+    selectedWorkArea, setSelectedWorkArea,
+    workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
     schedule, setSchedule,
     systemLocked, setSystemLocked,

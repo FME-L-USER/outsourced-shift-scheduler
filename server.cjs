@@ -984,7 +984,8 @@ app.put('/api/state', requireAuth, async (req, res) => {
   if ((rest.schedule && Object.keys(rest.schedule).length > 0) ||
       (rest.workerPwds && Object.keys(rest.workerPwds).length >= 0) ||
       (Array.isArray(rest.employees) && rest.employees.length > 0) ||
-      (Array.isArray(rest.warehouses) && rest.warehouses.length > 0)) {
+      (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
+      rest.deptLocks || rest.deptRanges) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1009,6 +1010,30 @@ app.put('/api/state', requireAuth, async (req, res) => {
         const incomingById = new Map(rest.warehouses.map(w => [w.id, w]));
         rest.warehouses = (cur.warehouses ?? []).map(w =>
           (allowed.has(w.id) && incomingById.has(w.id)) ? incomingById.get(w.id) : w);
+      }
+      // deptLocks / deptRanges：以「倉別」為界合併。
+      // 這兩份設定是以「課別名稱」為 key 的單一物件，整份覆蓋時，日翊(area)只看得到
+      // 自己倉別的課，送出的快照卻是整份 —— 大溪的日翊存檔就會把大肚剛設好的區間洗掉。
+      // 作法：只採用「來源可管轄倉別」底下課別的 key（含該範圍內的刪除，維持「清除」語意），
+      // 其餘 key 一律沿用伺服器現值。admin 可管轄全部倉別，行為不變。
+      if (role === 'area' && (rest.deptLocks || rest.deptRanges)) {
+        const allowedWh = new Set(req.user?.allowed_warehouses ?? []);
+        const scopedDepts = new Set();
+        for (const w of (cur.warehouses ?? [])) {
+          if (!allowedWh.has(w.id)) continue;
+          for (const d of (w.departments ?? [])) scopedDepts.add(d.name);
+        }
+        for (const key of ['deptLocks', 'deptRanges']) {
+          if (!rest[key]) continue;
+          const merged = {};
+          // 管轄範圍外：一律以伺服器現值為準
+          for (const [k, v] of Object.entries(cur[key] ?? {}))
+            if (!scopedDepts.has(k)) merged[k] = v;
+          // 管轄範圍內：以來源為準（來源沒有的 key 即為刪除）
+          for (const [k, v] of Object.entries(rest[key]))
+            if (scopedDepts.has(k)) merged[k] = v;
+          rest[key] = merged;
+        }
       }
       // employees：逐筆合併欄位。多位日翊同時登入時，每個瀏覽器每 2 秒送出自己的
       // employees 快照；若整份覆蓋，別人剛設定的欄位（例如 shiftTypeId 班別指派）
