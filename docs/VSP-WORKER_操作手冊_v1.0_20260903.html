@@ -1,0 +1,446 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>委外人力排班作業平台｜委外人員操作手冊</title>
+<style>
+  :root{
+    --brand:#2563eb; --brand-dark:#1e40af; --brand-soft:#eff6ff;
+    --ink:#1e293b; --ink-2:#475569; --ink-3:#94a3b8;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+    --info:#2563eb; --info-bg:#eff6ff;
+    --warn:#ea580c; --warn-bg:#fff7ed;
+    --tip:#059669;  --tip-bg:#ecfdf5;
+    --nav-w:270px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",-apple-system,sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  a{color:var(--brand); text-decoration:none}
+
+  /* ── 頁首 ── */
+  header.top{
+    position:sticky; top:0; z-index:50;
+    background:var(--brand-dark); color:#fff;
+    padding:14px 24px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    box-shadow:0 1px 8px rgba(0,0,0,.15);
+  }
+  header.top .co{font-size:13px; opacity:.75; letter-spacing:.5px}
+  header.top h1{font-size:17px; margin:0; font-weight:700}
+  header.top .ver{margin-left:auto; font-size:12px; opacity:.8}
+  #navToggle{
+    display:none; background:rgba(255,255,255,.15); border:0; color:#fff;
+    font-size:18px; width:36px; height:36px; border-radius:8px; cursor:pointer;
+  }
+
+  /* ── 版面 ── */
+  .wrap{display:flex; align-items:flex-start}
+
+  nav.toc{
+    width:var(--nav-w); flex-shrink:0;
+    position:sticky; top:60px; height:calc(100vh - 60px);
+    overflow-y:auto; background:var(--card); border-right:1px solid var(--line);
+    padding:18px 0 40px;
+  }
+  nav.toc .toc-title{
+    font-size:11px; font-weight:700; color:var(--ink-3);
+    letter-spacing:1.5px; padding:0 20px 10px;
+  }
+  nav.toc a{
+    display:block; padding:7px 20px; font-size:14px; color:var(--ink-2);
+    border-left:3px solid transparent;
+  }
+  nav.toc a:hover{background:var(--brand-soft); color:var(--brand)}
+  nav.toc a.sub{padding-left:36px; font-size:13px; color:var(--ink-3)}
+  nav.toc a.active{
+    background:var(--brand-soft); color:var(--brand);
+    border-left-color:var(--brand); font-weight:600;
+  }
+
+  main{flex:1; min-width:0; padding:32px 40px 80px; max-width:960px}
+
+  h2{
+    font-size:22px; margin:44px 0 16px; padding-bottom:10px;
+    border-bottom:2px solid var(--brand); color:var(--brand-dark);
+    scroll-margin-top:76px;
+  }
+  h2:first-of-type{margin-top:8px}
+  h3{font-size:17px; margin:28px 0 12px; color:var(--ink); scroll-margin-top:76px}
+  h4{font-size:15px; margin:20px 0 8px; color:var(--ink-2)}
+  p{margin:10px 0}
+
+  table{
+    width:100%; border-collapse:collapse; margin:14px 0;
+    background:var(--card); font-size:14px;
+    box-shadow:0 1px 3px rgba(0,0,0,.05); border-radius:8px; overflow:hidden;
+  }
+  th{background:var(--brand); color:#fff; text-align:left; font-weight:600; padding:10px 14px}
+  td{padding:10px 14px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  .tbl-wrap{overflow-x:auto}
+
+  .callout{border-left:4px solid; border-radius:0 8px 8px 0; padding:12px 16px; margin:16px 0; font-size:14px}
+  .callout p{margin:4px 0}
+  /* 僅提示框標題（直接子元素）獨立成行，段落內的粗體維持行內 */
+  .callout>strong{display:block; margin-bottom:2px}
+  .c-info{border-color:var(--info); background:var(--info-bg); color:#1e3a8a}
+  .c-warn{border-color:var(--warn); background:var(--warn-bg); color:#7c2d12}
+  .c-tip {border-color:var(--tip);  background:var(--tip-bg);  color:#065f46}
+
+  ol.steps{counter-reset:s; list-style:none; padding:0; margin:16px 0}
+  ol.steps>li{
+    counter-increment:s; position:relative; padding:12px 16px 12px 52px;
+    background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px;
+  }
+  ol.steps>li::before{
+    content:counter(s); position:absolute; left:14px; top:12px;
+    width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff;
+    font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center;
+  }
+
+  code{
+    background:#f1f5f9; padding:2px 7px; border-radius:5px;
+    font-family:"Consolas","Monaco",monospace; font-size:13px; color:#be123c;
+  }
+  .cell{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:34px; padding:3px 9px; border-radius:6px;
+    font-weight:700; font-size:14px; margin:0 2px;
+  }
+  .cell-v{background:#dcfce7; color:#166534}
+  .cell-r{background:#ffedd5; color:#9a3412}
+  .cell-e{background:#fef9c3; color:#854d0e}
+  .cell-n{background:#dbeafe; color:#1e40af}
+
+  .flow{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 18px; margin:16px 0; font-family:"Consolas",monospace;
+    font-size:13px; color:var(--ink-2); white-space:pre; overflow-x:auto; line-height:1.9;
+  }
+  .faq-q{font-weight:700; color:var(--brand-dark); margin:22px 0 4px}
+  .faq-q::before{content:"Q"; display:inline-block; background:var(--brand); color:#fff;
+    width:20px; height:20px; border-radius:50%; text-align:center; line-height:20px;
+    font-size:12px; margin-right:8px}
+  .faq-a{margin:0 0 6px 28px; color:var(--ink-2)}
+
+  footer{
+    border-top:1px solid var(--line); margin-top:56px; padding:20px 40px 40px;
+    font-size:12px; color:var(--ink-3); text-align:center;
+  }
+
+  @media (max-width:900px){
+    #navToggle{display:block}
+    nav.toc{
+      position:fixed; top:60px; left:0; z-index:40;
+      height:calc(100vh - 60px); transform:translateX(-100%); transition:transform .25s;
+      box-shadow:4px 0 16px rgba(0,0,0,.12);
+    }
+    nav.toc.open{transform:translateX(0)}
+    main{padding:22px 18px 60px}
+    header.top h1{font-size:15px}
+    header.top .ver{width:100%; margin-left:0}
+  }
+  @media print{
+    nav.toc,#navToggle{display:none}
+    header.top{position:static}
+    main{max-width:none}
+  }
+</style>
+
+<header class="top">
+  <button id="navToggle" aria-label="開啟目錄">☰</button>
+  <div>
+    <div class="co">日翊文化行銷股份有限公司　|　物流本部</div>
+    <h1>委外人力排班作業平台　委外人員操作手冊</h1>
+  </div>
+  <div class="ver">v1.0　|　2026/09/03</div>
+</header>
+
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="toc-title">目錄</div>
+  <a href="#s1">1. 系統基本資訊</a>
+  <a href="#s2">2. 系統規格</a>
+  <a href="#s3">3. 帳號與登入</a>
+  <a href="#s3-1" class="sub">3.1 首次登入</a>
+  <a href="#s3-2" class="sub">3.2 忘記密碼</a>
+  <a href="#s4">4. 功能操作說明</a>
+  <a href="#s4-1" class="sub">4.1 認識班表畫面</a>
+  <a href="#s4-2" class="sub">4.2 選擇休假日</a>
+  <a href="#s4-3" class="sub">4.3 排班規則</a>
+  <a href="#s4-4" class="sub">4.4 無法修改的情況</a>
+  <a href="#s5">5. 角色與權限</a>
+  <a href="#s6">6. 常見問題 FAQ</a>
+  <a href="#s7">7. 版本紀錄</a>
+  <a href="#s8">8. 資料保護說明</a>
+</nav>
+
+<main>
+
+<div class="callout c-info">
+  <strong>這本手冊寫給誰</strong>
+  <p>本手冊供<strong>委外人員</strong>使用，說明如何登入系統、以及如何自行選擇每週的休假日。</p>
+  <p>「簽到／手機控管」的操作不在本版手冊範圍內，將另行提供。</p>
+</div>
+
+<h2 id="s1">1. 系統基本資訊</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:170px">項目</th><th>內容</th></tr>
+  <tr><td>系統名稱</td><td>委外人力排班作業平台</td></tr>
+  <tr><td>系統代號</td><td>VSP（Vendor Shift Platform）</td></tr>
+  <tr><td>系統用途</td><td>委外人力的班表編排、出勤點名與手機控管作業</td></tr>
+  <tr><td>適用對象</td><td>本手冊適用<strong>委外人員</strong>；其他角色另有手冊</td></tr>
+  <tr><td>網路存取方式</td><td><strong>走網際網路</strong>——可從外部網路連線，用自己的手機在任何地點都能登入，不需連公司網路或 VPN</td></tr>
+  <tr><td>上線日期</td><td>2026/07/06</td></tr>
+  <tr><td>系統網址（正式）</td><td><a href="https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app">https://vendor-shift-platform-l5ro2vr7fq-de.a.run.app</a></td></tr>
+  <tr><td>系統網址（測試）</td><td>無獨立測試環境</td></tr>
+  <tr><td>開發工具</td><td>Claude Code（AI 輔助開發）</td></tr>
+  <tr><td>維護單位</td><td>待補充</td></tr>
+  <tr><td>問題回報窗口</td><td>待補充（姓名／分機／Email）</td></tr>
+</table>
+</div>
+
+<h3>系統簡介</h3>
+<p>本系統用來安排委外人力的班表與出勤管理。過去班表以 Excel 傳遞、版本容易混亂，改用本系統後，各倉別、課別的班表集中於同一份資料，異動即時同步。</p>
+<p>對委外人員而言，最主要的用途是<strong>在開放期間內自行選擇每週想休假的那一天</strong>，不需再透過幹部轉達。</p>
+
+<h2 id="s2">2. 系統規格</h2>
+
+<h3>2.1 技術架構</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:120px">層級</th><th style="width:220px">技術</th><th>說明</th></tr>
+  <tr><td>前端</td><td>React 18</td><td>以 Vite 打包為單一頁面應用</td></tr>
+  <tr><td>後端</td><td>Node.js + Express 4</td><td>提供登入驗證與資料存取 API</td></tr>
+  <tr><td>資料庫</td><td>PostgreSQL（GCP Cloud SQL）</td><td>帳號表與系統狀態表</td></tr>
+  <tr><td>部署平台</td><td>GCP Cloud Run</td><td>容器化部署，含自動安全掃描</td></tr>
+  <tr><td>版控</td><td>GitHub（私有 Repo）</td><td>推送後自動部署</td></tr>
+  <tr><td>身份驗證</td><td>JWT</td><td>密碼以 PBKDF2 雜湊儲存，不留明文</td></tr>
+</table>
+</div>
+
+<h3>2.2 系統架構說明</h3>
+<div class="flow">[委外人員手機瀏覽器]
+        ↓ HTTPS
+[前端 Web 應用（React）]
+        ↓ REST API + JWT
+[後端 API 服務（Express）]
+        ↓
+[資料庫（PostgreSQL）]</div>
+
+<h3>2.3 功能模組（委外人員可用）</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">模組</th><th>功能說明</th><th style="width:110px">狀態</th></tr>
+  <tr><td>登入</td><td>以員工編號登入，首次登入須修改預設密碼</td><td>已上線</td></tr>
+  <tr><td>班表管理</td><td>檢視自己的班表，並在開放期間內選擇每週休假日</td><td>已上線</td></tr>
+  <tr><td>簽到／手機控管</td><td>上下班簽到、手機繳交與領取紀錄</td><td>已上線（本手冊不含）</td></tr>
+</table>
+</div>
+
+<h2 id="s3">3. 帳號與登入</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">項目</th><th>說明</th></tr>
+  <tr><td>登入身份</td><td>委外人員</td></tr>
+  <tr><td>帳號</td><td>您的<strong>員工編號</strong>（例：<code>SY11302472</code>）</td></tr>
+  <tr><td>首次密碼</td><td>與帳號相同，也是<strong>員工編號</strong></td></tr>
+  <tr><td>密碼規則</td><td>至少 8 個字元，須包含英文字母與數字</td></tr>
+</table>
+</div>
+
+<h3 id="s3-1">3.1 首次登入</h3>
+<ol class="steps">
+  <li>用手機瀏覽器開啟系統網址。</li>
+  <li>在「登入身份」選擇 <strong>委外人員</strong>。</li>
+  <li>「帳號」與「密碼」都輸入您的<strong>員工編號</strong>，按「登入系統」。</li>
+  <li>畫面會出現「請設定新密碼」，輸入兩次新密碼後按「儲存新密碼並進入系統」。</li>
+  <li>完成後即進入班表畫面。<strong>下次登入請改用新密碼</strong>。</li>
+</ol>
+
+<div class="callout c-warn">
+  <strong>密碼請自行保管</strong>
+  <p>系統不會顯示您的密碼，管理員也看不到。忘記時只能重設，無法查詢。</p>
+</div>
+
+<div class="callout c-tip">
+  <strong>建議把網址加入手機主畫面</strong>
+  <p>用手機瀏覽器開啟後，選擇「加到主畫面」，之後就像 App 一樣點一下即可開啟，不必每次輸入網址。</p>
+</div>
+
+<h3 id="s3-2">3.2 忘記密碼</h3>
+<p>請聯繫<strong>日翊員工</strong>協助重設。重設後密碼會回到預設值（您的員工編號），再依 3.1 的步驟重新設定一次新密碼即可。</p>
+
+<h2 id="s4">4. 功能操作說明</h2>
+
+<h3 id="s4-1">4.1 認識班表畫面</h3>
+<p>登入後直接進入「班表管理」。畫面上只會顯示<strong>您自己那一列</strong>，橫向是日期，每一格代表當天的班別。</p>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:110px">格子顯示</th><th style="width:120px">意思</th><th>說明</th></tr>
+  <tr><td><span class="cell cell-v">V</span></td><td>上班</td><td>當天需要出勤</td></tr>
+  <tr><td><span class="cell cell-r">休</span></td><td>休假</td><td>當天休假，<strong>這是您可以自己選的</strong></td></tr>
+  <tr><td><span class="cell cell-e">例</span></td><td>例假</td><td>法定例假，由日翊安排，您無法自行變更</td></tr>
+  <tr><td><span class="cell cell-n">國</span></td><td>國定假日</td><td>由日翊安排，您無法自行變更</td></tr>
+</table>
+</div>
+
+<p>畫面最上方會有一條公告，寫著目前的<strong>開放排班區間</strong>：</p>
+<div class="callout c-info">
+  <p>📢 開放排班區間：2026-09-07 ~ 2026-10-04　（目前檢視中，可編輯班表）</p>
+</div>
+<p>綠色代表現在可以修改；琥珀色代表您正在看其他期間、或班表已被鎖定，此時只能查看。</p>
+
+<h3 id="s4-2">4.2 選擇休假日</h3>
+<ol class="steps">
+  <li>確認上方公告是<strong>綠色</strong>、且寫著「可編輯班表」。</li>
+  <li>找到您想休假的那一天，<strong>直接點一下該格子</strong>。</li>
+  <li>格子會從 <span class="cell cell-v">V</span> 變成 <span class="cell cell-r">休</span>，代表已選定。</li>
+  <li>如果要改成別天，<strong>先點一下原本那格把它變回 <span class="cell cell-v">V</span></strong>，再點新的日期。</li>
+  <li>系統會自動儲存，不需要按任何存檔按鈕。</li>
+</ol>
+
+<div class="callout c-warn">
+  <strong>一週只能選一天</strong>
+  <p>同一週已經選過一天休假後，再點其他天會出現提示，必須先取消原本那天才能改選。</p>
+</div>
+
+<h3 id="s4-3">4.3 排班規則</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:190px">規則</th><th>說明</th></tr>
+  <tr><td>只能改自己的班表</td><td>畫面上不會出現其他同事的資料</td></tr>
+  <tr><td>只能在 V 與 休 之間切換</td><td>「例」與「國」由日翊安排，您點不到</td></tr>
+  <tr><td>每週限選一天休假</td><td>以<strong>週一到週日</strong>為一週計算</td></tr>
+  <tr><td>僅開放區間內可修改</td><td>往前或往後翻頁查看其他期間時，一律只能看不能改</td></tr>
+  <tr><td>最終班表由日翊排定</td><td>您選的是<strong>希望的休假日</strong>，日翊會依實際人力做最後調整</td></tr>
+</table>
+</div>
+
+<h3 id="s4-4">4.4 無法修改的情況</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:230px">您看到的訊息</th><th>原因與處理</th></tr>
+  <tr><td>此日期已鎖定，無法修改。</td><td>您的課別已完成排班並鎖定。如需調整，請聯繫日翊。</td></tr>
+  <tr><td>此日期超出開放排班區間，無法修改。</td><td>該日期不在開放期間內。請按上方公告的「前往開放區間」回到可編輯的期間。</td></tr>
+  <tr><td>每週只能選一天休假日，本週已達上限。</td><td>該週已選過一天。請先點回原本那天，再選新的。</td></tr>
+  <tr><td>您只能修改自己的班表。</td><td>點到了不屬於您的資料，請確認操作的是自己那一列。</td></tr>
+  <tr><td>公告呈琥珀色「僅供查看」</td><td>目前不在開放期間，或班表已鎖定。</td></tr>
+</table>
+</div>
+
+<h2 id="s5">5. 角色與權限</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:130px">角色</th><th>可做的事</th></tr>
+  <tr><td><strong>委外人員</strong><br><span style="color:#94a3b8;font-size:13px">（本手冊對象）</span></td>
+      <td>檢視自己的班表；在開放期間內選擇每週休假日；簽到與手機控管</td></tr>
+  <tr><td>委外幹部</td><td>編排所屬廠商人員的班表；點名；手機控管</td></tr>
+  <tr><td>日翊員工</td><td>編排所轄倉別的班表、點名、手機控管、課別鎖定與開放區間設定</td></tr>
+  <tr><td>管理員</td><td>系統全部功能，含帳號權限、倉別課別廠商維護</td></tr>
+</table>
+</div>
+
+<div class="callout c-info">
+  <strong>為什麼我只看得到自己？</strong>
+  <p>基於個人資料保護，委外人員僅能看到自己的班表，不會看到同事的出勤與休假安排。</p>
+</div>
+
+<h2 id="s6">6. 常見問題 FAQ</h2>
+
+<p class="faq-q">我點格子沒有反應，也沒有出現任何訊息？</p>
+<p class="faq-a">請先確認上方公告是綠色的「可編輯班表」。若是琥珀色，代表目前不在開放期間或班表已鎖定，此時無法修改。</p>
+
+<p class="faq-q">我想休兩天可以嗎？</p>
+<p class="faq-a">系統限制每週只能自選一天。若確實需要多休，請直接向您的幹部或日翊反映。</p>
+
+<p class="faq-q">為什麼有些格子是「例」或「國」，我點不動？</p>
+<p class="faq-a">例假與國定假日由日翊依法規安排，不開放自行變更。</p>
+
+<p class="faq-q">我選好的休假日後來不見了？</p>
+<p class="faq-a">請確認是否看的是正確的期間（上方日期區間）。若確認是同一期間卻消失，請聯繫日翊協助確認。</p>
+
+<p class="faq-q">需要按存檔嗎？</p>
+<p class="faq-a">不需要。點下去就會自動儲存。若網路不穩導致儲存失敗，畫面會跳出紅色錯誤提示，此時請確認網路後再點一次。</p>
+
+<p class="faq-q">可以用電腦操作嗎？</p>
+<p class="faq-a">可以。系統同時支援手機與電腦瀏覽器，操作方式相同。</p>
+
+<p class="faq-q">換手機或清除瀏覽器資料後還能登入嗎？</p>
+<p class="faq-a">可以，用您設定過的新密碼即可，密碼是存在系統伺服器而非手機上。</p>
+
+<p class="faq-q">帳號被鎖住了怎麼辦？</p>
+<p class="faq-a">連續多次密碼錯誤會暫時鎖定。請等 15 分鐘後再試，或聯繫日翊協助重設密碼。</p>
+
+<h2 id="s7">7. 版本紀錄</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:90px">版本</th><th style="width:130px">日期</th><th>說明</th></tr>
+  <tr><td>v1.0</td><td>2026/09/03</td><td>首次發行。內容涵蓋登入與班表管理；簽到／手機控管另行提供。</td></tr>
+</table>
+</div>
+
+<h2 id="s8">8. 資料保護說明</h2>
+
+<h3>8.1 個人資料</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:170px">欄位</th><th style="width:170px">所在資料表</th><th style="width:200px">資料內容</th><th>儲存方式</th></tr>
+  <tr><td>display_name</td><td>users</td><td>使用者姓名</td><td>明文</td></tr>
+  <tr><td>name</td><td>app_state → employees</td><td>員工姓名</td><td>明文</td></tr>
+  <tr><td>name</td><td>app_state → extras</td><td>臨時人力姓名</td><td>明文</td></tr>
+</table>
+</div>
+<blockquote style="border-left:4px solid #cbd5e1;margin:12px 0;padding:6px 14px;color:#475569;font-size:14px">
+上述欄位含個人資料，資料庫存取應限縮於系統服務帳號，非相關人員不應直接查詢。
+</blockquote>
+
+<p><strong>不列為個資的欄位說明：</strong></p>
+<ul style="font-size:14px;color:#475569">
+  <li><code>username</code>、<code>empId</code>（員工編號）：僅作為登入與比對識別用，不納入個資。</li>
+  <li><code>password_hash</code>：以 PBKDF2（20 萬次迭代）或 bcrypt 雜湊儲存，不留明文，歸為系統憑證。</li>
+</ul>
+
+<h3>8.2 機敏資料</h3>
+<blockquote style="border-left:4px solid #cbd5e1;margin:12px 0;padding:6px 14px;color:#475569;font-size:14px">
+本系統經掃描，資料庫欄位不含人資（人力釋放人數／率、薪資）或財會（效益金額、年化節省、預算）類機敏資料。
+</blockquote>
+
+<h3>8.3 掃描說明</h3>
+<p style="font-size:14px;color:#475569">本系統未使用 Prisma，資料表定義位於後端 <code>server.cjs</code> 的 <code>initDB()</code>。資料表共兩張：<code>users</code>（帳號）與 <code>app_state</code>（JSONB 格式的系統狀態，含員工清冊、班表、出勤紀錄等）。上表依實際欄位定義掃描產出。</p>
+
+</main>
+</div>
+
+<footer>
+  日翊文化行銷股份有限公司　委外人力排班作業平台<br>
+  VSP　|　委外人員操作手冊　v1.0　|　VSP-WORKER_操作手冊_v1.0_20260903.html
+</footer>
+
+<script>
+(function(){
+  var toggle = document.getElementById('navToggle');
+  var toc = document.getElementById('toc');
+  toggle.addEventListener('click', function(){ toc.classList.toggle('open'); });
+  toc.addEventListener('click', function(e){
+    if (e.target.tagName === 'A' && window.innerWidth <= 900) toc.classList.remove('open');
+  });
+
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var targets = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+
+  function sync(){
+    var pos = window.scrollY + 100, current = 0;
+    for (var i = 0; i < targets.length; i++){
+      if (targets[i] && targets[i].offsetTop <= pos) current = i;
+    }
+    links.forEach(function(a, i){ a.classList.toggle('active', i === current); });
+  }
+  window.addEventListener('scroll', sync, { passive:true });
+  sync();
+})();
+</script>

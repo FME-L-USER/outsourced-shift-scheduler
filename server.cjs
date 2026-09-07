@@ -89,6 +89,7 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved      BOOLEAN      NOT NULL DEFAULT false`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login         TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count        INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_warehouses TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vendors           TEXT[] NOT NULL DEFAULT '{}'`);
   // 權限申請時由申請者填寫的身分說明（AD 不回傳姓名，需申請者自述）
@@ -140,6 +141,25 @@ async function initDB() {
   await seedDeptGroups();
 }
 
+// ── 一次性遷移標記 ────────────────────────────────────────────────
+// 這些 seed 是為了「一次性校正既有資料」而寫，不是每次啟動都該套用的設定。
+// 若每次啟動都覆寫，管理員在畫面上做的調整（例如把運務組拆成日/中/夜班）
+// 會在下次容器重啟時被打回原狀。故套用後記錄標記，之後一律跳過。
+async function seedAlreadyApplied(key) {
+  const { rows } = await pool.query("SELECT data->'_seedApplied'->>$1 AS v FROM app_state WHERE id='main'", [key]);
+  return rows[0]?.v === 'true';
+}
+async function markSeedApplied(key) {
+  await pool.query(
+    `UPDATE app_state
+        SET data = jsonb_set(data, '{_seedApplied}',
+              COALESCE(data->'_seedApplied', '{}'::jsonb) || $1::jsonb),
+            updated_at = NOW()
+      WHERE id='main'`,
+    [JSON.stringify({ [key]: true })]
+  );
+}
+
 // ── 課別／組別正式清單 ────────────────────────────────────────────
 // 來源：使用者提供之「倉別 / 課別 / 組別」對照表，為權威資料。
 // 未列於此表的組別會被移除；已指派到該組別的員工資料不會被刪除，僅在啟動時列出提醒。
@@ -154,7 +174,7 @@ const DEPT_GROUPS = {
   },
   '大肚倉': {
     '大肚理貨課':   ['日班-理貨組','中班-理貨組','清潔組','日班-出貨組'],
-    '大肚運務課':   ['運務組'],
+    '大肚運務課':   ['運務組-日班','運務組-中班','運務組-夜班'],
   },
   '岡山倉': {
     '岡山營運課':   ['日班-理貨組','中班-理貨組','夜班-理貨組','日班-出貨組'],
@@ -165,6 +185,7 @@ const DEPT_GROUPS = {
 const DEPT_RENAMES = { '營運指導課': '營運推進課' };
 
 async function seedDeptGroups() {
+  if (await seedAlreadyApplied('deptGroups')) return;   // 已校正過，不再覆寫管理員的調整
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   const state = rows[0]?.data;
   if (!state || !Array.isArray(state.warehouses)) return;
@@ -194,6 +215,7 @@ async function seedDeptGroups() {
     if (next.some((e, i) => e !== employees[i])) { employees = next; changed = true; }
   }
 
+  await markSeedApplied('deptGroups');
   if (!changed) return;
   await pool.query(
     `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
@@ -240,6 +262,7 @@ const VENDOR_CODES = {
 };
 
 async function seedWarehouseVendors() {
+  if (await seedAlreadyApplied('warehouseVendors')) return;   // 已校正過，不再覆寫
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   const state = rows[0]?.data;
   if (!state || !Array.isArray(state.warehouses)) return; // 尚未初始化，待管理員首次登入後再寫入
@@ -268,6 +291,7 @@ async function seedWarehouseVendors() {
     }),
   }));
 
+  await markSeedApplied('warehouseVendors');
   if (!changed) return;
   await pool.query(
     `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
@@ -690,6 +714,7 @@ function safeUser(u) {
     vendors:           u.vendors           || [],
     approved:          u.approved,
     last_login:        u.last_login,
+    loginCount:        u.login_count ?? 0,
     request_note:      u.request_note || '',
   };
 }
@@ -772,8 +797,9 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
-    return res.json({ token: issueToken(user), user: safeUser(user) });
+    await pool.query('UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE id=$1', [user.id]);
+    const { rows: fresh } = await pool.query('SELECT * FROM users WHERE id=$1', [user.id]);
+    return res.json({ token: issueToken(user), user: safeUser(fresh[0] ?? user) });
   }
 
   // 2. 本地帳號驗證（備用：reyi 及管理員建立的本地帳號）
@@ -791,8 +817,9 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(403).json({ error: '此帳號審核中，請等候管理員核准後再登入。' });
   }
 
-  await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
-  return res.json({ token: issueToken(user), user: safeUser(user) });
+  await pool.query('UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE id=$1', [user.id]);
+  const { rows: fresh } = await pool.query('SELECT * FROM users WHERE id=$1', [user.id]);
+  return res.json({ token: issueToken(user), user: safeUser(fresh[0] ?? user) });
 });
 
 // ── GET /api/auth/me ──────────────────────────────────────
@@ -940,6 +967,15 @@ app.put('/api/state', requireAuth, async (req, res) => {
   if (Array.isArray(rest.employees)  && rest.employees.length  === 0) delete rest.employees;
   if (Array.isArray(rest.vendors)    && rest.vendors.length    === 0) delete rest.vendors;
   if (Array.isArray(rest.warehouses) && rest.warehouses.length === 0) delete rest.warehouses;
+  // 管理員專屬的全域設定：日翊(area)的前端不提供修改介面，但 PUT /api/state
+  // 對 admin/area 是同一條分支，故在此無條件剔除，避免繞過介面直接寫入。
+  if (role === 'area') {
+    delete rest.periodRange;        // 每期日期區間
+    delete rest.openHolidays;       // 開放排班國定假日
+    delete rest.vendorHolidayOpen;  // 委外幹部排「國」開關
+    delete rest.vendorCompanyNames; // 廠商公司抬頭
+    delete rest.vendors;            // 廠商主檔
+  }
   if (Object.keys(rest).length === 0) return res.json({ ok: true });
   // schedule：逐員工、逐日 merge（避免 admin/area 多裝置同時存檔時，後存者的舊快照蓋掉先存者剛異動的其他員工資料）
   // workerPwds：逐員編 merge。委外人員是自己透過 PUT /api/auth/worker-password 設定密碼的，
@@ -1097,9 +1133,9 @@ app.post('/api/auth/vendor-login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
     if (firstLogin && password) {
       const newHash = await hashPbkdf2(password);
-      await pool.query('UPDATE users SET password_hash=$1, last_login=NOW() WHERE id=$2', [newHash, user.id]);
+      await pool.query('UPDATE users SET password_hash=$1, last_login=NOW(), login_count=login_count+1 WHERE id=$2', [newHash, user.id]);
     } else {
-      await pool.query('UPDATE users SET last_login=NOW() WHERE id=$1', [user.id]);
+      await pool.query('UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE id=$1', [user.id]);
     }
     return res.json({ token: issueToken(user), user: safeUser(user), mustChangePassword: firstLogin });
   } catch (e) {
@@ -1252,6 +1288,12 @@ app.post('/api/auth/worker-login', async (req, res) => {
       ok = (password === String(emp.empId).trim());
     }
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+    // 委外人員的帳號可能不存在於 users 表（清冊人員直接以員編登入），
+    // 有對應帳號時才累計登入次數與最後登入時間
+    await pool.query(
+      'UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE username=$1 AND role=$2',
+      [String(emp.empId).trim(), 'worker']
+    ).catch(e => console.warn('worker 登入計數失敗:', e.message));
     const token = issueToken({
       id: 'worker_' + emp.id,
       username: emp.empId,

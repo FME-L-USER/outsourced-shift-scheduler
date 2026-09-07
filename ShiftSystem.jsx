@@ -130,12 +130,13 @@ const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worke
 const TEMP_WAREHOUSE = '大肚倉';
 const JWT_KEY = 'sms_jwt';
 
+// 代碼一律用黑字：彩色文字在淺色底上對比不足，現場列印或光線不佳時難以辨識
 const SHIFT_CODES = {
-  V:  { label: 'V',  color: 'bg-green-100 text-green-900',   meaning: '上班' },
-  例: { label: '例', color: 'bg-yellow-100 text-yellow-900',  meaning: '例休' },
-  休: { label: '休', color: 'bg-orange-100 text-orange-900',  meaning: '休假' },
-  國: { label: '國', color: 'bg-blue-100 text-blue-900',     meaning: '國定假日' },
-  '': { label: '',   color: 'bg-white text-gray-500',         meaning: '空白' },
+  V:  { label: 'V',  color: 'bg-green-100 text-slate-900',   meaning: '上班' },
+  例: { label: '例', color: 'bg-yellow-100 text-slate-900',  meaning: '例休' },
+  休: { label: '休', color: 'bg-orange-100 text-slate-900',  meaning: '休假' },
+  國: { label: '國', color: 'bg-blue-100 text-slate-900',    meaning: '國定假日' },
+  '': { label: '',   color: 'bg-white text-slate-400',       meaning: '空白' },
 };
 
 const SHIFT_CYCLE = ['V', '國', '例', '休'];
@@ -350,7 +351,7 @@ const SEED_WAREHOUSES = [
       },
       {
         id: 'dept_wh2_2', code: 'L037', name: '大肚運務課', vendors: [...DEPT_VENDORS.dadu2],
-        groups: ['運務組'],
+        groups: ['運務組-日班','運務組-中班','運務組-夜班'],
       },
     ],
   },
@@ -407,10 +408,22 @@ const parseLocal = s => { const [y,m,d] = s.split('-').map(Number); return new D
 
 // 依開放排班區間推算「包含今天」的週期偏移量（0 = 設定的區間本身，負數 = 往前的週期）
 // 設定的區間常是未來期（例如今天 9/1、區間 9/7~10/4），登入時應自動顯示今天所在的那一期
-// 取該課別實際適用的開放排班區間：課別自訂優先，未設定則沿用全域設定
-function resolveRange(deptRanges, deptName, fallback) {
+// 開放排班區間一律以「課別」為準（全域設定已取消）。
+// 該課別未設定 → 回傳空物件，代表尚未開放，任何人都不可編輯。
+function resolveRange(deptRanges, deptName) {
   const r = deptName ? deptRanges?.[deptName] : null;
-  return (r?.start && r?.end) ? r : (fallback ?? {});
+  return (r?.start && r?.end) ? r : {};
+}
+
+// 各課別區間的聯集，作為系統層級的參考範圍：
+// 僅用於報表檢視與國定假日篩選，「可否編輯」一律看員工所屬課別的區間。
+function unionDeptRange(deptRanges) {
+  const rs = Object.values(deptRanges ?? {}).filter(r => r?.start && r?.end);
+  if (rs.length === 0) return {};
+  return {
+    start: rs.reduce((a, r) => (r.start < a ? r.start : a), rs[0].start),
+    end:   rs.reduce((a, r) => (r.end   > a ? r.end   : a), rs[0].end),
+  };
 }
 
 function todayPeriodOffset(scheduleRange) {
@@ -640,6 +653,23 @@ function findShiftType(shiftTypesByWh, whKey, id) {
     if (hit) return hit;
   }
   return SHIFT_TYPE_DEFAULTS.find(t => t.id === id) ?? null;
+}
+
+// 該課別在倉別設定中登錄的組別。回傳 null 代表查無此課別（無從判定，不視為異常）。
+// 用於辨識「組別不在系統清單中」的人員——這種資料看起來正常，
+// 但用組別篩選時會被靜默濾掉，必須明確標示出來。
+function validGroupsOfDept(warehouses, deptName) {
+  if (!deptName) return null;
+  for (const w of warehouses ?? []) {
+    const d = (w.departments ?? []).find(x => x.name === deptName);
+    if (d) return new Set(d.groups ?? []);
+  }
+  return null;
+}
+function isUnknownGroup(warehouses, emp) {
+  if (!emp?.group) return false;
+  const valid = validGroupsOfDept(warehouses, emp.dept);
+  return !!valid && !valid.has(emp.group);
 }
 
 // 名稱比對用正規化：去掉半形/全形空白、零寬字元，避免「三彥 」被當成新廠商
@@ -2543,7 +2573,7 @@ function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    deptLocks, deptRanges, scheduleRange, openHolidays, vendorHolidayOpen,
+    deptLocks, deptRanges, periodRange, openHolidays, vendorHolidayOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
     selectedVendor,
   } = useApp();
@@ -2655,6 +2685,16 @@ function ScheduleTable() {
     const stop = new Date(last.year, last.month - 1, last.day);
     stop.setDate(stop.getDate() + MAX_WORK_RUN);
 
+    // 未來尚未排班的日子不納入連續天數計算。
+    // 班表把空白顯示為 V，若一併計入，期末那幾天還沒排的空白會把人推過 7 天門檻，
+    // 產生假警示。故以「該員最後一筆實際排定的日期」為界，之後一律不計。
+    const lastScheduled = Object.keys(row).reduce((mx, k) => {
+      const [ky, km, kd] = k.split('-').map(Number);
+      if (!ky || !km || !kd) return mx;
+      const t = new Date(ky, km - 1, kd).getTime();
+      return t > mx ? t : mx;
+    }, -Infinity);
+
     let max = 0;
     const warn = new Set();
     let run = [];
@@ -2669,6 +2709,7 @@ function ScheduleTable() {
       run = []; touches = false;
     };
     while (cur <= stop) {
+      if (cur.getTime() > lastScheduled) break;   // 之後皆為尚未排班的日子
       const dk = dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
       const within = inPeriod.has(dk);
       const isWork = within ? ((row[dk] ?? 'V') === 'V') : (row[dk] === 'V');
@@ -2742,38 +2783,47 @@ function ScheduleTable() {
 
   // rangeMode 下的視圖平移（天數偏移）
   const [viewOffset, setViewOffset] = useState(0);
-  // 登入後 scheduleRange 由伺服器載入，待其就緒再切到包含今天的週期（僅執行一次）
+  // 待該課別的開放區間就緒後，切到包含今天的週期
   // 已選課別若有自訂開放區間，畫面與公告一律以該課別為準
   const selectedDeptName = useMemo(() => {
     if (!selectedDept) return null;
     const wh = warehouses.find(w => w.id === selectedWarehouse);
     return wh?.departments?.find(d => d.id === selectedDept)?.name ?? null;
   }, [warehouses, selectedWarehouse, selectedDept]);
+  // 該課別的「可編輯」時段（未設定＝尚未開放）
   const activeRange = useMemo(
-    () => resolveRange(deptRanges, selectedDeptName, scheduleRange),
-    [deptRanges, selectedDeptName, scheduleRange]);
+    () => resolveRange(deptRanges, selectedDeptName),
+    [deptRanges, selectedDeptName]);
+  // 班表顯示哪些日子由「每期日期區間」決定，與可否編輯無關
+  const viewPeriod = periodRange;
 
   const rangeKeyRef = useRef(null);
   useEffect(() => {
-    if (!activeRange.start || !activeRange.end) return;
-    // 切換課別導致適用區間改變時，需重新定位到今天所在的週期
-    const key = `${activeRange.start}~${activeRange.end}`;
+    if (!viewPeriod.start || !viewPeriod.end) return;
+    // 每期區間改變時重新定位到今天所在的那一期
+    const key = `${viewPeriod.start}~${viewPeriod.end}`;
     if (rangeKeyRef.current === key) return;
     rangeKeyRef.current = key;
-    setViewOffset(todayPeriodOffset(activeRange));
-  }, [activeRange]);
-  const rangeMode = !!(activeRange.start && activeRange.end);
+    setViewOffset(todayPeriodOffset(viewPeriod));
+  }, [viewPeriod]);
+  // 今日所在欄位以紅框標示，方便在長班表中快速定位
+  const todayDk = (() => {
+    const d = new Date();
+    return dateKey(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  })();
+
+  const rangeMode = !!(viewPeriod.start && viewPeriod.end);
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
-    const s = parseLocal(activeRange.start);
-    const e = parseLocal(activeRange.end);
+    const s = parseLocal(viewPeriod.start);
+    const e = parseLocal(viewPeriod.end);
     const len = Math.round((e - s) / 86400000); // 首尾天數差（不含尾）
     const shift = viewOffset * (len + 1); // +1：含頭含尾的完整天數，避免下一期與前一期重疊
     const vs = new Date(s); vs.setDate(vs.getDate() + shift);
     const ve = new Date(e); ve.setDate(ve.getDate() + shift);
     const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
     return { start: fmt(vs), end: fmt(ve), len };
-  }, [rangeMode, activeRange, viewOffset]);
+  }, [rangeMode, viewPeriod, viewOffset]);
 
   const toggleCheck = (empId) =>
     setCheckedEmpIds(prev => {
@@ -2848,19 +2898,25 @@ function ScheduleTable() {
   const isEditable = useCallback((dk, emp) => {
     if (!lockAllowsEdit(emp?.dept ? deptLocks[emp.dept] : 'none', currentUser?.role)) return false;
     // 該課別若有自訂開放區間則優先採用，否則沿用全域設定
-    const range = resolveRange(deptRanges, emp?.dept, scheduleRange);
-    if (currentUser?.role === ROLES.WORKER && (!range.start || !range.end)) return false;
-    if (range.start && range.end) {
+    // 該課別未設定開放區間＝尚未開放，任何角色都不可編輯
+    const range = resolveRange(deptRanges, emp?.dept);
+    if (!range.start || !range.end) return false;
+    {
       const [y,m,d] = dk.split('-').map(Number);
       const date = new Date(y, m-1, d);
       if (date < parseLocal(range.start) || date > parseLocal(range.end)) return false;
     }
     return true;
-  }, [deptLocks, deptRanges, scheduleRange, currentUser]);
+  }, [deptLocks, deptRanges, currentUser]);
 
   const handleCellClick = useCallback((empId, dk) => {
-    if (!isEditable(dk, employees.find(e => e.id === empId))) {
-      toast('此日期已鎖定，無法修改。', 'warn');
+    const clickEmp = employees.find(e => e.id === empId);
+    if (!isEditable(dk, clickEmp)) {
+      // 區分兩種不可編輯的原因，否則使用者不知道該找誰處理
+      const r = resolveRange(deptRanges, clickEmp?.dept);
+      toast(!r.start || !r.end
+        ? `${clickEmp?.dept ?? '此課別'} 尚未設定開放排班區間，目前僅供查看。`
+        : '此日期已鎖定，無法修改。', 'warn');
       return;
     }
 
@@ -2874,7 +2930,7 @@ function ScheduleTable() {
     }
 
     // WORKER 嚴格限制在該課別的開放區間內（不隨 viewRange 放寬）
-    const wRange = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept, scheduleRange);
+    const wRange = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept);
     if (currentUser.role === ROLES.WORKER && wRange.start && wRange.end) {
       const [y, m, d] = dk.split('-').map(Number);
       const date = new Date(y, m - 1, d);
@@ -2974,7 +3030,7 @@ function ScheduleTable() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
       const label = rangeMode
-        ? `${activeRange.start}~${activeRange.end}`
+        ? `${viewPeriod.start}~${viewPeriod.end}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表存檔_${label}.xlsx`);
       toast('班表存檔成功', 'success');
@@ -3007,7 +3063,7 @@ function ScheduleTable() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
       const label = rangeMode
-        ? `${activeRange.start}~${activeRange.end}`
+        ? `${viewPeriod.start}~${viewPeriod.end}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表_代碼轉換_${label}.xlsx`);
       toast('代碼轉換匯出成功', 'success');
@@ -3036,8 +3092,8 @@ function ScheduleTable() {
         const isFormatA = h0 === '員工編號';
         const isFormatC = h0.includes('作業區') || headerRow[1] === '姓名';
 
-        const baseYear  = rangeMode ? parseInt(activeRange.start.split('-')[0]) : selectedYear;
-        const baseMonth = rangeMode ? parseInt(activeRange.start.split('-')[1]) : selectedMonth;
+        const baseYear  = rangeMode ? parseInt(viewPeriod.start.split('-')[0]) : selectedYear;
+        const baseMonth = rangeMode ? parseInt(viewPeriod.start.split('-')[1]) : selectedMonth;
         const getYear   = (month) => (month < baseMonth - 6 ? baseYear + 1 : baseYear);
 
         const mapVal = (v) => {
@@ -3564,35 +3620,34 @@ function ScheduleTable() {
 
   return (
     <div className="p-6 space-y-4">
-      {/* 開放排班區間公告：登入預設顯示的是「今天所在」的週期，
-          與可編輯的開放區間常常不同，需明確標示以免誤以為不能改 */}
+      {/* 公告需同時交代兩件事：目前檢視的是哪一期、以及該課現在能不能編輯 */}
       {rangeMode && (() => {
-        const viewingOpen = viewOffset === 0;
-        // 在開放區間內不代表就能編輯：課別可能已鎖定，或該角色被鎖定排除。
-        // 以實際的 isEditable 判定，避免對被鎖住的廠商幹部顯示「可編輯班表」。
+        // 「可否編輯」取決於各課的開放區間與鎖定狀態，與目前檢視第幾期無關
         const probeDk = dayHeaders[0]?.dk;
-        const canEditAny = viewingOpen && probeDk
-          && visibleEmployees.some(emp => isEditable(probeDk, emp));
-        const tone = !viewingOpen || !canEditAny
-          ? 'bg-amber-50 border-amber-300 text-amber-800'
-          : 'bg-emerald-50 border-emerald-300 text-emerald-800';
+        const canEditAny = !!probeDk && visibleEmployees.some(emp => isEditable(probeDk, emp));
+        const tone = canEditAny
+          ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+          : 'bg-amber-50 border-amber-300 text-amber-800';
+        const openTxt = selectedDeptName
+          ? (activeRange.start ? `${activeRange.start} ~ ${activeRange.end}` : '尚未設定')
+          : '依各課別設定';
         return (
           <div className={`rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap border ${tone}`}>
             <span className="text-base font-bold">
-              📢 {selectedDeptName ? `${selectedDeptName} ` : ''}開放排班區間：{activeRange.start} ~ {activeRange.end}
+              📢 本期：{viewRange?.start} ~ {viewRange?.end}
+              {viewOffset !== 0 && <span className="ml-1 text-sm font-medium">（{viewOffset > 0 ? `+${viewOffset}` : viewOffset} 期）</span>}
             </span>
             <span className="text-sm font-medium">
-              {!viewingOpen
-                ? '（目前檢視的是其他期間，僅供查看，不可編輯）'
-                : canEditAny
-                  ? '（目前檢視中，可編輯班表）'
-                  : '（目前檢視中，但班表已鎖定，僅供查看）'}
+              ｜{selectedDeptName ? `${selectedDeptName} ` : ''}開放排班：{openTxt}
             </span>
-            {!viewingOpen && (
-              <button onClick={() => setViewOffset(0)}
+            <span className="text-sm font-medium">
+              {canEditAny ? '（可編輯班表）' : '（僅供查看，不可編輯）'}
+            </span>
+            {viewOffset !== todayPeriodOffset(viewPeriod) && (
+              <button onClick={() => setViewOffset(todayPeriodOffset(viewPeriod))}
                 className="ml-auto px-3 py-1 text-xs font-semibold bg-amber-600 text-white
                            rounded-md hover:bg-amber-700">
-                前往開放區間
+                回到本期
               </button>
             )}
           </div>
@@ -3620,8 +3675,8 @@ function ScheduleTable() {
               <button onClick={() => setViewOffset(v => v + 1)}
                 className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
-              {viewOffset !== todayPeriodOffset(activeRange) && (
-                <button onClick={() => setViewOffset(todayPeriodOffset(activeRange))}
+              {viewOffset !== todayPeriodOffset(viewPeriod) && (
+                <button onClick={() => setViewOffset(todayPeriodOffset(viewPeriod))}
                   className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
                   回目前
                 </button>
@@ -3720,6 +3775,17 @@ function ScheduleTable() {
         <span className="text-slate-400">（點擊格子切換班別）</span>
       </div>
 
+      {/* 尚未設定每期日期區間時退回年／月檢視，並提醒管理員設定 */}
+      {!rangeMode && (
+        <div className="rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap border
+                        bg-amber-50 border-amber-300 text-amber-800">
+          <span className="text-base font-bold">📅 尚未設定每期日期區間</span>
+          <span className="text-sm font-medium">（目前以月份檢視）</span>
+          <span className="ml-auto text-xs text-amber-700">
+            請至「系統設定 → 每期日期區間」設定排班週期
+          </span>
+        </div>
+      )}
       {/* Table */}
       <div className="border border-[#DDD9D0] rounded-xl" style={{ overflow: 'clip' }}>
         <div className="overflow-auto pb-4" style={{ maxHeight: 'calc(100vh - 220px)' }}>
@@ -3742,12 +3808,12 @@ function ScheduleTable() {
                   const weekBand = Math.floor(colIdx / 7) % 2 === 1;
                   return (
                   <th key={dk}
-                    className={`px-1 py-1 w-11 min-w-[44px] text-center
+                    className={`px-1 py-1 w-14 min-w-[54px] text-center
                                 ${weekBand ? 'bg-[#F5F2EC]0' : ''}
-                                ${rangeMode && isMonthStart && month !== dayHeaders[0].month ? 'border-l-2 border-blue-400' : ''}`}>
-                    {rangeMode && isMonthStart && <div className="text-[9px] text-blue-300 leading-none">{month}月</div>}
-                    <div>{day}</div>
-                    <div className={`text-xs ${isWeekend ? 'text-yellow-300' : weekBand ? 'text-slate-200' : 'text-slate-300'}`}>{wd}</div>
+                                ${dk === todayDk ? 'border-t-2 border-l-2 border-r-2 border-red-500' : ''}
+                                ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}`}>
+                    <div className="text-[15px] font-bold leading-tight whitespace-nowrap">{month}/{day}</div>
+                    <div className={`text-[13px] ${isWeekend ? 'text-yellow-300' : weekBand ? 'text-slate-200' : 'text-slate-300'}`}>{wd}</div>
                   </th>
                   );
                 })}
@@ -3778,13 +3844,13 @@ function ScheduleTable() {
                         const runLen = runInfo.max;
                         const overRun = runLen >= MAX_WORK_RUN;
                         return (
-                          <div className={`truncate max-w-[130px] text-sm ${overRun ? 'text-red-600 font-bold' : ''}`}
+                          <div className={`truncate max-w-[130px] text-base font-semibold text-slate-900 ${overRun ? '!text-red-600 font-bold' : ''}`}
                             title={overRun ? `⚠️ 連續上班 ${runLen} 天（含前後週期），不可連續上班 ${MAX_WORK_RUN} 天` : undefined}>
                             {emp.name}
                           </div>
                         );
                       })()}
-                      <div className="text-xs text-slate-500 truncate max-w-[130px]">{emp.empId}</div>
+                      <div className="text-[13px] text-slate-600 truncate max-w-[130px]">{emp.empId}</div>
                     </td>
                     <td className="hidden sm:table-cell px-2 py-2 text-slate-800 font-semibold border-r border-slate-100 text-center whitespace-nowrap">
                       {emp.vendor}
@@ -3817,19 +3883,20 @@ function ScheduleTable() {
                           onClick={() => handleCellClick(emp.id, dk)}
                           title={holidayLabel ? `國定假日：${holidayLabel}` : displayCode !== code ? `班別代號：${displayCode}` : undefined}
                           className={`text-center py-2 border-r border-slate-100 cursor-pointer
-                                      select-none transition-colors font-semibold
-                                      ${warnDks.has(dk) ? 'bg-pink-200 text-pink-900' : info.color}
-                                      ${rangeMode && isMonthStart && month !== dayHeaders[0].month ? 'border-l-2 border-blue-400' : ''}
+                                      select-none transition-colors font-bold text-base
+                                      ${warnDks.has(dk) ? 'bg-pink-200 text-slate-900' : info.color}
+                                      ${dk === todayDk ? '!border-l-2 !border-r-2 border-red-500' : ''}
+                                      ${rangeMode && isMonthStart && month !== dayHeaders[0].month && dk !== todayDk ? 'border-l-2 border-blue-400' : ''}
                                       ${locked ? 'cursor-not-allowed opacity-60' : 'hover:opacity-75'}`}
                           style={weekBand ? { filter: 'brightness(0.93)' } : undefined}>
                           {displayCode || <span className="text-slate-300">·</span>}
                         </td>
                       );
                     })}
-                    <td className="px-2 py-1.5 text-center font-semibold text-blue-700">
+                    <td className="px-2 py-1.5 text-center font-bold text-base text-blue-700">
                       {workDays}
                     </td>
-                    <td className="px-2 py-1.5 text-center font-semibold text-orange-600">
+                    <td className="px-2 py-1.5 text-center font-bold text-base text-orange-600">
                       {leaveDays}
                     </td>
                   </tr>
@@ -3843,19 +3910,25 @@ function ScheduleTable() {
                   { label: '出勤人數', bgRow: 'bg-green-50',  bgLabel: 'bg-green-50',  color: 'text-green-700', fn: (dk) => visibleEmployees.filter(e => (schedule[e.id]?.[dk] ?? 'V') === 'V').length },
                   { label: '休假人數', bgRow: 'bg-orange-50', bgLabel: 'bg-orange-50', color: 'text-orange-700', fn: (dk) => visibleEmployees.filter(e => REST.has(schedule[e.id]?.[dk] ?? '')).length },
                 ];
-                return summaryRows.map(({ label, bgRow, bgLabel, color, fn }, si) => (
+                return summaryRows.map(({ label, bgRow, bgLabel, color, fn }, si) => {
+                  const isLastStatRow = si === summaryRows.length - 1;
+                  return (
                   <tr key={label} className={`${bgRow} ${si === 0 ? 'border-t-2 border-slate-400' : 'border-t border-slate-200'} font-medium text-xs`}>
                     <td className={`sticky left-0 z-10 ${bgLabel}`} style={{ width: 32 }} />
                     <td className={`sticky left-8 z-10 px-2 py-1.5 font-bold ${bgLabel} ${color} whitespace-nowrap`}>{label}</td>
                     <td className="hidden sm:table-cell" />
                     <td className="hidden sm:table-cell" />
                     {dayHeaders.map(({ dk }) => (
-                      <td key={dk} className={`px-1 py-1.5 text-center font-semibold ${color}`}>{fn(dk)}</td>
+                      <td key={dk}
+                        className={`px-1 py-1.5 text-center font-semibold ${color}
+                          ${dk === todayDk ? 'border-l-2 border-r-2 border-red-500' : ''}
+                          ${dk === todayDk && isLastStatRow ? 'border-b-2' : ''}`}>{fn(dk)}</td>
                     ))}
                     <td className="px-2 py-1.5" />
                     <td className="px-2 py-1.5" />
                   </tr>
-                ));
+                  );
+                });
               })()}
             </tbody>
           </table>
@@ -4156,6 +4229,19 @@ function EmployeeRoster() {
             [...addedByDept].map(([d, vs]) => `${d}：${vs.join('、')}`).join('；');
         }
 
+        // 組別不在該課別清單中的人員：資料照常匯入，但需明確告知，
+        // 否則這些人在用組別篩選時會安靜地消失而查不出原因
+        const unknownGroups = new Map();   // 「課別／組別」→ 人數
+        for (const e of imported) {
+          if (!isUnknownGroup(warehouses, e)) continue;
+          const k = `${e.dept}／${e.group}`;
+          unknownGroups.set(k, (unknownGroups.get(k) ?? 0) + 1);
+        }
+        const groupMsg = unknownGroups.size > 0
+          ? `；⚠ 下列組別不在系統清單中（可正常排班，但無法用組別篩選）：`
+            + [...unknownGroups].map(([k, n]) => `${k}（${n} 人）`).join('、')
+          : '';
+
         const skipMsg = [
           skippedTemp  ? `臨時人員 ${skippedTemp} 筆` : '',
           skippedLeave ? `已離職 ${skippedLeave} 筆` : '',
@@ -4165,7 +4251,8 @@ function EmployeeRoster() {
         setTimeout(() => saveNow((ok) => {
           if (!ok) toast('資料同步失敗，請手動按存檔鍵', 'error');
         }), 100);
-        toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}${syncMsg}`, 'success');
+        toast(`匯入完成：新增 ${added} 筆、更新 ${updated} 筆${skipMsg ? `，略過（${skipMsg}）` : ''}${syncMsg}${groupMsg}`,
+          unknownGroups.size > 0 ? 'warn' : 'success');
       } catch (err) {
         toast('檔案解析失敗：' + err.message, 'error');
       }
@@ -4299,7 +4386,16 @@ function EmployeeRoster() {
                   </td>
                   <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">
                     {emp.group
-                      ? <span className="px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-xs">{emp.group}</span>
+                      ? <span
+                          title={isUnknownGroup(warehouses, emp)
+                            ? `「${emp.group}」不在「${emp.dept}」的組別清單中，將無法用組別篩選到此人員`
+                            : undefined}
+                          className={`px-2 py-0.5 border rounded-full text-xs ${
+                            isUnknownGroup(warehouses, emp)
+                              ? 'bg-red-50 text-red-700 border-red-300 font-semibold'
+                              : 'bg-green-50 text-green-700 border-green-200'}`}>
+                          {isUnknownGroup(warehouses, emp) && '⚠ '}{emp.group}
+                        </span>
                       : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-4 py-2.5">
@@ -4380,30 +4476,31 @@ function EmployeeRoster() {
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup,
-    vendorCompanyNames, currentUser, scheduleRange } = useApp();
+    vendorCompanyNames, currentUser, deptRanges } = useApp();
   const toast = useToast();
 
   const [viewOffset, setViewOffset] = useState(0);
-  // 登入後 scheduleRange 由伺服器載入，待其就緒再切到包含今天的週期（僅執行一次）
+  // 全域區間已取消，報表檢視改用各課別區間的聯集（涵蓋所有課別）
+  const reportRange = useMemo(() => unionDeptRange(deptRanges), [deptRanges]);
   const didInitOffset = useRef(false);
   useEffect(() => {
-    if (didInitOffset.current || !scheduleRange.start || !scheduleRange.end) return;
+    if (didInitOffset.current || !reportRange.start || !reportRange.end) return;
     didInitOffset.current = true;
-    const off = todayPeriodOffset(scheduleRange);
+    const off = todayPeriodOffset(reportRange);
     if (off !== 0) setViewOffset(off);
-  }, [scheduleRange]);
-  const rangeMode = !!(scheduleRange.start && scheduleRange.end);
+  }, [reportRange]);
+  const rangeMode = !!(reportRange.start && reportRange.end);
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
-    const s = parseLocal(scheduleRange.start);
-    const e = parseLocal(scheduleRange.end);
+    const s = parseLocal(reportRange.start);
+    const e = parseLocal(reportRange.end);
     const len = Math.round((e - s) / 86400000); // 首尾天數差（不含尾）
     const shift = viewOffset * (len + 1); // +1：含頭含尾的完整天數，避免下一期與前一期重疊
     const vs = new Date(s); vs.setDate(vs.getDate() + shift);
     const ve = new Date(e); ve.setDate(ve.getDate() + shift);
     const fmt = d => `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
     return { start: fmt(vs), end: fmt(ve), len };
-  }, [rangeMode, scheduleRange, viewOffset]);
+  }, [rangeMode, reportRange, viewOffset]);
 
   // 依目前選擇週期建立日期陣列
   const reportDates = useMemo(() => {
@@ -4738,8 +4835,8 @@ function Reports() {
               <button onClick={() => setViewOffset(v => v + 1)}
                 className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold"
                 title="下一個週期">▶</button>
-              {viewOffset !== todayPeriodOffset(scheduleRange) && (
-                <button onClick={() => setViewOffset(todayPeriodOffset(scheduleRange))}
+              {viewOffset !== todayPeriodOffset(reportRange) && (
+                <button onClick={() => setViewOffset(todayPeriodOffset(reportRange))}
                   className="px-2 py-1.5 bg-blue-100 border border-blue-300 text-blue-700 rounded-lg text-xs hover:bg-blue-200">
                   回目前
                 </button>
@@ -6059,14 +6156,14 @@ function Attendance({ phoneOnly = false }) {
                                 <input type="checkbox" checked={rec.present}
                                   onChange={ev => setRecord(emp.id, { present: ev.target.checked })}
                                   className="w-6 h-6 mt-0.5 accent-blue-600 cursor-pointer flex-shrink-0" />
-                                <div className="min-w-[80px] flex-shrink-0">
+                                <div className="min-w-[96px] flex-shrink-0">
                                   {/* 休假卻來上班者以藍字呈現；班表不做任何異動 */}
-                                  <div className={`font-medium text-sm ${
-                                    offDutyPresentIds.has(emp.id) ? 'text-blue-600' : 'text-slate-800'}`}>
+                                  <div className={`font-bold text-lg leading-snug ${
+                                    offDutyPresentIds.has(emp.id) ? 'text-blue-600' : 'text-slate-900'}`}>
                                     {emp.name}
                                   </div>
-                                  <div className={`text-xs ${
-                                    offDutyPresentIds.has(emp.id) ? 'text-blue-400' : 'text-slate-400'}`}>
+                                  <div className={`text-[13px] ${
+                                    offDutyPresentIds.has(emp.id) ? 'text-blue-400' : 'text-slate-500'}`}>
                                     {emp.empId}
                                   </div>
                                   {offDutyPresentIds.has(emp.id) && (
@@ -6159,9 +6256,9 @@ function Attendance({ phoneOnly = false }) {
                               <input type="checkbox" checked={e.present}
                                 onChange={ev => setExtraRecord(e.id, { present: ev.target.checked })}
                                 className="w-6 h-6 mt-0.5 accent-amber-500 cursor-pointer flex-shrink-0" />
-                              <div className="min-w-[80px] flex-shrink-0">
-                                <div className="font-medium text-slate-800 text-sm">{e.name}</div>
-                                <div className="text-xs text-slate-400">{e._isImport ? '派工匯入' : '手動新增'}</div>
+                              <div className="min-w-[96px] flex-shrink-0">
+                                <div className="font-bold text-slate-900 text-lg leading-snug">{e.name}</div>
+                                <div className="text-[13px] text-slate-500">{e._isImport ? '派工匯入' : '手動新增'}</div>
                               </div>
                               {e.present ? (
                                 <>
@@ -6778,6 +6875,7 @@ function Settings() {
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
+    periodRange, setPeriodRange,
     lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
@@ -6791,6 +6889,25 @@ function Settings() {
 
   // 系統設定含破壞性（刪除倉別／課別／廠商）與全域設定，日翊僅開放課別鎖定與開放區間
   const isAdminUser = currentUser?.role === ROLES.ADMIN;
+  // 全域區間已取消，國定假日改以各課別區間的聯集決定篩選範圍
+  const unionRange = useMemo(() => unionDeptRange(deptRanges), [deptRanges]);
+
+  // ── 每期日期區間 ──
+  const [pStart, setPStart] = useState(periodRange.start ?? '');
+  const [pEnd,   setPEnd]   = useState(periodRange.end   ?? '');
+  useEffect(() => {
+    setPStart(periodRange.start ?? '');
+    setPEnd(periodRange.end ?? '');
+  }, [periodRange]);
+  const periodDays = (pStart && pEnd && pStart <= pEnd)
+    ? Math.round((parseLocal(pEnd) - parseLocal(pStart)) / 86400000) + 1
+    : 0;
+  const savePeriod = () => {
+    if (!pStart || !pEnd) { toast('請填寫起訖日期', 'error'); return; }
+    if (pStart > pEnd)    { toast('結束日期不可早於開始日期', 'error'); return; }
+    setPeriodRange({ start: pStart, end: pEnd });
+    toast(`每期日期區間已儲存（共 ${periodDays} 天）`, 'success');
+  };
 
   // 課別鎖定／開放區間只列出自己權責範圍內的倉別：
   // 管理員為全倉；其餘角色依 allowedWarehouses（未指派則不顯示任何倉別）。
@@ -6801,9 +6918,6 @@ function Settings() {
   }, [warehouses, currentUser]);
 
   const vendorNames = vendors.map(v => v.name);
-
-  const [start, setStart] = useState(scheduleRange.start ?? '');
-  const [end,   setEnd]   = useState(scheduleRange.end   ?? '');
 
   // ── 廠商別 modal 狀態 ──
   const emptyVd = { id: '', code: '', name: '', companyHeader: '' };
@@ -6856,14 +6970,6 @@ function Settings() {
   const [deptTarget, setDeptTarget] = useState(null);
   const [deptForm,   setDeptForm]   = useState(emptyDept);
   const [groupInput, setGroupInput] = useState('');
-
-  const saveRange = () => {
-    if (start && end && start > end) {
-      toast('結束日期不可早於開始日期', 'error'); return;
-    }
-    setScheduleRange({ start, end });
-    toast('開放排班日期區間已儲存', 'success');
-  };
 
   // ── 倉別 CRUD ──
   const openAddWh  = () => { setWhForm(emptyWh); setWhTarget(null); setWhModal(true); };
@@ -6932,41 +7038,56 @@ function Settings() {
     <div className="p-6 space-y-6 max-w-3xl">
       <h2 className="text-xl font-bold text-slate-800">系統設定</h2>
 
-      {/* ── 開放排班日期區間 ── */}
-      <SettingsSection title="開放排班日期區間"
-        desc={isAdminUser ? '設定後僅允許在此區間內編輯班表' : '全域設定，僅管理員可修改'}>
-        <p className="text-xs text-slate-500 mb-3">設定後，<strong>僅允許在此區間內編輯班表</strong>；往前／往後翻頁查看其他期間時一律不可修改。留空表示不限制。</p>
-        {/* 全域區間影響所有倉別，日翊僅供檢視；各課別可於下方自訂 */}
+
+      {/* ── 每期日期區間 ── */}
+      <SettingsSection title="每期日期區間"
+        desc={isAdminUser ? '定義一期涵蓋哪些日子，決定班表顯示與翻頁單位' : '全域設定，僅管理員可修改'}>
+        <p className="text-xs text-slate-500 mb-3">
+          排班以<strong>週期</strong>為單位而非月份。此處設定「一期」的起訖日，班表即以此為一頁顯示，
+          用 ◀ ▶ 可往前後翻期，出勤天／休假天也依此期間統計。
+          <br />
+          <strong className="text-slate-600">此設定與「各課別開放排班區間」互相獨立</strong>——
+          前者決定<strong>看到哪些日子</strong>，後者決定<strong>各課什麼時候可以編輯</strong>，兩者可以不同。
+        </p>
         {isAdminUser ? (
-          <div className="flex gap-3 items-end flex-wrap">
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">開始日期</label>
-              <input type="date" value={start} onChange={e => setStart(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          <>
+            <div className="flex gap-3 items-end flex-wrap">
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">本期開始日</label>
+                <input type="date" value={pStart} onChange={e => setPStart(e.target.value)}
+                  className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">本期結束日</label>
+                <input type="date" value={pEnd} onChange={e => setPEnd(e.target.value)}
+                  className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              </div>
+              {periodDays > 0 && (
+                <span className="px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200
+                                 text-blue-700 text-sm font-semibold">共 {periodDays} 天</span>
+              )}
+              <button onClick={savePeriod}
+                className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                儲存
+              </button>
+              <button onClick={() => { setPStart(''); setPEnd(''); setPeriodRange({}); toast('已清除，班表改以月份檢視', 'info'); }}
+                className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
+                清除
+              </button>
             </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">結束日期</label>
-              <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-                className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-            <button onClick={saveRange}
-              className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              儲存
-            </button>
-            <button onClick={() => { setStart(''); setEnd(''); setScheduleRange({}); toast('已清除日期限制', 'info'); }}
-              className="px-4 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">
-              清除
-            </button>
-          </div>
+            <p className="mt-3 text-xs text-slate-500">
+              留空則班表退回以「年／月」檢視。翻期是以本期天數為單位往前後推算，
+              例如設定 28 天，按 ▶ 就是往後 28 天。
+            </p>
+          </>
         ) : (
           <p className="text-sm text-slate-600 bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-2">
-            🔒 此為全域設定，僅管理員可修改。若貴課需要不同的開放區間，請於下方
-            「各課別鎖定與開放區間」自訂。
+            🔒 此為全域設定，僅管理員可修改。
           </p>
         )}
-        {scheduleRange.start && (
+        {periodRange.start && (
           <p className="mt-3 text-xs text-teal-700">
-            目前區間：{scheduleRange.start} ～ {scheduleRange.end}
+            目前設定：{periodRange.start} ～ {periodRange.end}
           </p>
         )}
       </SettingsSection>
@@ -6975,8 +7096,7 @@ function Settings() {
       <SettingsSection title="各課別鎖定與開放區間" desc="各課可分別鎖定並自訂開放區間">
         <p className="text-xs text-slate-500 mb-2">
           班表編輯權限以<strong>課別</strong>為單位控管。各課排班完成時間不同，可在該課排完後單獨鎖定，不影響其他課別。
-          <br />開放排班區間亦可依各課需求分別設定；<strong>未設定者沿用上方全域區間</strong>
-          （{scheduleRange.start || '未設定'} ~ {scheduleRange.end || '未設定'}）。
+          <br />開放排班區間<strong>一律由各課自行設定</strong>；<strong className="text-amber-700">未設定的課別視為尚未開放，該課人員無法排班</strong>。
         </p>
 
         {/* 各選項的實際效果對照 */}
@@ -7084,14 +7204,14 @@ function Settings() {
       {/* ── 開放排班國定假日 ── */}
       {isAdminUser && (<SettingsSection title="開放排班國定假日" desc="勾選後班表中「國」顯示假日短名">
         <p className="text-xs text-slate-500 mb-4">
-          依上方開放排班日期區間自動篩選範圍內的國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
-          {!scheduleRange.start && <span className="text-teal-700 ml-1">（請先設定開放排班日期區間）</span>}
+          依各課別開放排班區間的整體範圍自動篩選國定假日。勾選後班表中「國」將顯示假日短名（如端午、元旦）。
+          {!unionRange.start && <span className="text-teal-700 ml-1">（請先於上方設定各課別的開放排班區間）</span>}
         </p>
         {(() => {
           // 解析區間
           const parseLocal = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
-          const rangeStart = scheduleRange.start ? parseLocal(scheduleRange.start) : null;
-          const rangeEnd   = scheduleRange.end   ? parseLocal(scheduleRange.end)   : null;
+          const rangeStart = unionRange.start ? parseLocal(unionRange.start) : null;
+          const rangeEnd   = unionRange.end   ? parseLocal(unionRange.end)   : null;
 
           // 篩選區間內的國定假日
           const springCounts = {};
@@ -7334,7 +7454,7 @@ function Settings() {
             </div>
           ))}
         </div>
-      </SettingsSection>)}
+      </SettingsSection>
 
       {/* ── 廠商公司抬頭維護 ── */}
       {(() => {
@@ -8817,6 +8937,17 @@ function AccountManagement() {
       : [...(p.allowedWarehouses ?? []), whId],
   }));
 
+  // 登入次數／最後登入由伺服器在每次登入時累計，本機 users 不會更新，
+  // 故一律以 apiUsers（資料庫）為準，查無對應帳號才退回本機值。
+  const dbUserOf = u => apiUsers.find(a => a.id === u.id || a.username === u.username);
+  const loginCountOf = u => dbUserOf(u)?.loginCount ?? u.loginCount ?? 0;
+  const lastLoginOf = u => {
+    const t = dbUserOf(u)?.last_login;
+    if (!t) return null;
+    const d = new Date(t);
+    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+  };
+
   const roleLabel = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員' };
   const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
 
@@ -9311,6 +9442,8 @@ function AccountManagement() {
       )}
 
       {(activeTab === 'vendor' || (activeTab === 'staff' && !apiUsersLoaded)) && (
+      <div className="overflow-x-auto">
+      <div className="min-w-[860px]">
       <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                       bg-slate-100 rounded-t-xl px-4 py-2.5 border border-[#DDD9D0]"
            style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
@@ -9322,9 +9455,7 @@ function AccountManagement() {
         <span>審核狀態</span>
         <span>操作 / 權限</span>
       </div>
-      )}
 
-      {(activeTab === 'vendor' || (activeTab === 'staff' && !apiUsersLoaded)) && (
       <div className="border border-[#DDD9D0] rounded-b-xl divide-y divide-slate-100 overflow-hidden">
         {tabUsers.map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
@@ -9344,7 +9475,12 @@ function AccountManagement() {
                   {roleLabel[u.role]}
                 </span>
 
-                <span className="text-teal-700 font-bold text-sm pl-4">{u.loginCount ?? 0}</span>
+                <span className="pl-4">
+                  <span className="text-teal-700 font-bold text-sm">{loginCountOf(u)}</span>
+                  {lastLoginOf(u) && (
+                    <span className="block text-[10px] text-slate-400 leading-tight">{lastLoginOf(u)}</span>
+                  )}
+                </span>
 
                 <span className="text-slate-500 text-xs truncate">
                   {u.role === ROLES.ADMIN ? '全部廠商' : u.vendors?.join('、') || '—'}
@@ -9436,6 +9572,8 @@ function AccountManagement() {
             </div>
           );
         })}
+      </div>
+      </div>
       </div>
       )}
 
@@ -9575,7 +9713,12 @@ export default function App() {
   const [systemLocked,  setSystemLocked]  = useState(() => LS.get('sms_locked',     false));
   // 各課別鎖定狀態 { 課別名稱: 'none'|'partial'|'full' }：各課排班完成時間不同，需分別鎖定
   const [deptLocks, setDeptLocks] = useState(() => LS.get('sms_dept_locks', {}));
-  // 各課別自訂開放排班區間 { 課別名稱: {start,end} }；未設定者沿用全域 scheduleRange
+  // 每期日期區間：定義「一期」涵蓋哪些日子，決定班表顯示的天數、出勤／休假天統計
+  // 與週期翻頁單位。與「各課開放排班區間」互相獨立——前者是排班週期，後者是可編輯的時段。
+  const [periodRange, setPeriodRange] = useState(() => LS.get('sms_period_range', {}));
+
+  // 各課別開放排班區間 { 課別名稱: {start,end} }；未設定＝該課尚未開放，不可排班。
+  // 全域 scheduleRange 已停用（保留欄位以相容舊資料，不再影響任何判斷）
   const [deptRanges, setDeptRanges] = useState(() => LS.get('sms_dept_ranges', {}));
   // 手機控管櫃號 { 員工id: {cab,slot} }：固定綁定人員，不隨每日出勤變動
   const [lockerAssign, setLockerAssign] = useState(() => LS.get('sms_locker_assign', {}));
@@ -9661,6 +9804,7 @@ export default function App() {
           systemLocked:       LS.get('sms_locked', false),
           deptLocks:          LS.get('sms_dept_locks', {}),
           deptRanges:         LS.get('sms_dept_ranges', {}),
+          periodRange:        LS.get('sms_period_range', {}),
           lockerAssign:       LS.get('sms_locker_assign', {}),
           scheduleRange:      LS.get('sms_range', {}),
           openHolidays:       LS.get('sms_open_holidays', []),
@@ -9706,6 +9850,7 @@ export default function App() {
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -9734,6 +9879,7 @@ export default function App() {
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -9765,6 +9911,7 @@ export default function App() {
         if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
+        if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.lockerAssign)           setLockerAssign(state.lockerAssign);
         if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
@@ -9828,6 +9975,7 @@ export default function App() {
       if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
       if (s.deptLocks)               setDeptLocks(s.deptLocks);
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
+              if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
       if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
       if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
@@ -9932,6 +10080,7 @@ export default function App() {
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
   useEffect(() => { LS.set('sms_dept_locks',     deptLocks);     }, [deptLocks]);
   useEffect(() => { LS.set('sms_dept_ranges',    deptRanges);    }, [deptRanges]);
+  useEffect(() => { LS.set('sms_period_range',   periodRange);   }, [periodRange]);
   useEffect(() => { LS.set('sms_locker_assign',  lockerAssign);  }, [lockerAssign]);
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
   useEffect(() => { LS.set('sms_open_holidays',       openHolidays);      }, [openHolidays]);
@@ -9955,7 +10104,7 @@ export default function App() {
   // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
   const latestStateRef = useRef({});
   latestStateRef.current = {
-    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign,
+    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
@@ -9982,7 +10131,7 @@ export default function App() {
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
     const body = JSON.stringify({
-      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign,
+      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
@@ -10003,7 +10152,7 @@ export default function App() {
         .then(r => { done(r.ok); if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
-  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, lockerAssign, scheduleRange,
+  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
@@ -10139,6 +10288,7 @@ export default function App() {
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
+    periodRange, setPeriodRange,
     lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
