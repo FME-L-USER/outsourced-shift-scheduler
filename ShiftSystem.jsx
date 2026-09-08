@@ -187,6 +187,33 @@ const VENDOR_COMPANY_NAMES = {
 
 /** 作業區種子清單。每位人員可指派一個作業區；空字串＝未設定。
  *  清單可於系統設定增修，此處僅為初次啟用時的預設值。 */
+// 點名表／手機控管／出勤回報與統計的廠商顯示順序（現場慣用排列，非字典序）。
+// 不在清單內的廠商排在後面，並維持原本出現的順序。
+const VENDOR_ORDER = ['萬宜', '承奕', '華煬通', '三彥', '信邦'];
+const vendorRank = v => {
+  const i = VENDOR_ORDER.indexOf(normName(v));
+  return i === -1 ? VENDOR_ORDER.length : i;
+};
+/** 依 VENDOR_ORDER 排序廠商名稱；同順位者保留傳入順序（穩定排序） */
+function sortVendorNames(names) {
+  return [...names].sort((a, b) => vendorRank(a) - vendorRank(b));
+}
+
+const CELL_SEP = '|';   // 員工 id 與日期鍵都不會出現此字元
+/** 由「已改動格子」清單組出只含這些格子的班表 payload。
+ *  值為 undefined（該格已被清掉或人員已刪除）時送空字串，代表空白班別。 */
+function buildDirtySchedule(cells, schedule) {
+  const out = {};
+  for (const key of cells) {
+    const i = key.indexOf(CELL_SEP);
+    if (i < 0) continue;
+    const empId = key.slice(0, i), dk = key.slice(i + 1);
+    (out[empId] ??= {})[dk] = schedule?.[empId]?.[dk] ?? '';
+  }
+  return out;
+}
+
+const REST_QUOTA = 8;   // 開放委外排休時，每期休＋例合計上限（幹部與人員共用同一額度值）
 const SEED_WORK_AREAS = ['O2O', '團預購', '收發', '廠退', '外場', '小白單'];
 
 /** 廠商種子資料（從 VENDOR_MAP 展開） */
@@ -2626,11 +2653,30 @@ function Dashboard() {
 // SCHEDULE TABLE
 // ─────────────────────────────────────────────
 
+/** 可點擊排序的表頭：點第一次遞增、第二次遞減、第三次回到預設排序 */
+function SortHeader({ label, col, sort, onSort, align = 'center', tone = 'dark' }) {
+  const active = sort.col === col;
+  const icon = !active ? '↕' : sort.dir === 1 ? '↑' : '↓';
+  const light = tone === 'light';
+  return (
+    <button type="button" onClick={() => onSort(col)}
+      title={active ? (sort.dir === 1 ? '遞增（再按一次改遞減）' : '遞減（再按一次恢復預設）') : '點擊排序'}
+      className={`w-full flex items-center gap-1 select-none transition-colors
+                  ${light ? 'hover:text-blue-600' : 'hover:text-yellow-200'}
+                  ${align === 'left' ? 'justify-start' : 'justify-center'}`}>
+      <span>{label}</span>
+      <span className={active
+        ? (light ? 'text-blue-600 font-bold' : 'text-yellow-300 font-bold')
+        : (light ? 'text-slate-300' : 'text-slate-400')}>{icon}</span>
+    </button>
+  );
+}
+
 function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    deptLocks, deptRanges, periodRange, openHolidays, vendorHolidayOpen,
+    deptLocks, deptRanges, periodRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
     selectedVendor,
   } = useApp();
@@ -2911,6 +2957,13 @@ function ScheduleTable() {
     toast(`已重置 ${checkedEmpIds.size} 位人員的班表`, 'success');
   };
 
+  // 表頭排序：col 為 null 時使用預設排序（廠商→班別→姓名），dir 1=遞增 -1=遞減
+  const [sort, setSort] = useState({ col: null, dir: 1 });
+  const toggleSort = (col) => setSort(prev =>
+    prev.col !== col ? { col, dir: 1 }
+    : prev.dir === 1 ? { col, dir: -1 }
+    : { col: null, dir: 1 });   // 第三次點回到預設排序
+
   const visibleEmployees = useMemo(() => {
     // 委外人員只能看自己
     if (currentUser.role === ROLES.WORKER) {
@@ -2928,8 +2981,30 @@ function ScheduleTable() {
         (e.empId ?? '').toLowerCase().includes(q)
       );
     }
-    return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch]);
+    // 預設排序：廠商（現場慣用順序）→ 班別上班時間由早到晚 → 姓名
+    // 沒設定班別的人排在該廠商最後（startTime 視為最大值）
+    const startOf = (e) => {
+      if (!e.shiftTypeId) return 9999;
+      const st = findShiftType(shiftTypesByWh, selectedWarehouse ?? 'default', e.shiftTypeId);
+      const n = Number(st?.startTime);
+      return Number.isFinite(n) ? n : 9999;
+    };
+    const byDefault = (a, b) =>
+      vendorRank(a.vendor) - vendorRank(b.vendor) ||
+      (a.vendor ?? '').localeCompare(b.vendor ?? '', 'zh-Hant') ||
+      startOf(a) - startOf(b) ||
+      (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant');
+    // 點表頭排序時，以該欄為主鍵，其餘沿用預設順序當次鍵（結果穩定、不會跳動）
+    const primary = {
+      name:   (a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'),
+      vendor: (a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
+                        (a.vendor ?? '').localeCompare(b.vendor ?? '', 'zh-Hant'),
+      shift:  (a, b) => startOf(a) - startOf(b),
+    };
+    if (!sort.col) return [...list].sort(byDefault);
+    const cmp = primary[sort.col];
+    return [...list].sort((a, b) => (cmp(a, b) * sort.dir) || byDefault(a, b));
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch, shiftTypesByWh, sort]);
 
   /** 計算當週某代碼出現次數（週一～週日） */
   const getWeeklyCode = useCallback((empId, dk, code) => {
@@ -2951,6 +3026,18 @@ function ScheduleTable() {
 
   /** 計算當週休假日數（'休'） */
   const getWeeklyRest = useCallback((empId, dk) => getWeeklyCode(empId, dk, '休'), [getWeeklyCode]);
+
+  /** 本期已使用的休假日數（休＋例合計），excludeDk 為正在點選的當天，不計入。
+   *  dayHeaders 宣告在本函式之後，故透過 ref 取用（本函式只在點擊事件中呼叫，
+   *  此時 ref 必然已填入當次 render 的值）。 */
+  const dayHeadersRef = useRef([]);
+  const getPeriodRestUsed = useCallback((empId, excludeDk) => {
+    const row = schedule[empId] ?? {};
+    return dayHeadersRef.current.reduce((n, h) => {
+      if (h.dk === excludeDk) return n;
+      return (row[h.dk] === '休' || row[h.dk] === '例') ? n + 1 : n;
+    }, 0);
+  }, [schedule]);
 
   // 鎖定與開放區間皆以「課別」為單位：各課排班完成時間不同，需可分別設定
   const isEditable = useCallback((dk, emp) => {
@@ -3056,13 +3143,24 @@ function ScheduleTable() {
       }
     }
 
-    // 防呆：WORKER / VENDOR 每週限排一天休假
+    // 防呆：委外人員／委外幹部的休假上限
+    //   預設兩者都是「每週一天」；系統設定各自有一個開關，
+    //   開啟後該身分改為以「本期」為單位、休＋例合計 REST_QUOTA 天。
     if ((currentUser.role === ROLES.WORKER || currentUser.role === ROLES.VENDOR) && next === '休') {
-      const weeklyRest = getWeeklyRest(empId, dk);
       const alreadyRest = schedule[empId]?.[dk] === '休';
-      if (!alreadyRest && weeklyRest >= 1) {
-        toast('每週只能選一天休假日，本週已達上限。', 'error');
-        return;
+      const byPeriod = currentUser.role === ROLES.VENDOR ? vendorRestOpen : workerRestOpen;
+      if (byPeriod) {
+        const used = getPeriodRestUsed(empId, dk);
+        if (!alreadyRest && used >= REST_QUOTA) {
+          toast(`本期休假已達上限（${REST_QUOTA} 天，含例休）。`, 'error');
+          return;
+        }
+      } else {
+        const weeklyRest = getWeeklyRest(empId, dk);
+        if (!alreadyRest && weeklyRest >= 1) {
+          toast('每週只能選一天休假日，本週已達上限。', 'error');
+          return;
+        }
       }
     }
 
@@ -3070,7 +3168,7 @@ function ScheduleTable() {
       ...prev,
       [empId]: { ...prev[empId], [dk]: next },
     }));
-  }, [schedule, employees, isEditable, currentUser, openHolidays, vendorHolidayOpen, getWeeklyLeaves, getWeeklyRest, setSchedule, toast]);
+  }, [schedule, employees, isEditable, currentUser, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, getWeeklyLeaves, getWeeklyRest, getPeriodRestUsed, setSchedule, toast]);
 
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years  = [2024, 2025, 2026, 2027];
@@ -3520,6 +3618,7 @@ function ScheduleTable() {
       };
     });
   }, [days, selectedYear, selectedMonth, rangeMode, viewRange]);
+  dayHeadersRef.current = dayHeaders;
 
 
   // 列印班表報表（依目前週期/月份，景印格式）
@@ -3858,10 +3957,14 @@ function ScheduleTable() {
                     onChange={toggleCheckAll} />
                 </th>
                 <th className="sticky left-8 z-20 bg-slate-700 text-left px-2 py-2 w-36 min-w-[140px]">
-                  人員姓名
+                  <SortHeader label="人員姓名" col="name" sort={sort} onSort={toggleSort} align="left" />
                 </th>
-                <th className="hidden sm:table-cell px-2 py-2 w-16 min-w-[64px]">廠商</th>
-                <th className="hidden sm:table-cell px-2 py-2 w-20 min-w-[80px]">班別</th>
+                <th className="hidden sm:table-cell px-2 py-2 w-16 min-w-[64px]">
+                  <SortHeader label="廠商" col="vendor" sort={sort} onSort={toggleSort} />
+                </th>
+                <th className="hidden sm:table-cell px-2 py-2 w-20 min-w-[80px]">
+                  <SortHeader label="班別" col="shift" sort={sort} onSort={toggleSort} />
+                </th>
                 {dayHeaders.map(({ dk, day, month, isWeekend, isMonthStart, wd }, colIdx) => {
                   const weekBand = Math.floor(colIdx / 7) % 2 === 1;
                   return (
@@ -4061,6 +4164,12 @@ function EmployeeRoster() {
   const [editTarget, setEditTarget] = useState(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
+  // 表頭排序：col 為 null 時使用預設排序
+  const [sort, setSort] = useState({ col: null, dir: 1 });
+  const toggleSort = (col) => { setPage(1); setSort(prev =>
+    prev.col !== col ? { col, dir: 1 }
+    : prev.dir === 1 ? { col, dir: -1 }
+    : { col: null, dir: 1 }); };
 
   const visible = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
@@ -4072,8 +4181,21 @@ function EmployeeRoster() {
       const q = search.trim().toLowerCase();
       list = list.filter(e => e.name.toLowerCase().includes(q) || e.empId.toLowerCase().includes(q));
     }
-    return list;
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search]);
+    // 預設：廠商（現場慣用順序）→ 員編；點表頭可改以該欄排序
+    const byDefault = (a, b) =>
+      vendorRank(a.vendor) - vendorRank(b.vendor) ||
+      (a.vendor ?? '').localeCompare(b.vendor ?? '', 'zh-Hant') ||
+      (a.empId ?? '').localeCompare(b.empId ?? '', 'zh-Hant');
+    if (!sort.col) return [...list].sort(byDefault);
+    const val = (e) => sort.col === 'vendor' ? null : (e[sort.col] ?? '');
+    return [...list].sort((a, b) => {
+      const c = sort.col === 'vendor'
+        ? (vendorRank(a.vendor) - vendorRank(b.vendor) ||
+           (a.vendor ?? '').localeCompare(b.vendor ?? '', 'zh-Hant'))
+        : String(val(a)).localeCompare(String(val(b)), 'zh-Hant');
+      return (c * sort.dir) || byDefault(a, b);
+    });
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search, sort]);
 
   // 篩選條件變動時重置到第1頁
   useEffect(() => { setPage(1); }, [selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search]);
@@ -4448,8 +4570,13 @@ function EmployeeRoster() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                {['員編','姓名','廠商','課別','組別','作業區','狀態','操作'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
+                {[['員編','empId'],['姓名','name'],['廠商','vendor'],['課別','dept'],
+                  ['組別','group'],['作業區','workArea'],['狀態','status'],['操作',null]].map(([h, col]) => (
+                  <th key={h} className="px-4 py-3 text-left font-semibold text-slate-600 whitespace-nowrap">
+                    {col
+                      ? <SortHeader label={h} col={col} sort={sort} onSort={toggleSort} align="left" tone="light" />
+                      : h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -5766,7 +5893,7 @@ function WorkerSelfCheck() {
 // phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
 // 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
 function Attendance({ phoneOnly = false }) {
-  const { employees, warehouses, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, selectedWorkArea, setSelectedGroup, selectedVendor, currentUser, schedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
+  const { employees, setEmployees, warehouses, setWarehouses, vendors: _allVendors, setVendors, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, selectedWorkArea, setSelectedGroup, selectedVendor, currentUser, schedule, applyRemoteSchedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
   const toast = useToast();
 
   // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
@@ -5835,7 +5962,7 @@ function Attendance({ phoneOnly = false }) {
         if (Array.isArray(data?.employees) && data.employees.length > 0) setEmployees(data.employees);
         if (Array.isArray(data?.vendors)   && data.vendors.length   > 0) setVendors(data.vendors);
         if (Array.isArray(data?.warehouses)&& data.warehouses.length> 0) setWarehouses(data.warehouses);
-        if (data?.schedule && Object.keys(data.schedule).length > 0)     setSchedule(data.schedule);
+        applyRemoteSchedule(data?.schedule);
         if (data?.attendSettings) setAttendSettings(data.attendSettings);
       }
       setLastSync(new Date());
@@ -6027,7 +6154,8 @@ function Attendance({ phoneOnly = false }) {
         vm[v].t++; if (e.present) vm[v].p++;
       });
       let tt = 0, tp = 0;
-      Object.entries(vm).forEach(([v, d]) => {
+      sortVendorNames(Object.keys(vm)).forEach(v => {
+        const d = vm[v];
         tt += d.t; tp += d.p;
         s1.push([v, d.t, d.p, d.t - d.p, d.t > 0 ? `${Math.round((d.p/d.t)*100)}%` : '—']);
       });
@@ -6125,8 +6253,15 @@ function Attendance({ phoneOnly = false }) {
       const vm = {};
       list.forEach(e => {
         const v = e.vendor || '未分配';
-        if (!vm[v]) vm[v] = { long: { t: 0, p: 0 }, temp: { t: 0, p: 0 }, absent: [] };
+        if (!vm[v]) vm[v] = { long: { t: 0, p: 0 }, temp: { t: 0, p: 0 }, absent: [], notes: [] };
         const rec = getRecFn(e);
+        // 到班者若填了時間備註（遲到／早退的實際時間等），一併帶進回報文字
+        if (rec.present && String(rec.timeNote ?? '').trim())
+          vm[v].notes.push({
+            name: e.name,
+            status: rec.lateEarly || '',
+            note: String(rec.timeNote).trim(),
+          });
         if (e._isTemp) {
           vm[v].temp.t++;
           if (rec.present) vm[v].temp.p++;
@@ -6159,7 +6294,8 @@ function Attendance({ phoneOnly = false }) {
     text += `缺勤人數（臨時）：${tempAbsent}人\n`;
     text += `${fmtAbsMap(tempAbsMap)}\n\n`;
 
-    Object.entries(vm).forEach(([v, d]) => {
+    sortVendorNames(Object.keys(vm)).forEach(v => {
+      const d = vm[v];
       text += `\n《${v}》\n`;
       text += `應到（長期）:${d.long.t} 實到（長期）:${d.long.p}\n`;
       text += `應到（臨時）:${d.temp.t} 實到（臨時）:${d.temp.p}\n`;
@@ -6169,6 +6305,17 @@ function Attendance({ phoneOnly = false }) {
       Object.entries(absByType).forEach(([t, names]) => {
         text += `${t}：${names.join('、')}\n`;
       });
+      // 時間備註：依遲到早退狀態分組，狀態為「正常到班」者歸在「時間備註」
+      if (d.notes.length > 0) {
+        const noteByStatus = {};
+        d.notes.forEach(n => {
+          const label = (!n.status || n.status.startsWith('正常')) ? '時間備註' : n.status;
+          (noteByStatus[label] ??= []).push(`${n.name}（${n.note}）`);
+        });
+        Object.entries(noteByStatus).forEach(([label, items]) => {
+          text += `${label}：${items.join('、')}\n`;
+        });
+      }
     });
 
     return text;
@@ -6222,10 +6369,10 @@ function Attendance({ phoneOnly = false }) {
         <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
       ) : (() => {
         // 合併所有廠商名稱，維持出現順序
-        const allVendors = [...new Set([
+        const allVendors = sortVendorNames([...new Set([
           ...Object.keys(vendorGroups),
           ...Object.keys(extrasVendorGroups),
-        ])];
+        ])]);
         return (
           <div className="space-y-2">
             {allVendors.map(vName => {
@@ -6722,10 +6869,10 @@ function Attendance({ phoneOnly = false }) {
       {Object.keys(vendorGroups).length === 0 && dateExtras.length === 0 ? (
         <p className="text-sm text-slate-400 text-center py-10">請先在人員清冊匯入資料，或使用匯入派工表</p>
       ) : (() => {
-        const allVendors = [...new Set([
+        const allVendors = sortVendorNames([...new Set([
           ...Object.keys(vendorGroups),
           ...Object.keys(extrasVendorGroups),
-        ])];
+        ])]);
         return (
           <div className="space-y-2">
             {allVendors.map(vName => {
@@ -6982,6 +7129,8 @@ function Settings() {
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
+    vendorRestOpen, setVendorRestOpen,
+    workerRestOpen, setWorkerRestOpen,
     vendorCompanyNames, setVendorCompanyNames,
     vendors, setVendors,
     warehouses, setWarehouses,
@@ -7427,11 +7576,13 @@ function Settings() {
         })()}
       </SettingsSection>)}
 
-      {/* ── 委外幹部排「國」開放鍵 ── */}
-      {isAdminUser && (<SettingsSection title="委外幹部國定假日排班權限" desc="控制委外幹部能否自行安排「國」">
-        <div className="flex items-center justify-between">
+      {/* ── 委外幹部假日排班權限（國定假日／排休兩項開關）── */}
+      {isAdminUser && (<SettingsSection title="委外幹部假日排班權限" desc="控制委外幹部能否自行安排「國」與休假">
+        {/* 1. 開放國定假日排班 */}
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs text-slate-500">
+            <p className="text-sm font-semibold text-slate-700">1. 開放國定假日排班</p>
+            <p className="text-xs text-slate-500 mt-0.5">
               開啟後，委外幹部可在班表中自行安排「國」定假日；關閉時點擊格子將自動跳過「國」。
             </p>
           </div>
@@ -7440,7 +7591,7 @@ function Settings() {
               setVendorHolidayOpen(v => !v);
               toast(vendorHolidayOpen ? '已關閉：委外幹部無法自行排國定' : '已開啟：委外幹部可排國定假日', 'info');
             }}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
+            className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
               ${vendorHolidayOpen ? 'bg-blue-600' : 'bg-slate-300'}`}>
             <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
               ${vendorHolidayOpen ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -7448,6 +7599,66 @@ function Settings() {
         </div>
         <p className={`mt-2 text-xs font-medium ${vendorHolidayOpen ? 'text-teal-700' : 'text-slate-400'}`}>
           {vendorHolidayOpen ? '✅ 目前開放中' : '🔒 目前關閉中（委外幹部不可排國定）'}
+        </p>
+
+        {/* 2. 開放委外幹部排休 */}
+        <div className="flex items-center justify-between gap-4 mt-5 pt-5 border-t border-[#DDD9D0]">
+          <div>
+            <p className="text-sm font-semibold text-slate-700">2. 開放委外幹部排休（{REST_QUOTA} 日）</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              關閉時，委外幹部與委外人員相同，每週只能排一天休假。
+              開啟後，委外幹部改以「本期」為單位，休假（休）＋例休（例）合計最多 {REST_QUOTA} 天，不再受每週一天限制。
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setVendorRestOpen(v => !v);
+              toast(vendorRestOpen
+                ? '已關閉：委外幹部恢復每週限排一天休假'
+                : `已開啟：委外幹部本期可排 ${REST_QUOTA} 天休假（含例休）`, 'info');
+            }}
+            className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
+              ${vendorRestOpen ? 'bg-blue-600' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+              ${vendorRestOpen ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <p className={`mt-2 text-xs font-medium ${vendorRestOpen ? 'text-teal-700' : 'text-slate-400'}`}>
+          {vendorRestOpen
+            ? `✅ 目前開放中（本期上限 ${REST_QUOTA} 天，含例休）`
+            : '🔒 目前關閉中（委外幹部每週限排一天休假）'}
+        </p>
+
+        {/* 3. 開放委外人員排休 */}
+        <div className="flex items-center justify-between gap-4 mt-5 pt-5 border-t border-[#DDD9D0]">
+          <div>
+            <p className="text-sm font-semibold text-slate-700">3. 開放委外人員排休（{REST_QUOTA} 日）</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              關閉時，委外人員每週只能排一天休假。
+              開啟後，委外人員改以「本期」為單位，休假（休）＋例休（例）合計最多 {REST_QUOTA} 天，不再受每週一天限制。
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setWorkerRestOpen(v => !v);
+              toast(workerRestOpen
+                ? '已關閉：委外人員恢復每週限排一天休假'
+                : `已開啟：委外人員本期可排 ${REST_QUOTA} 天休假（含例休）`, 'info');
+            }}
+            className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
+              ${workerRestOpen ? 'bg-blue-600' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+              ${workerRestOpen ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <p className={`mt-2 text-xs font-medium ${workerRestOpen ? 'text-teal-700' : 'text-slate-400'}`}>
+          {workerRestOpen
+            ? `✅ 目前開放中（本期上限 ${REST_QUOTA} 天，含例休）`
+            : '🔒 目前關閉中（委外人員每週限排一天休假）'}
+        </p>
+        <p className="mt-3 text-xs text-slate-400">
+          ※ 第 2、3 項為各自獨立的開關，可只開放其中一種身分。「例」仍僅由日翊排定，
+          但日翊排的例休會佔用該員本期 {REST_QUOTA} 天的額度。
         </p>
       </SettingsSection>)}
 
@@ -8076,6 +8287,12 @@ function ShiftSetup() {
   const [filterVendor, setFilterVendor] = useState('');
   const [filterShift,  setFilterShift]  = useState('');
   const [nameSearchSetup, setNameSearchSetup] = useState('');
+  // 表頭排序：col 為 null 時使用預設排序（未指派在最上方）
+  const [setupSort, setSetupSort] = useState({ col: null, dir: 1 });
+  const toggleSetupSort = (col) => setSetupSort(prev =>
+    prev.col !== col ? { col, dir: 1 }
+    : prev.dir === 1 ? { col, dir: -1 }
+    : { col: null, dir: 1 });
 
   // 拖曳排序
   const dragSrcIdx = useRef(null);
@@ -8112,10 +8329,33 @@ function ShiftSetup() {
     });
     // 未指派排最上方（shiftTypeId 空值或找不到對應班別皆視為未指派）
     const isAssigned = e => !!e.shiftTypeId && shiftTypes.some(t => t.id === e.shiftTypeId);
-    return [
+    const byDefault = [
       ...filtered.filter(e => !isAssigned(e)),
       ...filtered.filter(e =>  isAssigned(e)),
     ];
+    if (!setupSort.col) return byDefault;
+    // 點表頭排序時，以該欄為主鍵；同值者沿用預設順序（未指派在前）
+    const order = new Map(byDefault.map((e, i) => [e.id, i]));
+    const startOf = e => {
+      const st = findShiftType(shiftTypesByWh, whKey, e.shiftTypeId);
+      const n = Number(st?.startTime);
+      return Number.isFinite(n) ? n : 9999;
+    };
+    const endOf = e => {
+      const st = findShiftType(shiftTypesByWh, whKey, e.shiftTypeId);
+      const n = Number(st?.endTime);
+      return Number.isFinite(n) ? n : 9999;
+    };
+    const cmp = {
+      empId:  (a, b) => (a.empId ?? '').localeCompare(b.empId ?? '', 'zh-Hant'),
+      name:   (a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'),
+      vendor: (a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
+                        (a.vendor ?? '').localeCompare(b.vendor ?? '', 'zh-Hant'),
+      shift:  (a, b) => startOf(a) - startOf(b),
+      end:    (a, b) => endOf(a) - endOf(b),
+    }[setupSort.col];
+    return [...byDefault].sort((a, b) =>
+      (cmp(a, b) * setupSort.dir) || (order.get(a.id) - order.get(b.id)));
   })();
 
   return (
@@ -8196,8 +8436,11 @@ function ShiftSetup() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                {['員工編號','姓名','廠商','班別指派','上班時間','下班時間'].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-600 text-xs">{h}</th>
+                {[['員工編號','empId'],['姓名','name'],['廠商','vendor'],
+                  ['班別指派','shift'],['上班時間','shift'],['下班時間','end']].map(([h, col], i) => (
+                  <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-600 text-xs">
+                    <SortHeader label={h} col={col} sort={setupSort} onSort={toggleSetupSort} align="left" tone="light" />
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -9898,6 +10141,8 @@ export default function App() {
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
   const [openHolidays,       setOpenHolidays]       = useState(() => LS.get('sms_open_holidays', []));
   const [vendorHolidayOpen,  setVendorHolidayOpen]  = useState(() => LS.get('sms_vendor_hol_open', false));
+  const [vendorRestOpen,     setVendorRestOpen]     = useState(() => LS.get('sms_vendor_rest_open', false));
+  const [workerRestOpen,     setWorkerRestOpen]     = useState(() => LS.get('sms_worker_rest_open', false));
   const [vendorCompanyNames, setVendorCompanyNames] = useState(() => LS.get('sms_vendor_company_names', VENDOR_COMPANY_NAMES));
   const [selectedYear,  setSelectedYear]  = useState(() => LS.get('sms_year',       today.getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(() => LS.get('sms_month',      today.getMonth() + 1));
@@ -9926,6 +10171,64 @@ export default function App() {
     }
     return buildDefaultSchedule(SEED_EMPLOYEES, today.getFullYear(), today.getMonth() + 1);
   });
+
+  // ── 班表「本機實際改過的格子」追蹤 ───────────────────────────────
+  // 背景：所有人共用同一份班表，過去每次存檔都送出整份 schedule 快照。
+  // 伺服器逐格合併時以送出的值為準，於是 A 的舊快照會把 B 剛改好的格子蓋回舊值
+  //（例：委外幹部排好「休」，日翊端 30 秒內的自動存檔又把它改回「V」）。
+  // 作法：記錄本機真正改過哪些格子，存檔只送這些格子；套用伺服器資料時不計入，
+  // 並把尚未存檔的本機異動疊回去，避免背景同步把自己剛改的內容洗掉。
+  const scheduleRef      = useRef(schedule);
+  scheduleRef.current    = schedule;
+  // 未存檔清單同時寫入 localStorage：本機班表本來就會存在 localStorage，
+  // 若清單只放在記憶體，使用者改完 2 秒內關掉分頁，重開後畫面看得到改動卻永遠不會上傳，
+  // 還會被背景同步洗掉。兩者一起持久化才不會出現「看得到卻沒存到」的落差。
+  const dirtyCellsRef    = useRef(new Set(LS.get('sms_dirty_cells', [])));
+  const persistDirty     = () => LS.set('sms_dirty_cells', [...dirtyCellsRef.current]);
+  const applyingRemoteRef = useRef(false);
+  const cellKey = (empId, dk) => empId + CELL_SEP + dk;
+
+  const markScheduleDiff = (prev, next) => {
+    const dirty = dirtyCellsRef.current;
+    for (const [empId, days] of Object.entries(next ?? {})) {
+      const before = prev?.[empId] ?? {};
+      for (const [dk, v] of Object.entries(days ?? {}))
+        if (before[dk] !== v) dirty.add(cellKey(empId, dk));
+    }
+    for (const [empId, days] of Object.entries(prev ?? {})) {
+      const after = next?.[empId];
+      for (const dk of Object.keys(days ?? {}))
+        if (!after || !(dk in after)) dirty.add(cellKey(empId, dk));
+    }
+  };
+
+  /** 對外的 setSchedule：自動記錄被改動的格子 */
+  const setScheduleTracked = useCallback((arg) => {
+    setSchedule(prev => {
+      const next = typeof arg === 'function' ? arg(prev) : arg;
+      if (!applyingRemoteRef.current) { markScheduleDiff(prev, next); persistDirty(); }
+      return next;
+    });
+  }, []);
+
+  /** 套用伺服器班表：不記為本機異動，並保留尚未存檔的本機改動 */
+  const applyRemoteSchedule = useCallback((remote) => {
+    if (!remote || Object.keys(remote).length === 0) return;
+    applyingRemoteRef.current = true;
+    try {
+      const merged = {};
+      for (const [empId, days] of Object.entries(remote)) merged[empId] = { ...days };
+      for (const key of dirtyCellsRef.current) {
+        const [empId, dk] = key.split(CELL_SEP);
+        const localVal = scheduleRef.current?.[empId]?.[dk];
+        if (localVal === undefined) continue;
+        (merged[empId] ??= {})[dk] = localVal;
+      }
+      setSchedule(merged);
+    } finally {
+      applyingRemoteRef.current = false;
+    }
+  }, []);
 
   // ── Session state ──
   const [currentUser,  setCurrentUser]  = useState(null);
@@ -9983,6 +10286,8 @@ export default function App() {
           scheduleRange:      LS.get('sms_range', {}),
           openHolidays:       LS.get('sms_open_holidays', []),
           vendorHolidayOpen:  LS.get('sms_vendor_hol_open', false),
+          vendorRestOpen:     LS.get('sms_vendor_rest_open', false),
+          workerRestOpen:     LS.get('sms_worker_rest_open', false),
           vendorCompanyNames: LS.get('sms_vendor_company_names', {}),
           attendData:         LS.get('sms_attendance', {}),
           extras:             LS.get('sms_attend_extras', {}),
@@ -10018,7 +10323,7 @@ export default function App() {
           if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
           if (s.vendors?.length > 0)    setVendors(s.vendors);
           if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
-          if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+          applyRemoteSchedule(s.schedule);
           if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
@@ -10028,6 +10333,8 @@ export default function App() {
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+          if (s.vendorRestOpen != null) setVendorRestOpen(s.vendorRestOpen);
+          if (s.workerRestOpen != null) setWorkerRestOpen(s.workerRestOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
         }
@@ -10048,7 +10355,7 @@ export default function App() {
           if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
           if (s.vendors?.length > 0)    setVendors(s.vendors);
           if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
-          if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+          applyRemoteSchedule(s.schedule);
           if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
           if (s.openHolidays)            setOpenHolidays(s.openHolidays);
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
@@ -10058,6 +10365,8 @@ export default function App() {
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
           if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+          if (s.vendorRestOpen != null) setVendorRestOpen(s.vendorRestOpen);
+          if (s.workerRestOpen != null) setWorkerRestOpen(s.workerRestOpen);
           if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
           if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
         }
@@ -10083,7 +10392,7 @@ export default function App() {
         if (serverEmps.length > 0)              setEmployees(serverEmps);
         if (state?.vendors?.length > 0)                setVendors(state.vendors);
         if (state?.warehouses?.length > 0)             setWarehouses(state.warehouses);
-        if (state?.schedule && Object.keys(state.schedule).length > 0) setSchedule(state.schedule);
+        applyRemoteSchedule(state?.schedule);
         if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
@@ -10093,6 +10402,8 @@ export default function App() {
         if (state?.scheduleRange)          setScheduleRange(state.scheduleRange);
         if (state?.openHolidays)           setOpenHolidays(state.openHolidays);
         if (state?.vendorHolidayOpen != null) setVendorHolidayOpen(state.vendorHolidayOpen);
+        if (state?.vendorRestOpen != null)    setVendorRestOpen(state.vendorRestOpen);
+        if (state?.workerRestOpen != null)    setWorkerRestOpen(state.workerRestOpen);
         if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
         if (state?.attendData && Object.keys(state.attendData).length > 0) setAttendData(prev => {
           const merged = { ...prev };
@@ -10146,7 +10457,7 @@ export default function App() {
       if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
       if (s.vendors?.length > 0)    setVendors(s.vendors);
       if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
-      if (s.schedule && Object.keys(s.schedule).length > 0) setSchedule(s.schedule);
+      applyRemoteSchedule(s.schedule);
       if (s.scheduleRange)           setScheduleRange(s.scheduleRange);
       if (s.openHolidays)            setOpenHolidays(s.openHolidays);
       if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
@@ -10156,6 +10467,8 @@ export default function App() {
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
       if (s.vendorHolidayOpen != null) setVendorHolidayOpen(s.vendorHolidayOpen);
+      if (s.vendorRestOpen != null) setVendorRestOpen(s.vendorRestOpen);
+      if (s.workerRestOpen != null) setWorkerRestOpen(s.workerRestOpen);
       if (s.shiftCodeRows?.length > 0)     setShiftCodeRows(s.shiftCodeRows);
       if (s.shiftCodeHeaders?.length > 0)  setShiftCodeHeaders(s.shiftCodeHeaders);
       if (s.attendSettings)                setAttendSettings(s.attendSettings);
@@ -10265,6 +10578,8 @@ export default function App() {
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
   useEffect(() => { LS.set('sms_open_holidays',       openHolidays);      }, [openHolidays]);
   useEffect(() => { LS.set('sms_vendor_hol_open',    vendorHolidayOpen); }, [vendorHolidayOpen]);
+  useEffect(() => { LS.set('sms_vendor_rest_open',   vendorRestOpen);    }, [vendorRestOpen]);
+  useEffect(() => { LS.set('sms_worker_rest_open',   workerRestOpen);    }, [workerRestOpen]);
   useEffect(() => { LS.set('sms_year',      selectedYear);  }, [selectedYear]);
   useEffect(() => { LS.set('sms_month',     selectedMonth); }, [selectedMonth]);
   useEffect(() => { LS.set('sms_attendance',    attendData); }, [attendData]);
@@ -10285,7 +10600,7 @@ export default function App() {
   const latestStateRef = useRef({});
   latestStateRef.current = {
     employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
-    scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+    scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
   };
@@ -10296,12 +10611,20 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
+    // 與自動存檔一致：班表只送本機改過的格子
+    const sentCells = [...dirtyCellsRef.current];
     fetch('/api/state', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(latestStateRef.current),
-    }).then(r => { if (onDone) onDone(r.ok); })
-      .catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
+      body: JSON.stringify((() => {
+        const { schedule: _full, ...rest } = latestStateRef.current;
+        const d = buildDirtySchedule(sentCells, scheduleRef.current);
+        return Object.keys(d).length > 0 ? { ...rest, schedule: d } : rest;
+      })()),
+    }).then(r => {
+      if (r.ok) { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); }
+      if (onDone) onDone(r.ok);
+    }).catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
   }, []); // 不需任何 deps，永遠讀最新 ref
 
   // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
@@ -10310,15 +10633,21 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (saveDebouncerRef.current) clearTimeout(saveDebouncerRef.current);
+    // 班表只送本機真正改過的格子，避免舊快照覆蓋他人剛存的異動
+    const sentCells = [...dirtyCellsRef.current];
+    // 沒有異動時不帶 schedule（送 {} 會被伺服器的 jsonb 合併當成「清空整份班表」）
+    const dirtySchedule = buildDirtySchedule(sentCells, scheduleRef.current);
+    const clearSent = () => { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); };
     const body = JSON.stringify({
-      employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
-      scheduleRange, openHolidays, vendorHolidayOpen, vendorCompanyNames,
+      employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
+      scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
+      ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
     });
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
     dirtyRef.current = true;
-    const done = ok => { if (ok) dirtyRef.current = false; };
+    const done = ok => { if (ok) { dirtyRef.current = false; clearSent(); } };
     if (forceSaveRef.current) {
       // 匯入等重要操作後立即存，不經 setTimeout（避免關頁前 callback 被取消）
       forceSaveRef.current = false;
@@ -10329,11 +10658,17 @@ export default function App() {
     }
     saveDebouncerRef.current = setTimeout(() => {
       fetch('/api/state', { method: 'PUT', headers, body })
-        .then(r => { done(r.ok); if (!r.ok) console.warn('自動存檔失敗 HTTP', r.status); })
+        .then(async r => {
+          done(r.ok);
+          if (!r.ok) { console.warn('自動存檔失敗 HTTP', r.status); return; }
+          // 伺服器因權限／廠商歸屬過濾掉部分人員時要出聲，不能靜靜地當作存檔成功
+          const j = await r.json().catch(() => null);
+          if (j?.skipped > 0) console.warn(`存檔時有 ${j.skipped} 位人員的班表被伺服器過濾（權限或廠商歸屬不符）`);
+        })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign, scheduleRange,
-      openHolidays, vendorHolidayOpen, vendorCompanyNames, attendData, extras,
+      openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
   // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor/worker 皆適用）──
@@ -10466,7 +10801,7 @@ export default function App() {
     selectedWorkArea, setSelectedWorkArea,
     workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
-    schedule, setSchedule,
+    schedule, setSchedule: setScheduleTracked, applyRemoteSchedule,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
@@ -10475,6 +10810,8 @@ export default function App() {
     scheduleRange, setScheduleRange,
     openHolidays, setOpenHolidays,
     vendorHolidayOpen, setVendorHolidayOpen,
+    vendorRestOpen, setVendorRestOpen,
+    workerRestOpen, setWorkerRestOpen,
     vendorCompanyNames, setVendorCompanyNames,
     selectedYear, setSelectedYear,
     selectedMonth, setSelectedMonth,

@@ -907,7 +907,12 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     systemLocked: data.systemLocked ?? false,
     deptLocks:    data.deptLocks ?? {},
     deptRanges:   data.deptRanges ?? {},
+    // 每期日期區間：委外幹部／人員的班表也要依同一週期分頁，
+    // 未回傳時他們會退回「以月份檢視」，看到的期間與日翊端對不上。
+    periodRange:  data.periodRange ?? null,
     vendorHolidayOpen: data.vendorHolidayOpen ?? false,
+    vendorRestOpen:    data.vendorRestOpen ?? false,
+    workerRestOpen:    data.workerRestOpen ?? false,
   });
 });
 
@@ -935,7 +940,10 @@ app.put('/api/state', requireAuth, async (req, res) => {
       if (role === 'vendor') {
         const allowedVendors = req.user.vendors ?? [];
         if (allowedVendors.length === 0) return res.status(403).json({ error: '無廠商歸屬' });
-        allowedIds = new Set(employees.filter(e => allowedVendors.includes(e.vendor)).map(e => e.id));
+        // 廠商名稱以正規化後比對：清冊或帳號設定若夾帶半形／全形空白，
+        // 用字串全等會比不到，該幹部排的班會被無聲過濾掉（畫面看得到卻存不進去）。
+        const allowedSet = new Set(allowedVendors.map(normNameSrv));
+        allowedIds = new Set(employees.filter(e => allowedSet.has(normNameSrv(e.vendor))).map(e => e.id));
       } else {
         allowedIds = new Set([req.user.employeeId]);
       }
@@ -943,11 +951,16 @@ app.put('/api/state', requireAuth, async (req, res) => {
       // 逐員工、逐日 merge（避免整包快照覆蓋其他人剛存入的異動，造成資料遺失）
       const curSchedule = curData.schedule ?? {};
       const mergedSchedule = { ...curSchedule };
+      const skipped = [];
       for (const [empId, days] of Object.entries(schedule)) {
-        if (!allowedIds.has(empId)) continue; // 過濾越權寫入（防止繞過前端直接改別人班表）
+        // 過濾越權寫入（防止繞過前端直接改別人班表）。
+        // 被擋下的筆數要回報，否則權限或廠商設定有誤時，會變成「按了沒反應也沒錯誤」。
+        if (!allowedIds.has(empId)) { skipped.push(empId); continue; }
         if (days && Object.keys(days).length > 0)
           mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
       }
+      if (skipped.length > 0)
+        console.warn(`PUT /api/state 越權過濾：user=${req.user?.username} role=${role} 略過 ${skipped.length} 位人員`);
 
       await pool.query(
         `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
@@ -956,7 +969,7 @@ app.put('/api/state', requireAuth, async (req, res) => {
                updated_at = NOW()`,
         [JSON.stringify({ schedule: mergedSchedule })]
       );
-      return res.json({ ok: true });
+      return res.json({ ok: true, skipped: skipped.length });
     } catch (e) {
       console.error('PUT /api/state (vendor/worker) DB error:', e.message);
       return res.status(503).json({ error: 'db_unavailable' });
@@ -973,9 +986,15 @@ app.put('/api/state', requireAuth, async (req, res) => {
     delete rest.periodRange;        // 每期日期區間
     delete rest.openHolidays;       // 開放排班國定假日
     delete rest.vendorHolidayOpen;  // 委外幹部排「國」開關
+    delete rest.vendorRestOpen;     // 委外幹部排休開關
+    delete rest.workerRestOpen;     // 委外人員排休開關
     delete rest.vendorCompanyNames; // 廠商公司抬頭
     delete rest.vendors;            // 廠商主檔
   }
+  // 空的 schedule 一律移除，絕對不可寫入。
+  // 最後的寫入是 `data = app_state.data || $1::jsonb`，jsonb 的 || 是「整個 key 取代」，
+  // 送 {} 會把整份班表清空。前端只送異動格子時，沒有異動就會送出 {}，故在此把關。
+  if (rest.schedule && Object.keys(rest.schedule).length === 0) delete rest.schedule;
   if (Object.keys(rest).length === 0) return res.json({ ok: true });
   // schedule：逐員工、逐日 merge（避免 admin/area 多裝置同時存檔時，後存者的舊快照蓋掉先存者剛異動的其他員工資料）
   // workerPwds：逐員編 merge。委外人員是自己透過 PUT /api/auth/worker-password 設定密碼的，
