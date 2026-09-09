@@ -242,6 +242,8 @@ const NATIONAL_HOLIDAYS = [
   { year: 2025, month: 9,  day: 28, name: '教師節' },
   { year: 2025, month: 10, day: 6,  name: '中秋節' },
   { year: 2025, month: 10, day: 10, name: '國慶日' },
+  { year: 2025, month: 10, day: 25, name: '光復節' },
+  { year: 2025, month: 12, day: 25, name: '行憲紀念日' },
   // 115年 (2026)
   { year: 2026, month: 1,  day: 1,  name: '元旦' },
   { year: 2026, month: 2,  day: 15, name: '小年夜' },
@@ -257,6 +259,8 @@ const NATIONAL_HOLIDAYS = [
   { year: 2026, month: 9,  day: 25, name: '中秋節' },
   { year: 2026, month: 9,  day: 28, name: '教師節' },
   { year: 2026, month: 10, day: 10, name: '國慶日' },
+  { year: 2026, month: 10, day: 25, name: '光復節' },
+  { year: 2026, month: 12, day: 25, name: '行憲紀念日' },
 ];
 
 // ─────────────────────────────────────────────
@@ -1004,56 +1008,60 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號不存在（已失敗 ${r.count}/5 次）`);
                 return;
       }
-      const storedPwd = workerPwds[emp.empId];
-      let pwdOk = false;
-      let isFirstLogin = !storedPwd;
-      if (storedPwd) {
-        pwdOk = await verifyPwd(password, storedPwd);
-      } else {
-        // 首次登入：密碼必須等於員編
-        pwdOk = (password === emp.empId);
+      // 一律先向伺服器驗證：workerPwds 只存在 app_state，委外人員的裝置永遠讀不到，
+      // 若先用本機判斷，會把每次登入都當成首次登入（重複要求設定新密碼），
+      // 且任何人只要知道員編就能從新裝置登入。本機驗證僅在連不上伺服器時作為備援。
+      let serverDown = false;
+      try {
+        const wr = await fetch('/api/auth/worker-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ empId: emp.empId, password }),
+        });
+        if (wr.ok) {
+          const wd = await wr.json();
+          clearLock(uKey);
+          onLogin({
+            id: 'worker_' + wd.emp.id,
+            username: wd.emp.empId,
+            password,
+            name: wd.emp.name,
+            role: ROLES.WORKER,
+            vendors: wd.emp.vendor ? [wd.emp.vendor] : [],
+            empId: wd.emp.empId,
+            employeeId: wd.emp.id,
+            approved: true,
+            mustChangePassword: wd.firstLogin,
+          }, wd.token);
+          return;
+        }
+        if (wr.status === 429) { setError('登入嘗試次數過多，請 15 分鐘後再試'); return; }
+        if (wr.status === 401) {
+          const r = recordFail(uKey);
+          setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `員工編號或密碼錯誤（已失敗 ${r.count}/5 次）`);
+          return;
+        }
+        serverDown = true;   // 5xx 等：視同連不上，走本機備援
+      } catch (_) { serverDown = true; }
+
+      if (!serverDown) {
+        setError('登入失敗，請稍後再試');
+        return;
       }
+      // ── 以下為連不上伺服器時的本機備援 ──
+      const storedPwd = workerPwds[emp.empId];
+      const isFirstLogin = !storedPwd;
+      const pwdOk = storedPwd
+        ? await verifyPwd(password, storedPwd)
+        : (password === emp.empId);   // 首次登入：密碼必須等於員編
       if (!pwdOk) {
-        // 本地驗證失敗（可能此裝置 workerPwds 尚未同步）→ 嘗試後端
-        try {
-          const wr = await fetch('/api/auth/worker-login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ empId: emp.empId, password }),
-          });
-          if (wr.ok) {
-            const wd = await wr.json();
-            clearLock(uKey);
-            onLogin({
-              id: 'worker_' + wd.emp.id,
-              username: wd.emp.empId,
-              password,
-              name: wd.emp.name,
-              role: ROLES.WORKER,
-              vendors: wd.emp.vendor ? [wd.emp.vendor] : [],
-              empId: wd.emp.empId,
-              employeeId: wd.emp.id,
-              approved: true,
-              mustChangePassword: wd.firstLogin,
-            }, wd.token);
-            return;
-          }
-        } catch (_) {}
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
                 return;
       }
       clearLock(uKey);
-      // 取得 JWT（供出勤自助簽到等需要驗證的功能使用），失敗則沿用離線模式
-      let workerToken;
-      try {
-        const tr = await fetch('/api/auth/worker-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ empId: emp.empId, password }),
-        });
-        if (tr.ok) workerToken = (await tr.json()).token;
-      } catch (_) {}
+      // 備援模式下伺服器連不上，取不到 JWT，僅供離線查看
+      const workerToken = undefined;
       onLogin({
         id: 'worker_' + emp.id,
         username: emp.empId,
@@ -1193,7 +1201,10 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         const vd = await vr.json();
         // 伺服器 vendors 非空時採用，否則保留本地設定（避免 DB 空陣列覆蓋正確的廠商清單）
         const resolvedVendors = (vd.user?.vendors?.length > 0) ? vd.user.vendors : (finalCandidate.vendors ?? []);
-        onLogin({ ...finalCandidate, name: vd.user?.name || finalCandidate.name, vendors: resolvedVendors }, vd.token);
+        // 是否需要改密碼以伺服器為準：本機 users 的 mustChangePassword 是舊種子資料，
+        // 密碼改在資料庫時本機旗標不會被清掉，會導致每次登入都被要求重設。
+        onLogin({ ...finalCandidate, name: vd.user?.name || finalCandidate.name, vendors: resolvedVendors,
+                  mustChangePassword: !!vd.mustChangePassword }, vd.token);
         return;
       }
     } catch (_) {}
@@ -2703,6 +2714,8 @@ function ScheduleTable() {
     '中秋節':         '中秋',
     '國慶日':         '雙十',
     '教師節':         '教師節',
+    '光復節':         '光復節',
+    '行憲紀念日':     '行憲紀念日',
   };
   // 春節多日：依同年月中第幾個「春節」映射到初一/初二/初三
   const LUNAR_NEW_YEAR_COLS = ['初ㄧ', '初二', '初三'];
@@ -5130,6 +5143,8 @@ const HOLIDAY_SHORT = {
   '二二八和平紀念日': '228', '兒童節': '兒童節',
   '清明節': '清明', '勞動節': '勞動節',
   '端午節': '端午', '中秋節': '中秋', '國慶日': '國慶',
+  '教師節': '教師節', '光復節': '光復', '行憲紀念日': '行憲',
+  '小年夜': '小年夜',
 };
 const getHolidayShort = (h, springIdx) => {
   if (h.name === '春節') return ['初一','初二','初三'][springIdx] ?? '春節';
@@ -9552,11 +9567,12 @@ function AccountManagement() {
         <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
           <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide
                           bg-slate-100 px-4 py-2.5 border-b border-[#DDD9D0]"
-               style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
+               style={{ gridTemplateColumns: '120px 1fr 1fr 100px 90px 140px' }}>
             <span>員工編號</span>
             <span>姓名</span>
             <span>廠商</span>
             <span>班別</span>
+            <span>登入次數</span>
             <span>幹部權限</span>
           </div>
           <div className="divide-y divide-slate-100">
@@ -9567,11 +9583,23 @@ function AccountManagement() {
               const isUpgraded = upgradedEmpIds.has(emp.id);
               return (
                 <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-[#F5F2EC]"
-                     style={{ gridTemplateColumns: '120px 1fr 1fr 100px 140px' }}>
+                     style={{ gridTemplateColumns: '120px 1fr 1fr 100px 90px 140px' }}>
                   <span className="font-mono text-sm text-slate-700">{emp.empId}</span>
                   <span className="text-sm text-slate-700">{emp.name}</span>
                   <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
                   <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
+                  {(() => {
+                    // 委外人員的登入次數由伺服器以員編為 key 累計於 users 表
+                    const db = apiUsers.find(a => a.username === emp.empId);
+                    const t = db?.last_login ? new Date(db.last_login) : null;
+                    return (
+                      <span>
+                        <span className="text-teal-700 font-bold text-sm">{db?.loginCount ?? 0}</span>
+                        {t && <span className="block text-[10px] text-slate-400 leading-tight">
+                          {t.getFullYear()}/{String(t.getMonth()+1).padStart(2,'0')}/{String(t.getDate()).padStart(2,'0')}</span>}
+                      </span>
+                    );
+                  })()}
                   <div className="flex items-center gap-2">
                     {isUpgraded ? (
                       <>
@@ -9695,6 +9723,14 @@ function AccountManagement() {
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
                 {u.display_name && <span className="text-sm text-slate-600 shrink-0">{u.display_name}</span>}
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>{roleLabel[u.role]}</span>
+                {/* 登入次數／最後登入：資料庫於每次登入時累計 */}
+                <span className="shrink-0 text-xs text-slate-400" title="登入次數">
+                  登入 <span className="text-teal-700 font-bold text-sm">{u.loginCount ?? 0}</span> 次
+                  {u.last_login && (() => { const d = new Date(u.last_login);
+                    return <span className="ml-1 text-[11px] text-slate-400">
+                      （{d.getFullYear()}/{String(d.getMonth()+1).padStart(2,'0')}/{String(d.getDate()).padStart(2,'0')}）
+                    </span>; })()}
+                </span>
                 <span className="text-xs text-slate-400 shrink-0">可用倉別：</span>
                 <div className="flex flex-wrap gap-2 flex-1">
                   {warehouses.map(w => {

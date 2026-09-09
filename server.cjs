@@ -1332,11 +1332,18 @@ app.post('/api/auth/worker-login', async (req, res) => {
       ok = (password === String(emp.empId).trim());
     }
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
-    // 委外人員的帳號可能不存在於 users 表（清冊人員直接以員編登入），
-    // 有對應帳號時才累計登入次數與最後登入時間
+    // 委外人員多半不存在於 users 表（清冊人員直接以員編登入），原本的 UPDATE 匹配不到任何列，
+    // 導致登入次數永遠是 0。改為 upsert：第一次登入時建立一列僅供統計用的紀錄
+    //（password_hash 留空，密碼仍存於 app_state.workerPwds；approved 不影響其登入）。
+    // 已升級為委外幹部者 role 為 vendor，此處不覆蓋其角色與權限。
     await pool.query(
-      'UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE username=$1 AND role=$2',
-      [String(emp.empId).trim(), 'worker']
+      `INSERT INTO users (id, username, role, display_name, login_count, last_login, approved)
+       VALUES ($1, $2, 'worker', $3, 1, NOW(), true)
+       ON CONFLICT (username) DO UPDATE
+         SET login_count = users.login_count + 1,
+             last_login  = NOW(),
+             display_name = COALESCE(NULLIF(users.display_name, ''), EXCLUDED.display_name)`,
+      ['worker_' + String(emp.id).slice(0, 53), String(emp.empId).trim(), String(emp.name ?? '').slice(0, 50)]
     ).catch(e => console.warn('worker 登入計數失敗:', e.message));
     const token = issueToken({
       id: 'worker_' + emp.id,
