@@ -951,14 +951,46 @@ app.put('/api/state', requireAuth, async (req, res) => {
       // 逐員工、逐日 merge（避免整包快照覆蓋其他人剛存入的異動，造成資料遺失）
       const curSchedule = curData.schedule ?? {};
       const mergedSchedule = { ...curSchedule };
+      // 課別鎖定與開放排班區間：原本只在前端把關，已登入的委外人員／幹部在管理員
+      // 改為鎖定後，未重新整理前仍可繼續排班並成功寫入。改由伺服器最終認定。
+      const deptLocks  = curData.deptLocks  ?? {};
+      const deptRanges = curData.deptRanges ?? {};
+      const empById = new Map(employees.map(e => [e.id, e]));
+      const lockMode = v => (v === true ? 'full' : (v === false || v == null) ? 'none' : v);
+      // 委外身分可否編輯該課：完全鎖定與鎖定委外都不行
+      const deptEditable = dept => {
+        const m = lockMode(deptLocks[dept]);
+        return m !== 'full' && m !== 'partial';
+      };
+      // 日期是否落在該課的開放排班區間內（未設定區間＝尚未開放）
+      const dkInRange = (dept, dk) => {
+        const r = deptRanges[dept];
+        if (!r?.start || !r?.end) return false;
+        const [y, m, d] = dk.split('-').map(Number);
+        const t = new Date(y, m - 1, d).getTime();
+        const p = s => { const [a, b, c] = s.split('-').map(Number); return new Date(a, b - 1, c).getTime(); };
+        return t >= p(r.start) && t <= p(r.end);
+      };
+
       const skipped = [];
+      let lockedCells = 0;
       for (const [empId, days] of Object.entries(schedule)) {
         // 過濾越權寫入（防止繞過前端直接改別人班表）。
         // 被擋下的筆數要回報，否則權限或廠商設定有誤時，會變成「按了沒反應也沒錯誤」。
         if (!allowedIds.has(empId)) { skipped.push(empId); continue; }
-        if (days && Object.keys(days).length > 0)
-          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
+        if (!days || Object.keys(days).length === 0) continue;
+        const dept = empById.get(empId)?.dept;
+        if (!deptEditable(dept)) { lockedCells += Object.keys(days).length; continue; }
+        const accepted = {};
+        for (const [dk, v] of Object.entries(days)) {
+          if (dkInRange(dept, dk)) accepted[dk] = v;
+          else lockedCells++;
+        }
+        if (Object.keys(accepted).length > 0)
+          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...accepted };
       }
+      if (lockedCells > 0)
+        console.warn(`PUT /api/state 鎖定/區間外拒絕：user=${req.user?.username} role=${role} 拒絕 ${lockedCells} 格`);
       if (skipped.length > 0)
         console.warn(`PUT /api/state 越權過濾：user=${req.user?.username} role=${role} 略過 ${skipped.length} 位人員`);
 
@@ -969,7 +1001,7 @@ app.put('/api/state', requireAuth, async (req, res) => {
                updated_at = NOW()`,
         [JSON.stringify({ schedule: mergedSchedule })]
       );
-      return res.json({ ok: true, skipped: skipped.length });
+      return res.json({ ok: true, skipped: skipped.length, locked: lockedCells });
     } catch (e) {
       console.error('PUT /api/state (vendor/worker) DB error:', e.message);
       return res.status(503).json({ error: 'db_unavailable' });

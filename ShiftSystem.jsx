@@ -494,6 +494,9 @@ const useApp = () => useContext(AppContext);
 
 const ToastContext = createContext(null);
 
+// AppProvider 位於 ToastProvider 外層，無法呼叫 useToast，
+// 故由 ToastProvider 掛上一個模組層的橋接函式供其使用。
+let globalToast = null;
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
@@ -511,6 +514,8 @@ function ToastProvider({ children }) {
     warn:    'bg-yellow-500',
     info:    'bg-blue-600',
   };
+
+  useEffect(() => { globalToast = push; return () => { globalToast = null; }; }, [push]);
 
   return (
     <ToastContext.Provider value={push}>
@@ -3125,22 +3130,21 @@ function ScheduleTable() {
       next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
     }
 
-    // 「國」只在該日為開放國定假日時才可選
+    // 「國」可排在本期內的任何一天（國定假日當天出勤、假挪到其他日是常態），
+    // 但總數不得超過「本期已勾選的國定假日天數」。此規則與「一鍵轉換國」一致。
     if (next === '國') {
-      const [hy, hm, hd] = dk.split('-').map(Number);
-      const isOpenHoliday = openHolidays.includes(`${hy}-${hm}-${hd}`);
-      if (!isOpenHoliday) {
+      const periodDks = dayHeadersRef.current.map(h => h.dk);
+      const inPeriod = new Set(periodDks);
+      const quota = openHolidays.filter(k => inPeriod.has(k)).length;
+      if (quota === 0) {
+        toast('本期沒有已勾選的國定假日，請先至「系統設定 → 開放排班國定假日」勾選。', 'warn');
         next = isOutsourced ? 'V' : SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
       } else {
-        // 「國」數量上限 = openHolidays 天數
-        const empSched = schedule[empId] ?? {};
-        const usedNat = openHolidays.filter(key => {
-          const [ky, km, kd] = key.split('-').map(Number);
-          const dkFmt = `${ky}-${String(km).padStart(2,'0')}-${String(kd).padStart(2,'0')}`;
-          return empSched[dkFmt] === '國';
-        }).length;
-        if (usedNat >= openHolidays.length) {
-          toast(`國定假日天數已達上限（${openHolidays.length} 天），無法再新增。`, 'error');
+        const row = schedule[empId] ?? {};
+        // 正在點的這一格不計入（它現在還不是「國」）
+        const used = periodDks.filter(k => k !== dk && row[k] === '國').length;
+        if (used >= quota) {
+          toast(`國定假日天數已達上限（本期 ${quota} 天），請先取消其他「國」再排。`, 'error');
           return;
         }
       }
@@ -10700,6 +10704,12 @@ export default function App() {
           // 伺服器因權限／廠商歸屬過濾掉部分人員時要出聲，不能靜靜地當作存檔成功
           const j = await r.json().catch(() => null);
           if (j?.skipped > 0) console.warn(`存檔時有 ${j.skipped} 位人員的班表被伺服器過濾（權限或廠商歸屬不符）`);
+          // 課別在本機畫面開著的期間被改為鎖定／區間關閉時，伺服器會拒收；
+          // 必須讓使用者知道剛才排的沒有存進去，並立即抓回最新設定收合畫面。
+          if (j?.locked > 0) {
+            globalToast?.('該課別已鎖定或不在開放排班區間，剛才的異動未儲存。', 'error');
+            syncFromServerBackground();
+          }
         })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
