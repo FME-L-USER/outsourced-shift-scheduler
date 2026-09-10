@@ -461,6 +461,68 @@ function unionDeptRange(deptRanges) {
   };
 }
 
+// ── 排班區間（多段）─────────────────────────────────────────
+// 一個課別可以有多段區間，每段各自帶鎖定模式與適用組別，例如：
+//   大肚理貨課
+//     ├─ 9/5～10/4   部分鎖定   適用：日班-出貨組
+//     └─ 10/5～11/1  解除鎖定   適用：日班-出貨組
+// 未被任何一段涵蓋的日期＝尚未開放，任何角色都不可編輯。
+// 舊資料（deptRanges / deptLocks，每課單一區間）會自動視為「一段、適用全部組別」，
+// 不需要重建設定。
+/** 取得某課別的區間段落；沒有新格式時，由舊的單一區間推導 */
+function segmentsOf(deptSegments, deptRanges, deptLocks, deptName) {
+  if (!deptName) return [];
+  const segs = deptSegments?.[deptName];
+  if (Array.isArray(segs) && segs.length > 0) return segs;
+  const r = deptRanges?.[deptName];
+  if (r?.start && r?.end) {
+    return [{ id: 'legacy', start: r.start, end: r.end,
+              lock: normalizeLockMode(deptLocks?.[deptName]), groups: [] }];
+  }
+  return [];
+}
+
+/** 該段是否適用此組別（groups 為空＝適用該課全部組別） */
+function segCoversGroup(seg, group) {
+  return !seg.groups?.length || seg.groups.includes(group);
+}
+
+/** 該段是否涵蓋此日期（dk 為班表鍵，不補零；段落起訖為 yyyy-mm-dd） */
+function segCoversDate(seg, dk) {
+  if (!seg.start || !seg.end) return false;
+  const [y, m, d] = dk.split('-').map(Number);
+  const t = new Date(y, m - 1, d).getTime();
+  return t >= parseLocal(seg.start).getTime() && t <= parseLocal(seg.end).getTime();
+}
+
+/** 指定角色能否編輯某員工的某一天：只要有任一段允許即可 */
+function canEditBySegments(segs, group, dk, role) {
+  return segs.some(s => segCoversGroup(s, group) && segCoversDate(s, dk) && lockAllowsEdit(s.lock, role));
+}
+
+/** 該組別「看得到排班」的整體範圍（不論鎖定模式），用於灰底與連續天數的界線 */
+function visibleRangeOfGroup(segs, group) {
+  const rs = segs.filter(s => segCoversGroup(s, group) && s.start && s.end);
+  if (rs.length === 0) return {};
+  return {
+    start: rs.reduce((a, r) => (r.start < a ? r.start : a), rs[0].start),
+    end:   rs.reduce((a, r) => (r.end   > a ? r.end   : a), rs[0].end),
+  };
+}
+
+/** 全系統所有段落的聯集，供報表檢視與國定假日篩選使用 */
+function unionAllSegments(deptSegments, deptRanges) {
+  const all = [
+    ...Object.values(deptSegments ?? {}).flat(),
+    ...Object.values(deptRanges ?? {}),
+  ].filter(r => r?.start && r?.end);
+  if (all.length === 0) return {};
+  return {
+    start: all.reduce((a, r) => (r.start < a ? r.start : a), all[0].start),
+    end:   all.reduce((a, r) => (r.end   > a ? r.end   : a), all[0].end),
+  };
+}
+
 function todayPeriodOffset(scheduleRange) {
   if (!scheduleRange?.start || !scheduleRange?.end) return 0;
   const s = parseLocal(scheduleRange.start);
@@ -2688,11 +2750,81 @@ function SortHeader({ label, col, sort, onSort, align = 'center', tone = 'dark' 
   );
 }
 
+/** 快速解鎖對話框：日翊／管理員輸入密碼後，臨時略過課別鎖定與開放區間 */
+function UnlockDialog({ hasPwd, onVerify, onOk, onClose }) {
+  const [pwd, setPwd] = useState('');
+  const [minutes, setMinutes] = useState(5);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    const ok = await onVerify(pwd);
+    setBusy(false);
+    if (ok) onOk(minutes);
+    else setErr('密碼錯誤');
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="p-5 w-[340px]">
+        <h3 className="font-bold text-slate-800 mb-1">🔓 快速解鎖</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          解鎖後可暫時編輯此課別的班表，不受鎖定與開放排班區間限制。
+          <br />僅影響您這台電腦這次操作，不會變更任何人的設定。
+        </p>
+
+        {!hasPwd ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            尚未設定解鎖密碼，請先至「系統設定 → 快速解鎖密碼」設定。
+          </p>
+        ) : (
+          <>
+            <label className="block text-xs font-medium text-slate-600 mb-1">解鎖密碼</label>
+            <input type="password" value={pwd} autoFocus
+              onChange={e => { setPwd(e.target.value); setErr(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm mb-2" />
+            {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
+
+            <label className="block text-xs font-medium text-slate-600 mb-1">解鎖時間</label>
+            <div className="flex gap-1 mb-4">
+              {[5, 10].map(m => (
+                <button key={m} onClick={() => setMinutes(m)}
+                  className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors
+                    ${minutes === m ? 'bg-slate-700 text-white border-transparent'
+                                    : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                  {m} 分鐘
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onClose}
+            className="flex-1 px-3 py-2 text-sm border border-[#DDD9D0] rounded-lg text-slate-600 hover:bg-[#F5F2EC]">
+            取消
+          </button>
+          {hasPwd && (
+            <button onClick={submit} disabled={busy || !pwd}
+              className="flex-1 px-3 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-40">
+              {busy ? '驗證中…' : '解鎖'}
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ScheduleTable() {
   const {
     employees, schedule, setSchedule, currentUser,
     selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
-    deptLocks, deptRanges, periodRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen,
+    deptLocks, deptRanges, deptSegments, dailyDemand, setDailyDemand, unlockPwd,
+    periodRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
     selectedVendor,
   } = useApp();
@@ -2810,7 +2942,8 @@ function ScheduleTable() {
 
     // 該課開放區間結束日之後的日子在畫面上呈灰底、視為尚未開放，同樣不納入計算
     const openEnd = (() => {
-      const r = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept);
+      const emp = employees.find(e => e.id === empId);
+      const r = visibleRangeOfGroup(segmentsOf(deptSegments, deptRanges, deptLocks, emp?.dept), emp?.group);
       return r.end ? parseLocal(r.end).getTime() : Infinity;
     })();
 
@@ -2909,10 +3042,10 @@ function ScheduleTable() {
     const wh = warehouses.find(w => w.id === selectedWarehouse);
     return wh?.departments?.find(d => d.id === selectedDept)?.name ?? null;
   }, [warehouses, selectedWarehouse, selectedDept]);
-  // 該課別的「可編輯」時段（未設定＝尚未開放）
+  // 橫幅顯示的區間：該課全部段落的聯集（各組別可能不同，此處僅供概覽）
   const activeRange = useMemo(
-    () => resolveRange(deptRanges, selectedDeptName),
-    [deptRanges, selectedDeptName]);
+    () => visibleRangeOfGroup(segmentsOf(deptSegments, deptRanges, deptLocks, selectedDeptName), undefined),
+    [deptSegments, deptRanges, deptLocks, selectedDeptName]);
   // 班表顯示哪些日子由「每期日期區間」決定，與可否編輯無關
   const viewPeriod = periodRange;
 
@@ -3057,29 +3190,100 @@ function ScheduleTable() {
     }, 0);
   }, [schedule]);
 
-  // 鎖定與開放區間皆以「課別」為單位：各課排班完成時間不同，需可分別設定
+  // 鎖定與開放區間以「課別 → 多段區間」為單位：同一課的不同組別、不同期間
+  // 可以有各自的鎖定模式（例如上一期部分鎖定、新的一期開放委外自行排休）。
+  // 未被任何一段涵蓋的日期＝尚未開放，任何角色都不可編輯。
+  // 快速解鎖：日翊／管理員輸入密碼後，暫時略過鎖定與區間限制（僅影響本機這次操作）
+  // 各廠商明細預設收合，需要時再展開，避免統計列佔掉太多畫面
+  const [showVendorRows, setShowVendorRows] = useState(false);
+  const [unlockUntil, setUnlockUntil] = useState(0);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const canUnlock = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA;
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (unlockUntil <= Date.now()) return;
+    const id = setInterval(() => forceTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [unlockUntil]);
+  const unlocked = canUnlock && unlockUntil > Date.now();
+  const unlockLeft = unlocked ? Math.ceil((unlockUntil - Date.now()) / 60000) : 0;
+
   const isEditable = useCallback((dk, emp) => {
-    if (!lockAllowsEdit(emp?.dept ? deptLocks[emp.dept] : 'none', currentUser?.role)) return false;
-    // 開放排班區間一律以該課別的設定為準（全域設定已取消）
-    // 該課別未設定開放區間＝尚未開放，任何角色都不可編輯
-    const range = resolveRange(deptRanges, emp?.dept);
-    if (!range.start || !range.end) return false;
-    {
-      const [y,m,d] = dk.split('-').map(Number);
-      const date = new Date(y, m-1, d);
-      if (date < parseLocal(range.start) || date > parseLocal(range.end)) return false;
+    if (unlocked) return true;   // 解鎖期間不受課別鎖定與開放區間限制
+    const segs = segmentsOf(deptSegments, deptRanges, deptLocks, emp?.dept);
+    if (segs.length === 0) return false;
+    return canEditBySegments(segs, emp?.group, dk, currentUser?.role);
+  }, [unlocked, deptSegments, deptRanges, deptLocks, currentUser]);
+
+  // 需求人數以「課別｜組別｜日期」為單位記錄——各組別各自一份，互不影響。
+  // 只有同時選定課別與組別時才可編輯；選「全部組別」時顯示該範圍各組的合計（唯讀）。
+  const demandKey = useCallback((dept, group, dk) => [dept, group, dk].join('|'), []);
+  // 需求人數僅日翊／管理員可編輯：委外端的寫入會被伺服器忽略，不能讓他們以為改得動
+  const canEditDemand = !!(selectedDeptName && selectedGroup) &&
+    (currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA);
+
+  // 目前篩選範圍涵蓋哪些「課別＋組別」，用於未選組別時加總
+  const scopePairs = useMemo(() => {
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    const depts = selectedDeptName
+      ? (wh?.departments ?? []).filter(d => d.name === selectedDeptName)
+      : (wh ? (wh.departments ?? []) : warehouses.flatMap(w => w.departments ?? []));
+    const pairs = [];
+    for (const d of depts) {
+      for (const g of (d.groups ?? [])) {
+        if (selectedGroup && g !== selectedGroup) continue;
+        pairs.push([d.name, g]);
+      }
     }
-    return true;
-  }, [deptLocks, deptRanges, currentUser]);
+    return pairs;
+  }, [warehouses, selectedWarehouse, selectedDeptName, selectedGroup]);
+
+  const demandOf = useCallback((dk) => {
+    if (canEditDemand) return dailyDemand[demandKey(selectedDeptName, selectedGroup, dk)] ?? '';
+    // 未選到單一組別：顯示範圍內各組別的合計
+    let sum = 0, any = false;
+    for (const [dept, group] of scopePairs) {
+      const v = dailyDemand[demandKey(dept, group, dk)];
+      if (v !== undefined && v !== '') { sum += Number(v); any = true; }
+    }
+    return any ? String(sum) : '';
+  }, [canEditDemand, dailyDemand, demandKey, selectedDeptName, selectedGroup, scopePairs]);
+
+  const setDemand = useCallback((dk, raw) => {
+    if (!canEditDemand) return;
+    const v = String(raw).replace(/[^0-9]/g, '').slice(0, 4);
+    setDailyDemand(prev => {
+      const next = { ...prev };
+      const k = demandKey(selectedDeptName, selectedGroup, dk);
+      if (v === '') delete next[k];
+      else next[k] = v;
+      return next;
+    });
+  }, [canEditDemand, demandKey, selectedDeptName, selectedGroup, setDailyDemand]);
+
+  // 連續輸入時用鍵盤在日期間移動，不必逐格點選
+  const onDemandKey = useCallback((e) => {
+    const move = e.key === 'Enter' || e.key === 'ArrowRight' ? (e.shiftKey ? -1 : 1)
+               : e.key === 'ArrowLeft' ? -1 : 0;
+    if (move === 0) return;
+    e.preventDefault();
+    const all = [...document.querySelectorAll('input[data-demand-dk]')];
+    const i = all.indexOf(e.currentTarget);
+    const next = all[i + move];
+    if (next) { next.focus(); next.select?.(); next.scrollIntoView({ block: 'nearest', inline: 'center' }); }
+  }, []);
 
   const handleCellClick = useCallback((empId, dk) => {
     const clickEmp = employees.find(e => e.id === empId);
     if (!isEditable(dk, clickEmp)) {
       // 區分兩種不可編輯的原因，否則使用者不知道該找誰處理
-      const r = resolveRange(deptRanges, clickEmp?.dept);
-      toast(!r.start || !r.end
-        ? `${clickEmp?.dept ?? '此課別'} 尚未設定開放排班區間，目前僅供查看。`
-        : '此日期已鎖定，無法修改。', 'warn');
+      const segs = segmentsOf(deptSegments, deptRanges, deptLocks, clickEmp?.dept)
+        .filter(x => segCoversGroup(x, clickEmp?.group));
+      toast(segs.length === 0
+        ? `${clickEmp?.dept ?? '此課別'}${clickEmp?.group ? '／' + clickEmp.group : ''} 尚未設定開放排班區間，目前僅供查看。`
+        : segs.some(x => segCoversDate(x, dk))
+          ? '此日期已鎖定，無法修改。'
+          : '此日期不在開放排班區間內，無法修改。', 'warn');
       return;
     }
 
@@ -3093,7 +3297,8 @@ function ScheduleTable() {
     }
 
     // WORKER 嚴格限制在該課別的開放區間內（不隨 viewRange 放寬）
-    const wRange = resolveRange(deptRanges, employees.find(e => e.id === empId)?.dept);
+    const wEmp = employees.find(e => e.id === empId);
+    const wRange = visibleRangeOfGroup(segmentsOf(deptSegments, deptRanges, deptLocks, wEmp?.dept), wEmp?.group);
     if (currentUser.role === ROLES.WORKER && wRange.start && wRange.end) {
       const [y, m, d] = dk.split('-').map(Number);
       const date = new Date(y, m - 1, d);
@@ -3799,7 +4004,9 @@ function ScheduleTable() {
         // 「可否編輯」取決於各課的開放區間與鎖定狀態，與目前檢視第幾期無關
         const probeDk = dayHeaders[0]?.dk;
         const canEditAny = !!probeDk && visibleEmployees.some(emp => isEditable(probeDk, emp));
-        const tone = canEditAny
+        const tone = unlocked
+          ? 'bg-blue-50 border-blue-400 text-blue-800'
+          : canEditAny
           ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
           : 'bg-amber-50 border-amber-300 text-amber-800';
         const openTxt = selectedDeptName
@@ -3815,8 +4022,22 @@ function ScheduleTable() {
               ｜{selectedDeptName ? `${selectedDeptName} ` : ''}開放排班：{openTxt}
             </span>
             <span className="text-sm font-medium">
-              {canEditAny ? '（可編輯班表）' : '（僅供查看，不可編輯）'}
+              {unlocked ? `（已快速解鎖，剩餘 ${unlockLeft} 分鐘）`
+                : canEditAny ? '（可編輯班表）' : '（僅供查看，不可編輯）'}
             </span>
+            {/* 快速解鎖：僅日翊／管理員可用，臨時略過鎖定與開放區間 */}
+            {canUnlock && (unlocked
+              ? <button onClick={() => setUnlockUntil(0)}
+                  className="px-3 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                  🔒 重新鎖定
+                </button>
+              : !canEditAny && (
+                <button onClick={() => setUnlockOpen(true)}
+                  title="輸入解鎖密碼後可臨時編輯此課別班表"
+                  className="px-3 py-1 text-xs font-semibold bg-slate-700 text-white rounded-md hover:bg-slate-800">
+                  🔓 快速解鎖
+                </button>
+              ))}
             {viewOffset !== todayPeriodOffset(viewPeriod) && (
               <button onClick={() => setViewOffset(todayPeriodOffset(viewPeriod))}
                 className="ml-auto px-3 py-1 text-xs font-semibold bg-amber-600 text-white
@@ -3947,6 +4168,7 @@ function ScheduleTable() {
           </span>
         ))}
         <span className="text-slate-400">（點擊格子切換班別）</span>
+        <span className="text-slate-400 ml-2">｜下方廠商列顯示「建議／目前」，建議＝當日需求人數 × 該廠商駐廠比例</span>
       </div>
 
       {/* 尚未設定每期日期區間時退回年／月檢視，並提醒管理員設定 */}
@@ -3960,6 +4182,23 @@ function ScheduleTable() {
           </span>
         </div>
       )}
+      {/* 快速解鎖：輸入密碼後臨時開啟編輯（僅本機、限時） */}
+      {unlockOpen && (
+        <UnlockDialog
+          hasPwd={!!unlockPwd}
+          onClose={() => setUnlockOpen(false)}
+          onVerify={async (pwd) => {
+            if (!unlockPwd) return false;
+            return await verifyPwd(pwd, unlockPwd);
+          }}
+          onOk={(minutes) => {
+            setUnlockUntil(Date.now() + minutes * 60000);
+            setUnlockOpen(false);
+            toast(`已解鎖 ${minutes} 分鐘，期間可編輯此課別班表`, 'warn');
+          }}
+        />
+      )}
+
       {/* Table */}
       <div className="border border-[#DDD9D0] rounded-xl" style={{ overflow: 'clip' }}>
         <div className="overflow-auto pb-4" style={{ maxHeight: 'calc(100vh - 220px)' }}>
@@ -4011,7 +4250,7 @@ function ScheduleTable() {
                 // 該課開放區間結束日之後＝尚未開放排班。班表把空白顯示為 V，
                 // 若照常著色會讓人誤以為已排班，故一律灰底且不顯示假的 V。
                 const empOpenEnd = (() => {
-                  const r = resolveRange(deptRanges, emp.dept);
+                  const r = visibleRangeOfGroup(segmentsOf(deptSegments, deptRanges, deptLocks, emp.dept), emp.group);
                   return r.end ? parseLocal(r.end) : null;
                 })();
                 return (
@@ -4105,18 +4344,63 @@ function ScheduleTable() {
               })}
               {/* ── 底部統計列 ── */}
               {visibleEmployees.length > 0 && (() => {
-                const REST = new Set(['休', '例', '國']);
+                const isWork = (e, dk) => (schedule[e.id]?.[dk] ?? 'V') === 'V';
+                const workCount = (dk) => visibleEmployees.filter(e => isWork(e, dk)).length;
+                // 差異數＝出勤人數 − 需求人數；未填需求時不顯示
+                const diffOf = (dk) => {
+                  const d = demandOf(dk);
+                  if (d === '') return null;
+                  return workCount(dk) - Number(d);
+                };
+                // 各廠商駐廠人數（A）與全區總駐廠人數（B），用於分攤當日需求
+                const headcountOf = (v) => visibleEmployees.filter(e => e.vendor === v).length;
+                const totalHead = visibleEmployees.length;
+                // 建議排班人數＝當日需求（C）× 該廠商駐廠比例（A ÷ B）
+                const suggestOf = (v, dk) => {
+                  const d = demandOf(dk);
+                  if (d === '' || totalHead === 0) return null;
+                  return Math.round(Number(d) * headcountOf(v) / totalHead);
+                };
+                const assignedOf = (v, dk) => visibleEmployees.filter(e => e.vendor === v && isWork(e, dk)).length;
+                // 目前檢視範圍內實際出現的廠商，依現場慣用順序排列
+                const vendorsInView = sortVendorNames([...new Set(visibleEmployees.map(e => e.vendor).filter(Boolean))]);
                 const summaryRows = [
-                  { label: '總人數',   bgRow: 'bg-slate-100', bgLabel: 'bg-slate-100', color: 'text-slate-700', fn: () => visibleEmployees.length },
-                  { label: '出勤人數', bgRow: 'bg-green-50',  bgLabel: 'bg-green-50',  color: 'text-green-700', fn: (dk) => visibleEmployees.filter(e => (schedule[e.id]?.[dk] ?? 'V') === 'V').length },
-                  { label: '休假人數', bgRow: 'bg-orange-50', bgLabel: 'bg-orange-50', color: 'text-orange-700', fn: (dk) => visibleEmployees.filter(e => REST.has(schedule[e.id]?.[dk] ?? '')).length },
+                  { key: '總人數', label: '總人數', bgRow: 'bg-slate-100', bgLabel: 'bg-slate-100', color: 'text-slate-700',
+                    fn: () => visibleEmployees.length },
+                  { key: '需求人數', label: '需求人數', bgRow: 'bg-blue-50', bgLabel: 'bg-blue-50', color: 'text-blue-700',
+                    editable: true },
+                  { key: '出勤人數', label: '出勤人數', bgRow: 'bg-green-50', bgLabel: 'bg-green-50', color: 'text-green-700',
+                    fn: (dk) => workCount(dk) },
+                  { key: '差異數', label: '差異數', bgRow: 'bg-amber-50', bgLabel: 'bg-amber-50', color: 'text-amber-700',
+                    diffRow: true },
+                  { key: '__toggle', label: '各廠商（建議／目前）', toggleRow: true,
+                    bgRow: 'bg-slate-50', bgLabel: 'bg-slate-50', color: 'text-slate-500' },
+                  ...(showVendorRows ? vendorsInView : []).map((v, i) => ({
+                    key: 'v_' + v, label: v, vendorRow: true, vendor: v,
+                    bgRow: i % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]',
+                    bgLabel: i % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]',
+                    color: 'text-slate-600',
+                  })),
                 ];
-                return summaryRows.map(({ label, bgRow, bgLabel, color, fn }, si) => {
+                return summaryRows.map(({ key, label, bgRow, bgLabel, color, fn, editable, vendorRow, diffRow, vendor, toggleRow }, si) => {
                   const isLastStatRow = si === summaryRows.length - 1;
                   return (
-                  <tr key={label} className={`${bgRow} ${si === 0 ? 'border-t-2 border-slate-400' : 'border-t border-slate-200'} font-medium text-xs`}>
+                  <tr key={key} className={`${bgRow} ${si === 0 ? 'border-t-2 border-slate-400' : 'border-t border-slate-200'} font-medium text-xs`}>
                     <td className={`sticky left-0 z-10 ${bgLabel}`} style={{ width: 32 }} />
-                    <td className={`sticky left-8 z-10 px-2 py-1.5 font-bold ${bgLabel} ${color} whitespace-nowrap`}>{label}</td>
+                    <td className={`sticky left-8 z-10 px-2 py-1.5 font-bold ${bgLabel} ${color} whitespace-nowrap`}>
+                      {toggleRow
+                        ? <button onClick={() => setShowVendorRows(o => !o)}
+                            className="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                            <span className="text-[10px]">{showVendorRows ? '▼' : '▶'}</span>
+                            <span className="font-medium">{label}</span>
+                            <span className="text-[10px] font-normal text-slate-400">{vendorsInView.length} 家</span>
+                          </button>
+                        : vendorRow
+                        ? <span className="pl-3 font-medium">└ {label}
+                            <span className="ml-1 text-[10px] font-normal text-slate-400">（建議／目前）</span>
+                          </span>
+                        : label}
+                    </td>
                     <td className="hidden sm:table-cell" />
                     <td className="hidden sm:table-cell" />
                     {dayHeaders.map(({ dk }) => (
@@ -4125,7 +4409,53 @@ function ScheduleTable() {
                         style={dk === todayDk
                           ? { borderLeft: TODAY_LINE, borderRight: TODAY_LINE,
                               ...(isLastStatRow ? { borderBottom: TODAY_LINE } : {}) }
-                          : undefined}>{fn(dk)}</td>
+                          : undefined}>
+                        {toggleRow
+                          ? null
+                          : vendorRow
+                          ? (() => {
+                              const asg = assignedOf(vendor, dk);
+                              const sug = suggestOf(vendor, dk);
+                              if (sug === null) return <span>{asg}</span>;
+                              // 目前人數：低於建議＝紅字（出工不足）、高於＝藍字（超派）、剛好＝綠字
+                              const tone = asg < sug ? 'text-red-600' : asg > sug ? 'text-blue-600' : 'text-green-600';
+                              return (
+                                <span title={`${vendor}：建議 ${sug} 人，目前已排 ${asg} 人（當日需求 × 駐廠比例 ${headcountOf(vendor)}/${totalHead}）`}>
+                                  <span className="text-slate-400">{sug}</span>
+                                  <span className="text-slate-300">/</span>
+                                  <span className={`font-bold ${tone}`}>{asg}</span>
+                                </span>
+                              );
+                            })()
+                          : diffRow
+                          ? (() => {
+                              const d = diffOf(dk);
+                              if (d === null) return <span className="text-slate-300">—</span>;
+                              // 負數＝人力不足，紅色；正數＝超出需求，綠色
+                              return <span className={d < 0 ? 'text-red-600' : d > 0 ? 'text-teal-700' : 'text-slate-500'}>
+                                {d > 0 ? `+${d}` : d}
+                              </span>;
+                            })()
+                          : editable && !canEditDemand
+                          ? <span className="text-blue-400"
+                              title="各組別合計（需選定單一組別才能編輯）">
+                              {demandOf(dk) || '—'}
+                            </span>
+                          : editable
+                          ? <input
+                              type="text" inputMode="numeric"
+                              data-demand-dk={dk}
+                              value={demandOf(dk)}
+                              onChange={e => setDemand(dk, e.target.value)}
+                              onKeyDown={onDemandKey}
+                              onFocus={e => e.target.select()}
+                              placeholder="—"
+                              title="當日需求人數（Enter 或 → 跳下一天，Shift+Enter 或 ← 回上一天）"
+                              className="w-10 text-center bg-transparent border border-transparent rounded
+                                         hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:outline-none
+                                         text-blue-700 font-semibold placeholder:text-blue-300 placeholder:font-normal" />
+                          : fn(dk)}
+                      </td>
                     ))}
                     <td className="px-2 py-1.5" />
                     <td className="px-2 py-1.5" />
@@ -4716,15 +5046,807 @@ function EmployeeRoster() {
 // ─────────────────────────────────────────────
 
 
+/** 可複選的下拉篩選（未勾選任何項目＝全部） */
+function MultiSelect({ label, options, selected, onChange, width = 'w-40' }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const toggle = (v) => onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]);
+  const summary = selected.length === 0 ? `全部${label}`
+    : selected.length === 1 ? selected[0]
+    : `${selected[0]} 等 ${selected.length} 項`;
+
+  return (
+    <div className={`relative ${width}`} ref={boxRef}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center gap-1 border rounded-lg px-2.5 py-1.5 text-sm bg-white
+          ${selected.length > 0 ? 'border-blue-400 text-blue-700 font-medium' : 'border-[#DDD9D0] text-slate-600'}`}>
+        <span className="truncate flex-1 text-left">{summary}</span>
+        <span className="text-xs text-slate-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full min-w-[180px] max-h-64 overflow-auto bg-white
+                        border border-[#DDD9D0] rounded-lg shadow-lg py-1">
+          <div className="flex gap-1 px-2 py-1 border-b border-slate-100">
+            <button onClick={() => onChange(options.map(o => o.value ?? o))}
+              className="flex-1 text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">全選</button>
+            <button onClick={() => onChange([])}
+              className="flex-1 text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">清除</button>
+          </div>
+          {options.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">無可選項目</p>}
+          {options.map(o => {
+            const v = o.value ?? o, t = o.label ?? o;
+            return (
+              <label key={v} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-[#F5F2EC] cursor-pointer">
+                <input type="checkbox" checked={selected.includes(v)} onChange={() => toggle(v)}
+                  className="w-3.5 h-3.5 accent-blue-600" />
+                <span className="truncate">{t}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 月報表／日報表共用的「報表篩選」：倉別沿用上方篩選列，其餘四項各自獨立可複選 */
+function useReportScope() {
+  const { employees, warehouses, workAreas, selectedWarehouse } = useApp();
+  const [fDepts,   setFDepts]   = useState([]);
+  const [fGroups,  setFGroups]  = useState([]);
+  const [fAreas,   setFAreas]   = useState([]);
+  const [fVendors, setFVendors] = useState([]);
+
+  const baseList = useMemo(() => {
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    const deptNames = wh ? new Set((wh.departments ?? []).map(d => d.name)) : null;
+    return employees.filter(e =>
+      e.status !== '離職' && e.vendor && e.vendor.trim() !== '' &&
+      (!deptNames || deptNames.has(e.dept)));
+  }, [employees, warehouses, selectedWarehouse]);
+
+  const options = useMemo(() => {
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    const depts = wh ? (wh.departments ?? []).map(d => d.name)
+                     : [...new Set(warehouses.flatMap(w => (w.departments ?? []).map(d => d.name)))];
+    const src = wh ? (wh.departments ?? []) : warehouses.flatMap(w => w.departments ?? []);
+    const groups = [...new Set(src
+      .filter(d => fDepts.length === 0 || fDepts.includes(d.name))
+      .flatMap(d => d.groups ?? []))];
+    const vendors = sortVendorNames([...new Set(baseList.map(e => e.vendor))]);
+    const areas = [...(workAreas ?? []), '（未設定）'];
+    return { depts, groups, vendors, areas };
+  }, [warehouses, selectedWarehouse, fDepts, baseList, workAreas]);
+
+  const scoped = useMemo(() => baseList.filter(e =>
+    (fDepts.length   === 0 || fDepts.includes(e.dept)) &&
+    (fGroups.length  === 0 || fGroups.includes(e.group)) &&
+    (fVendors.length === 0 || fVendors.includes(e.vendor)) &&
+    (fAreas.length   === 0 || fAreas.includes(e.workArea || '（未設定）'))
+  ), [baseList, fDepts, fGroups, fVendors, fAreas]);
+
+
+  const scopeLabel = () => {
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    const part = (label, arr) => arr.length === 0 ? null
+      : arr.length <= 2 ? `${label}：${arr.join('、')}` : `${label}：${arr.length} 項`;
+    return [wh?.name ?? '全部倉別',
+      part('課別', fDepts), part('組別', fGroups),
+      part('作業區', fAreas), part('廠商', fVendors)].filter(Boolean).join('／');
+  };
+
+  const bar = (
+    <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-[#F5F2EC] rounded-lg">
+      <span className="text-xs font-semibold text-slate-500 shrink-0">報表篩選</span>
+      <MultiSelect label="課別"   options={options.depts}   selected={fDepts}   onChange={setFDepts}   width="w-44" />
+      <MultiSelect label="組別"   options={options.groups}  selected={fGroups}  onChange={setFGroups}  width="w-40" />
+      <MultiSelect label="作業區" options={options.areas}   selected={fAreas}   onChange={setFAreas}   width="w-36" />
+      <MultiSelect label="廠商"   options={options.vendors} selected={fVendors} onChange={setFVendors} width="w-40" />
+      {(fDepts.length || fGroups.length || fAreas.length || fVendors.length) > 0 && (
+        <button onClick={() => { setFDepts([]); setFGroups([]); setFAreas([]); setFVendors([]); }}
+          className="px-2.5 py-1.5 text-xs text-slate-500 border border-[#DDD9D0] rounded-lg bg-white hover:bg-slate-50">
+          清除報表篩選
+        </button>
+      )}
+      <span className="ml-auto text-xs text-slate-400">
+        倉別沿用上方篩選列；此處條件不影響其他分頁
+      </span>
+    </div>
+  );
+
+  return { scoped, scopeLabel, bar, filters: { fDepts, fGroups, fAreas, fVendors } };
+}
+
+// ─────────────────────────────────────────────
+// 日報表：單日出勤概況（應到／實到／未到／到班率），可與前一日或上週同日比較
+// ─────────────────────────────────────────────
+function DailySummary() {
+  const { schedule, attendData, extras, currentUser } = useApp();
+  const toast = useToast();
+  const { scoped, scopeLabel, bar } = useReportScope();
+
+  const canView = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA;
+
+  const today = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const [date, setDate] = useState(`${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`);
+  // 預設比上週同日：同為星期幾，貨量與人力結構才可比（比前一日常跨到假日、失真）
+  const [cmp, setCmp] = useState('lastWeek');   // 'lastWeek' | 'prevDay'
+
+  const shiftDate = (iso, days) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const t = new Date(y, m - 1, d); t.setDate(t.getDate() + days);
+    return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  };
+  const cmpDate = shiftDate(date, cmp === 'prevDay' ? -1 : -7);
+  const wdOf = iso => { const [y, m, d] = iso.split('-').map(Number); return ['日','一','二','三','四','五','六'][new Date(y, m - 1, d).getDay()]; };
+  const dkOf = iso => { const [y, m, d] = iso.split('-').map(Number); return dateKey(y, m, d); };
+
+  /** 統計某一天：依廠商彙總長期與臨時人力的應到／實到 */
+  const tally = useCallback((iso) => {
+    const dk = dkOf(iso);
+    const rec = attendData[iso] ?? {};
+    const map = {};
+    const bucket = v => (map[v] ??= { due: 0, act: 0, tempDue: 0, tempAct: 0, absTypes: {}, absNames: [] });
+    for (const e of scoped) {
+      if ((schedule[e.id] ?? {})[dk] !== 'V') continue;   // 當日未排班（非 V）不計入應到
+      const b = bucket(e.vendor || '未分配');
+      b.due++;
+      const r = rec[e.id];
+      if (r?.present) b.act++;
+      else if (r) {
+        const t = r.absType || '缺勤';
+        b.absTypes[t] = (b.absTypes[t] ?? 0) + 1;
+        b.absNames.push(`${e.name}（${t}）`);
+      }
+    }
+    for (const x of (extras[iso] ?? [])) {
+      const b = bucket(x.vendor || '未分配');
+      b.tempDue++;
+      if (x.present) b.tempAct++;
+    }
+    return map;
+  }, [scoped, schedule, attendData, extras]);
+
+  const rows = useMemo(() => {
+    const c = tally(date), p = tally(cmpDate);
+    const names = sortVendorNames([...new Set([...Object.keys(c), ...Object.keys(p)])]);
+    const empty = { due: 0, act: 0, tempDue: 0, tempAct: 0, absTypes: {}, absNames: [] };
+    return names.map(v => {
+      const a = c[v] ?? empty, b = p[v] ?? empty;
+      return {
+        vendor: v, ...a,
+        absent: a.due - a.act,
+        rate: a.due ? Math.round(a.act / a.due * 100) : null,
+        tempRate: a.tempDue ? Math.round(a.tempAct / a.tempDue * 100) : null,
+        prevAct: b.act, diffAct: a.act - b.act,
+        absLabel: Object.entries(a.absTypes).map(([t, n]) => `${t}*${n}`).join('、'),
+      };
+    }).filter(r => r.due > 0 || r.tempDue > 0 || r.prevAct > 0);
+  }, [tally, date, cmpDate]);
+
+  const total = useMemo(() => rows.reduce((t, r) => ({
+    due: t.due + r.due, act: t.act + r.act, tempDue: t.tempDue + r.tempDue,
+    tempAct: t.tempAct + r.tempAct, prevAct: t.prevAct + r.prevAct,
+  }), { due: 0, act: 0, tempDue: 0, tempAct: 0, prevAct: 0 }), [rows]);
+
+  const diffCls = d => d > 0 ? 'text-teal-700' : d < 0 ? 'text-red-600' : 'text-slate-400';
+  const fmtDiff = d => d > 0 ? `+${d}` : String(d);
+  const rateCls = r => r == null ? 'text-slate-400' : r >= 95 ? 'text-teal-700' : r >= 85 ? 'text-amber-600' : 'text-red-600';
+
+  const exportExcel = () => {
+    if (rows.length === 0) { toast('該日沒有資料可匯出', 'warn'); return; }
+    const cmpLabel = cmp === 'prevDay' ? '前一日' : '上週同日';
+    const aoa = [
+      ['日報表（單日出勤概況）'],
+      ['出勤日期', `${date}（${wdOf(date)}）`],
+      ['比較對象', `${cmpLabel}　${cmpDate}（${wdOf(cmpDate)}）`],
+      ['統計範圍', scopeLabel()],
+      ['產出時間', new Date().toLocaleString('zh-TW')],
+      [],
+      ['廠商', '應到（長期）', '實到（長期）', '未到', '到班率（長期）',
+       `${cmpLabel}實到`, '實到增減', '應到（臨時）', '實到（臨時）', '到班率（臨時）', '缺勤明細', '未到人員'],
+    ];
+    rows.forEach(r => aoa.push([
+      r.vendor, r.due, r.act, r.absent, r.rate == null ? '—' : `${r.rate}%`,
+      r.prevAct, r.diffAct, r.tempDue, r.tempAct,
+      r.tempRate == null ? '—' : `${r.tempRate}%`,
+      r.absLabel || '（無缺勤）', r.absNames.join('、'),
+    ]));
+    aoa.push(['合計', total.due, total.act, total.due - total.act,
+      total.due ? `${Math.round(total.act / total.due * 100)}%` : '—',
+      total.prevAct, total.act - total.prevAct, total.tempDue, total.tempAct,
+      total.tempDue ? `${Math.round(total.tempAct / total.tempDue * 100)}%` : '—', '', '']);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 13 },
+                   { wch: 13 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 18 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '日報表');
+    XLSX.writeFile(wb, `日報表_${date}.xlsx`);
+    toast('日報表已匯出', 'success');
+  };
+
+  if (!canView) return null;
+
+  return (
+    <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h3 className="font-semibold text-slate-700">日報表</h3>
+        <span className="text-xs text-slate-400">單日出勤概況與前期比較</span>
+
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button onClick={() => setDate(shiftDate(date, -1))}
+            className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold">◀</button>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          <button onClick={() => setDate(shiftDate(date, 1))}
+            className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold">▶</button>
+
+          <div className="flex rounded-lg border border-[#DDD9D0] overflow-hidden text-sm">
+            {[['lastWeek', '比上週同日'], ['prevDay', '比前一日']].map(([k, label]) => (
+              <button key={k} onClick={() => setCmp(k)}
+                className={`px-3 py-1.5 transition-colors
+                  ${cmp === k ? 'bg-[#1a2f5e] text-white font-semibold' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={exportExcel}
+            className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+            📊 匯出 Excel
+          </button>
+        </div>
+      </div>
+
+      {bar}
+
+      <p className="text-xs text-slate-500 mb-3">
+        出勤日期 <b className="text-slate-700">{date}（{wdOf(date)}）</b>
+        　比較對象 <b className="text-slate-700">{cmpDate}（{wdOf(cmpDate)}）</b>
+        　統計範圍 <b className="text-slate-700">{scopeLabel()}</b>
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead className="bg-slate-100">
+            <tr>
+              {['廠商', '應到（長期）', '實到（長期）', '未到', '到班率（長期）',
+                cmp === 'prevDay' ? '前一日實到' : '上週同日實到', '實到增減',
+                '臨時應到', '臨時實到', '到班率（臨時）', '缺勤明細'].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-600 text-xs whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.length === 0 && (
+              <tr><td colSpan={11} className="px-3 py-6 text-center text-slate-400 text-sm">該日沒有排班或出勤資料</td></tr>
+            )}
+            {rows.map(r => (
+              <tr key={r.vendor} className="hover:bg-[#F5F2EC]">
+                <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{r.vendor}</td>
+                <td className="px-3 py-2 text-slate-700">{r.due}</td>
+                <td className="px-3 py-2 font-bold text-slate-800">{r.act}</td>
+                <td className={`px-3 py-2 ${r.absent > 0 ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>{r.absent}</td>
+                <td className={`px-3 py-2 font-semibold ${rateCls(r.rate)}`}>{r.rate == null ? '—' : `${r.rate}%`}</td>
+                <td className="px-3 py-2 text-slate-500">{r.prevAct}</td>
+                <td className={`px-3 py-2 text-xs ${diffCls(r.diffAct)}`}>{fmtDiff(r.diffAct)}</td>
+                <td className="px-3 py-2 text-slate-500">{r.tempDue || '—'}</td>
+                <td className="px-3 py-2 text-slate-700">{r.tempAct || '—'}</td>
+                <td className={`px-3 py-2 font-semibold ${rateCls(r.tempRate)}`}>
+                  {r.tempRate == null ? '—' : `${r.tempRate}%`}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-500 max-w-[220px] truncate" title={r.absNames.join('、')}>
+                  {r.absLabel || '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr className="bg-slate-50 font-semibold">
+                <td className="px-3 py-2 text-slate-700">合計</td>
+                <td className="px-3 py-2 text-slate-700">{total.due}</td>
+                <td className="px-3 py-2 text-slate-900">{total.act}</td>
+                <td className={`px-3 py-2 ${total.due - total.act > 0 ? 'text-red-600' : 'text-slate-400'}`}>{total.due - total.act}</td>
+                <td className={`px-3 py-2 ${rateCls(total.due ? Math.round(total.act / total.due * 100) : null)}`}>
+                  {total.due ? `${Math.round(total.act / total.due * 100)}%` : '—'}
+                </td>
+                <td className="px-3 py-2 text-slate-500">{total.prevAct}</td>
+                <td className={`px-3 py-2 text-xs ${diffCls(total.act - total.prevAct)}`}>{fmtDiff(total.act - total.prevAct)}</td>
+                <td className="px-3 py-2 text-slate-500">{total.tempDue}</td>
+                <td className="px-3 py-2 text-slate-700">{total.tempAct}</td>
+                <td className={`px-3 py-2 ${rateCls(total.tempDue ? Math.round(total.tempAct / total.tempDue * 100) : null)}`}>
+                  {total.tempDue ? `${Math.round(total.tempAct / total.tempDue * 100)}%` : '—'}
+                </td>
+                <td className="px-3 py-2"></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-2">
+        應到＝當日班表為「V」的人數；實到＝點名表已勾選到班的人數；未到含請假與未點名。臨時人力來自點名表的派工匯入與手動新增。
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 月報表：以「月份」或「排班週期」統計排班人數，並與前一期比較
+// ─────────────────────────────────────────────
+/** 產出指定起訖日的日期鍵陣列（與班表相同的 dateKey 格式，不補零） */
+function dkRange(start, end) {
+  const out = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    out.push(dateKey(cur.getFullYear(), cur.getMonth() + 1, cur.getDate()));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+function MonthlySummary() {
+  const { schedule, periodRange, currentUser, attendData, extras, warehouses,
+    shiftTypesByWh, selectedWarehouse } = useApp();
+  const toast = useToast();
+  const { scoped, scopeLabel, bar, filters } = useReportScope();
+
+  // 月報表僅供日翊員工與管理員檢視，委外幹部不開放
+  const canView = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA;
+
+  const today = new Date();
+  const [mode, setMode] = useState('month');            // 'month' | 'period'
+  const [ym, setYm] = useState(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`);
+  const [periodOffset, setPeriodOffset] = useState(0);  // 相對於系統設定的基準期
+
+  const hasPeriod = !!(periodRange?.start && periodRange?.end);
+  // 預設落在「今天所屬的那一期」，與班表管理的行為一致
+  const didInitPeriod = useRef(false);
+  useEffect(() => {
+    if (didInitPeriod.current || !hasPeriod) return;
+    didInitPeriod.current = true;
+    const off = todayPeriodOffset(periodRange);
+    if (off !== 0) setPeriodOffset(off);
+  }, [hasPeriod, periodRange]);
+
+  /** 依模式算出「本期」與「前一期」的起訖 */
+  const spans = useMemo(() => {
+    if (mode === 'month') {
+      const [y, m] = ym.split('-').map(Number);
+      const cur  = { start: new Date(y, m - 1, 1), end: new Date(y, m, 0) };
+      const prev = { start: new Date(y, m - 2, 1), end: new Date(y, m - 1, 0) };
+      const lab = d => `${d.getFullYear()}/${d.getMonth() + 1}`;
+      return { cur, prev, curLabel: lab(cur.start), prevLabel: lab(prev.start), unit: '月' };
+    }
+    if (!hasPeriod) return null;
+    const s = parseLocal(periodRange.start);
+    const e = parseLocal(periodRange.end);
+    const len = Math.round((e - s) / 86400000) + 1;     // 含頭含尾天數
+    const shift = (n) => {
+      const a = new Date(s); a.setDate(a.getDate() + n * len);
+      const b = new Date(e); b.setDate(b.getDate() + n * len);
+      return { start: a, end: b };
+    };
+    const cur = shift(periodOffset), prev = shift(periodOffset - 1);
+    const lab = r => `${r.start.getMonth() + 1}/${r.start.getDate()}～${r.end.getMonth() + 1}/${r.end.getDate()}`;
+    return { cur, prev, curLabel: lab(cur), prevLabel: lab(prev), unit: '期' };
+  }, [mode, ym, hasPeriod, periodRange, periodOffset]);
+
+  /** 統計一個區間：依廠商彙總排班人數與天數 */
+  /** 某人的名目工時（依指派班別的上下班時間，跨夜自動加 24 小時） */
+  const hoursOf = useCallback((emp) => {
+    const st = findShiftType(shiftTypesByWh, selectedWarehouse ?? 'default', emp.shiftTypeId);
+    if (!st?.startTime || !st?.endTime) return 0;
+    const toMin = t => Number(String(t).slice(0, 2)) * 60 + Number(String(t).slice(2));
+    let d = toMin(st.endTime) - toMin(st.startTime);
+    if (d <= 0) d += 24 * 60;
+    return d / 60;
+  }, [shiftTypesByWh, selectedWarehouse]);
+
+  /** 統計一個區間：人次、工時、到班率、人員異動 */
+  const tally = useCallback((span) => {
+    const dks = dkRange(span.start, span.end);
+    const isoOf = dk => { const [y, m, d] = dk.split('-').map(Number);
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; };
+    const map = {};
+    for (const e of scoped) {
+      const row = schedule[e.id] ?? {};
+      const v = e.vendor || '未分配';
+      const hrs = hoursOf(e);
+      let work = 0, off = 0, nat = 0, act = 0, absent = 0, unchecked = 0, any = false;
+      for (const dk of dks) {
+        const c = row[dk];
+        if (c === undefined) continue;
+        any = true;
+        if (c === 'V') {
+          work++;
+          const rec = attendData[isoOf(dk)]?.[e.id];
+          if (!rec) unchecked++;          // 尚未點名，不計入到班也不計入缺工
+          else if (rec.present) act++;
+          else absent++;
+        } else if (c === '休' || c === '例') off++;
+        else if (c === '國') { nat++; off++; }
+      }
+      if (!any) continue;                 // 該區間完全沒排班的人不列入（廠商也不列出）
+      map[v] ??= { people: 0, ids: new Set(), workDays: 0, hours: 0,
+                   offDays: 0, natDays: 0, act: 0, absent: 0, unchecked: 0, tempDue: 0, tempAct: 0 };
+      const m = map[v];
+      m.people++; m.ids.add(e.id);
+      m.workDays += work; m.hours += work * hrs;
+      m.offDays += off; m.natDays += nat;
+      m.act += act; m.absent += absent; m.unchecked += unchecked;
+    }
+    // 臨時人力：資料在 extras（只有廠商與組別），倉別／課別由組別回推後再套用報表篩選
+    const wh = warehouses.find(w => w.id === selectedWarehouse);
+    const whDepts = wh ? new Set((wh.departments ?? []).map(d => d.name)) : null;
+    const isoSet = new Set(dks.map(isoOf));
+    for (const [iso, list] of Object.entries(extras ?? {})) {
+      if (!isoSet.has(iso)) continue;
+      for (const x of (list ?? [])) {
+        const owner = deptOfGroup(warehouses, x.group);
+        if (whDepts && !(owner && whDepts.has(owner.deptName))) continue;
+        if (filters.fDepts.length  && !(owner && filters.fDepts.includes(owner.deptName))) continue;
+        if (filters.fGroups.length && !filters.fGroups.includes(x.group)) continue;
+        if (filters.fVendors.length && !filters.fVendors.includes(x.vendor)) continue;
+        const v = x.vendor || '未分配';
+        map[v] ??= { people: 0, ids: new Set(), workDays: 0, hours: 0,
+                     offDays: 0, natDays: 0, act: 0, absent: 0, unchecked: 0, tempDue: 0, tempAct: 0 };
+        map[v].tempDue++;
+        if (x.present) map[v].tempAct++;
+      }
+    }
+    return map;
+  }, [scoped, schedule, attendData, hoursOf, extras, warehouses, selectedWarehouse, filters]);
+
+  const EMPTY = { people: 0, ids: new Set(), workDays: 0, hours: 0,
+                  offDays: 0, natDays: 0, act: 0, absent: 0, unchecked: 0, tempDue: 0, tempAct: 0 };
+
+  const rows = useMemo(() => {
+    if (!spans) return [];
+    const c = tally(spans.cur), p = tally(spans.prev);
+    const names = sortVendorNames([...new Set([...Object.keys(c), ...Object.keys(p)])]);
+    return names.map(v => {
+      const a = c[v] ?? EMPTY, b = p[v] ?? EMPTY;
+      // 人員異動：本期有排班但上期沒有＝新進；上期有本期沒有＝離開
+      const joined = [...a.ids].filter(id => !b.ids.has(id)).length;
+      const left   = [...b.ids].filter(id => !a.ids.has(id)).length;
+      const checked = a.act + a.absent;   // 已點名的人次（未點名不計入分母）
+      return {
+        vendor: v,
+        people: a.people, prevPeople: b.people, diffPeople: a.people - b.people,
+        workDays: a.workDays, prevWorkDays: b.workDays, diffWorkDays: a.workDays - b.workDays,
+        hours: a.hours, prevHours: b.hours, diffHours: a.hours - b.hours,
+        offDays: a.offDays, natDays: a.natDays,
+        act: a.act, absent: a.absent, unchecked: a.unchecked,
+        fulfil: checked > 0 ? Math.round(a.act / checked * 100) : null,   // 長期到班率
+        tempDue: a.tempDue, tempAct: a.tempAct,
+        prevTempDue: b.tempDue, prevTempAct: b.tempAct,
+        diffTempDue: a.tempDue - b.tempDue,
+        tempFulfil: a.tempDue > 0 ? Math.round(a.tempAct / a.tempDue * 100) : null,
+        joined, left,
+        turnover: b.people > 0 ? Math.round(left / b.people * 100) : null, // 流失率
+        avgWork: a.people ? (a.workDays / a.people) : 0,
+      };
+    });
+  }, [spans, tally]);
+
+  const total = useMemo(() => rows.reduce((t, r) => ({
+    people: t.people + r.people, prevPeople: t.prevPeople + r.prevPeople,
+    workDays: t.workDays + r.workDays, prevWorkDays: t.prevWorkDays + r.prevWorkDays,
+    hours: t.hours + r.hours, prevHours: t.prevHours + r.prevHours,
+    offDays: t.offDays + r.offDays, natDays: t.natDays + r.natDays,
+    act: t.act + r.act, absent: t.absent + r.absent, unchecked: t.unchecked + r.unchecked,
+    tempDue: t.tempDue + r.tempDue, tempAct: t.tempAct + r.tempAct,
+    prevTempDue: t.prevTempDue + r.prevTempDue, prevTempAct: t.prevTempAct + r.prevTempAct,
+    joined: t.joined + r.joined, left: t.left + r.left,
+  }), { people: 0, prevPeople: 0, workDays: 0, prevWorkDays: 0, hours: 0, prevHours: 0,
+        offDays: 0, natDays: 0, act: 0, absent: 0, unchecked: 0, tempDue: 0, tempAct: 0,
+        prevTempDue: 0, prevTempAct: 0, joined: 0, left: 0 }), [rows]);
+
+  const totalFulfil = (total.act + total.absent) > 0
+    ? Math.round(total.act / (total.act + total.absent) * 100) : null;
+  const totalTurnover = total.prevPeople > 0 ? Math.round(total.left / total.prevPeople * 100) : null;
+  const totalTempFulfil = total.tempDue > 0 ? Math.round(total.tempAct / total.tempDue * 100) : null;
+
+  const pct = (diff, prev) => prev === 0 ? (diff === 0 ? '—' : '新增') : `${diff >= 0 ? '+' : ''}${Math.round(diff / prev * 100)}%`;
+  const diffCls = d => d > 0 ? 'text-teal-700' : d < 0 ? 'text-red-600' : 'text-slate-400';
+  const fmtDiff = d => d > 0 ? `+${d}` : String(d);
+  const fmtHr = h => h >= 1000 ? Math.round(h).toLocaleString() : h.toFixed(0);
+  // 增減欄位：沒有變化就不顯示數字，避免整排 0 +0% 干擾閱讀
+  const DeltaCell = ({ d, base }) => d === 0
+    ? <span className="text-slate-300">—</span>
+    : <span className={diffCls(d)}>{fmtDiff(d)}<span className="ml-1 opacity-70">({pct(d, base)})</span></span>;
+  // 達成率／流失率的健康度配色，讓主管一眼看出哪一家該追
+  const fulfilCls = r => r == null ? 'text-slate-400' : r >= 95 ? 'text-teal-700' : r >= 85 ? 'text-amber-600' : 'text-red-600';
+  const turnoverCls = r => r == null ? 'text-slate-400' : r <= 5 ? 'text-teal-700' : r <= 15 ? 'text-amber-600' : 'text-red-600';
+
+
+  const exportExcel = () => {
+    if (rows.length === 0) { toast('目前條件下沒有資料可匯出', 'warn'); return; }
+    const fmtD = d => `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+    const aoa = [
+      ['月報表（人力需求與供應商績效）'],
+      ['統計方式', mode === 'month' ? '依月份' : '依排班週期'],
+      ['本期', `${fmtD(spans.cur.start)} ~ ${fmtD(spans.cur.end)}`],
+      [`前一${spans.unit}`, `${fmtD(spans.prev.start)} ~ ${fmtD(spans.prev.end)}`],
+      ['統計範圍', scopeLabel()],
+      ['產出時間', new Date().toLocaleString('zh-TW')],
+      [],
+      ['【總體】'],
+      ['總排班人次', total.workDays, `前一${spans.unit}`, total.prevWorkDays,
+       '增減', total.workDays - total.prevWorkDays, '增減率', pct(total.workDays - total.prevWorkDays, total.prevWorkDays)],
+      ['在廠人數（長期）', total.people, `前一${spans.unit}`, total.prevPeople,
+       '新進', total.joined, '離開', total.left],
+      ['到班率（長期）', totalFulfil == null ? '—' : `${totalFulfil}%`,
+       '實到人次', total.act, '缺工人次', total.absent, '未點名人次', total.unchecked],
+      ['到班率（臨時）', totalTempFulfil == null ? '—' : `${totalTempFulfil}%`,
+       '實到人次', total.tempAct, '應到人次', total.tempDue],
+      ['人員流失率', totalTurnover == null ? '—' : `${totalTurnover}%`],
+      [],
+      ['【各人力商】'],
+      ['廠商', '在廠人數（長期）', `前一${spans.unit}人數`, '人數增減', '人數增減率',
+       '排班人次', `前一${spans.unit}人次`, '人次增減', '人次增減率',
+       '到班率（長期）', '實到人次', '缺工人次', '未點名人次',
+       '臨時應到人次', '臨時實到人次', '到班率（臨時）',
+       '新進', '離開', '流失率', '人均出勤天數'],
+    ];
+    rows.forEach(r => aoa.push([
+      r.vendor, r.people, r.prevPeople, r.diffPeople, pct(r.diffPeople, r.prevPeople),
+      r.workDays, r.prevWorkDays, r.diffWorkDays, pct(r.diffWorkDays, r.prevWorkDays),
+      r.fulfil == null ? '—' : `${r.fulfil}%`, r.act, r.absent, r.unchecked,
+      r.tempDue, r.tempAct, r.tempFulfil == null ? '—' : `${r.tempFulfil}%`,
+      r.joined, r.left, r.turnover == null ? '—' : `${r.turnover}%`,
+      Number(r.avgWork.toFixed(1)),
+    ]));
+    aoa.push(['合計', total.people, total.prevPeople, total.people - total.prevPeople,
+      pct(total.people - total.prevPeople, total.prevPeople),
+      total.workDays, total.prevWorkDays, total.workDays - total.prevWorkDays,
+      pct(total.workDays - total.prevWorkDays, total.prevWorkDays),
+      totalFulfil == null ? '—' : `${totalFulfil}%`, total.act, total.absent, total.unchecked,
+      total.tempDue, total.tempAct, totalTempFulfil == null ? '—' : `${totalTempFulfil}%`,
+      total.joined, total.left, totalTurnover == null ? '—' : `${totalTurnover}%`,
+      total.people ? Number((total.workDays / total.people).toFixed(1)) : 0]);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, ...Array(19).fill({ wch: 13 })];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '月報表');
+    const tag = mode === 'month' ? ym : `${fmtD(spans.cur.start)}-${fmtD(spans.cur.end)}`.replace(/\//g, '');
+    XLSX.writeFile(wb, `月報表_${tag}.xlsx`);
+    toast('月報表已匯出', 'success');
+  };
+
+  if (!canView) return null;
+
+  return (
+    <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h3 className="font-semibold text-slate-700">月報表</h3>
+        <span className="text-xs text-slate-400">排班人數統計與前期比較</span>
+
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* 統計方式 */}
+          <div className="flex rounded-lg border border-[#DDD9D0] overflow-hidden text-sm">
+            {[['month', '依月份'], ['period', '依排班週期']].map(([k, label]) => (
+              <button key={k} onClick={() => setMode(k)}
+                disabled={k === 'period' && !hasPeriod}
+                title={k === 'period' && !hasPeriod ? '請先於系統設定設定「每期日期區間」' : undefined}
+                className={`px-3 py-1.5 transition-colors
+                  ${mode === k ? 'bg-[#1a2f5e] text-white font-semibold' : 'bg-white text-slate-600 hover:bg-slate-50'}
+                  ${k === 'period' && !hasPeriod ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'month' ? (
+            <input type="month" value={ym} onChange={e => setYm(e.target.value)}
+              className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          ) : (
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPeriodOffset(v => v - 1)}
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold">◀</button>
+              <span className={`px-3 py-1.5 border rounded-lg text-sm font-medium whitespace-nowrap
+                ${periodOffset === 0 ? 'bg-teal-50 border-teal-200 text-blue-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
+                📅 {spans ? spans.curLabel : '—'}
+                {periodOffset !== 0 && <span className="ml-1 text-xs opacity-70">（{periodOffset > 0 ? `+${periodOffset}` : periodOffset} 期）</span>}
+              </span>
+              <button onClick={() => setPeriodOffset(v => v + 1)}
+                className="px-2 py-1.5 bg-white border border-[#DDD9D0] rounded-lg text-sm hover:bg-slate-100 font-bold">▶</button>
+            </div>
+          )}
+
+          <button onClick={exportExcel}
+            className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+            📊 匯出 Excel
+          </button>
+        </div>
+      </div>
+
+      {bar}
+
+      {!spans ? (
+        <p className="text-sm text-amber-600">尚未設定「每期日期區間」，請先於系統設定完成後再使用週期統計。</p>
+      ) : (
+        <>
+          <p className="text-xs text-slate-500 mb-3">
+            本期 <b className="text-slate-700">{spans.curLabel}</b>
+            　比較對象 <b className="text-slate-700">{spans.prevLabel}</b>
+            　統計範圍 <b className="text-slate-700">{scopeLabel()}</b>
+          </p>
+          {/* 總體指標：先看整體變化幅度，再往下追各人力商 */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            {[
+              { t: '總排班人次', v: total.workDays.toLocaleString(), unit: '人次',
+                d: total.workDays - total.prevWorkDays, base: total.prevWorkDays,
+                f: `前一${spans.unit} ${total.prevWorkDays.toLocaleString()}`, tone: 'blue' },
+              { t: '在廠人數（長期）', v: total.people, unit: '人',
+                d: total.people - total.prevPeople, base: total.prevPeople,
+                f: `新進 ${total.joined}　離開 ${total.left}`, tone: 'green' },
+              { t: '到班率（長期）', v: totalFulfil == null ? '—' : `${totalFulfil}%`, unit: '',
+                d: null, base: null,
+                f: `實到 ${total.act} / 應到 ${total.act + total.absent}${total.unchecked > 0 ? `　未點名 ${total.unchecked}` : ''}`,
+                tone: totalFulfil == null ? 'slate' : totalFulfil >= 95 ? 'green' : totalFulfil >= 85 ? 'amber' : 'red' },
+              { t: '到班率（臨時）', v: totalTempFulfil == null ? '—' : `${totalTempFulfil}%`, unit: '',
+                d: null, base: null,
+                f: `實到 ${total.tempAct} / 應到 ${total.tempDue}`,
+                tone: totalTempFulfil == null ? 'slate' : totalTempFulfil >= 95 ? 'green' : totalTempFulfil >= 85 ? 'amber' : 'red' },
+            ].map(k => {
+              const bar = { blue: 'border-blue-500', cyan: 'border-cyan-500', green: 'border-emerald-500',
+                            amber: 'border-amber-500', red: 'border-red-500', slate: 'border-slate-300' }[k.tone];
+              return (
+                <div key={k.t} className={`border border-[#DDD9D0] border-l-4 ${bar} rounded-xl px-3 py-2.5 bg-white`}>
+                  <div className="text-[11px] text-slate-400">{k.t}</div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-extrabold text-slate-800 leading-tight">{k.v}</span>
+                    {k.unit && <span className="text-[11px] text-slate-400">{k.unit}</span>}
+                    {k.d != null && (
+                      <span className={`ml-auto text-xs font-bold ${diffCls(k.d)}`}>
+                        {fmtDiff(k.d)}
+                        <span className="ml-1 font-normal">{pct(k.d, k.base)}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">{k.f}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {totalTurnover != null && (
+            <p className="text-xs text-slate-500 mb-3">
+              人員流失率 <b className={turnoverCls(totalTurnover)}>{totalTurnover}%</b>
+              （上一{spans.unit} {total.prevPeople} 人中有 {total.left} 人本期未再排班）
+            </p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              {/* 兩層表頭：長期（綠底）與臨時（黃底）分區，避免欄位一長排難以對照 */}
+              <thead>
+                <tr>
+                  <th rowSpan={2} className="px-3 py-2 text-left font-semibold text-slate-600 text-xs
+                                             bg-slate-100 border-b border-slate-200 whitespace-nowrap">廠商</th>
+                  <th colSpan={5} className="px-3 py-1.5 text-center font-bold text-emerald-800 text-xs
+                                             bg-emerald-100 border-b border-emerald-200">長期人力</th>
+                  <th colSpan={4} className="px-3 py-1.5 text-center font-bold text-amber-800 text-xs
+                                             bg-amber-100 border-b border-amber-200">臨時人力</th>
+                  <th colSpan={3} className="px-3 py-1.5 text-center font-bold text-slate-500 text-xs
+                                             bg-slate-100 border-b border-slate-200">人員異動</th>
+                </tr>
+                <tr>
+                  {[['目前在廠人數', 'g'], [`前一${spans.unit}人次`, 'g'], [`本${spans.unit}人次`, 'g'],
+                    ['人次差', 'g'], ['到班率（長期）', 'g'],
+                    [`前一${spans.unit}人次`, 'a'], [`本${spans.unit}人次`, 'a'],
+                    ['人次差', 'a'], ['到班率（臨時）', 'a'],
+                    ['新進', 's'], ['離開', 's'], ['流失率', 's']].map(([h, tone], i) => (
+                    <th key={h + i}
+                      className={`px-3 py-2 text-left font-semibold text-xs whitespace-nowrap border-b border-slate-200
+                        ${tone === 'g' ? 'bg-emerald-50 text-emerald-900'
+                        : tone === 'a' ? 'bg-amber-50 text-amber-900'
+                        : 'bg-slate-100 text-slate-600'}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.length === 0 && (
+                  <tr><td colSpan={13} className="px-3 py-6 text-center text-slate-400 text-sm">此區間內沒有排班資料</td></tr>
+                )}
+                {rows.map(r => (
+                  <tr key={r.vendor} className="hover:bg-[#F5F2EC]">
+                    <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{r.vendor}</td>
+
+                    {/* 長期 */}
+                    <td className="px-3 py-2 font-bold text-slate-800 bg-emerald-50/40">
+                      {r.people}
+                      {r.diffPeople !== 0 && (
+                        <span className={`ml-1 text-[11px] font-normal ${diffCls(r.diffPeople)}`}>{fmtDiff(r.diffPeople)}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 bg-emerald-50/40">{r.prevWorkDays.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-slate-800 font-semibold bg-emerald-50/40">{r.workDays.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs bg-emerald-50/40"><DeltaCell d={r.diffWorkDays} base={r.prevWorkDays} /></td>
+                    <td className={`px-3 py-2 font-bold bg-emerald-50/40 ${fulfilCls(r.fulfil)}`}
+                      title={`實到 ${r.act} / 應到 ${r.act + r.absent} 人次${r.unchecked > 0 ? `；未點名 ${r.unchecked} 人次未列入` : ''}`}>
+                      {r.fulfil == null ? '—' : `${r.fulfil}%`}
+                    </td>
+
+                    {/* 臨時 */}
+                    <td className="px-3 py-2 text-slate-500 bg-amber-50/40">{r.prevTempDue || '—'}</td>
+                    <td className="px-3 py-2 text-slate-800 font-semibold bg-amber-50/40">{r.tempDue || '—'}</td>
+                    <td className="px-3 py-2 text-xs bg-amber-50/40"><DeltaCell d={r.diffTempDue} base={r.prevTempDue} /></td>
+                    <td className={`px-3 py-2 font-bold bg-amber-50/40 ${fulfilCls(r.tempFulfil)}`}
+                      title={`實到 ${r.tempAct} / 派工 ${r.tempDue} 人次`}>
+                      {r.tempFulfil == null ? '—' : `${r.tempFulfil}%`}
+                    </td>
+
+                    {/* 異動 */}
+                    <td className="px-3 py-2 text-teal-700">{r.joined || '—'}</td>
+                    <td className={r.left > 0 ? 'px-3 py-2 text-red-600' : 'px-3 py-2 text-slate-400'}>{r.left || '—'}</td>
+                    <td className={`px-3 py-2 font-semibold ${turnoverCls(r.turnover)}`}>
+                      {r.turnover == null ? '—' : `${r.turnover}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {rows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-50 font-semibold border-t-2 border-slate-300">
+                    <td className="px-3 py-2 text-slate-700">合計</td>
+                    <td className="px-3 py-2 text-slate-900">
+                      {total.people}
+                      {total.people - total.prevPeople !== 0 && (
+                        <span className={`ml-1 text-[11px] font-normal ${diffCls(total.people - total.prevPeople)}`}>
+                          {fmtDiff(total.people - total.prevPeople)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500">{total.prevWorkDays.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-slate-800">{total.workDays.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs"><DeltaCell d={total.workDays - total.prevWorkDays} base={total.prevWorkDays} /></td>
+                    <td className={`px-3 py-2 ${fulfilCls(totalFulfil)}`}>{totalFulfil == null ? '—' : `${totalFulfil}%`}</td>
+                    <td className="px-3 py-2 text-slate-500">{total.prevTempDue || '—'}</td>
+                    <td className="px-3 py-2 text-slate-800">{total.tempDue || '—'}</td>
+                    <td className="px-3 py-2 text-xs"><DeltaCell d={total.tempDue - total.prevTempDue} base={total.prevTempDue} /></td>
+                    <td className={`px-3 py-2 ${fulfilCls(totalTempFulfil)}`}>{totalTempFulfil == null ? '—' : `${totalTempFulfil}%`}</td>
+                    <td className="px-3 py-2 text-teal-700">{total.joined}</td>
+                    <td className={total.left > 0 ? 'px-3 py-2 text-red-600' : 'px-3 py-2 text-slate-400'}>{total.left}</td>
+                    <td className={`px-3 py-2 ${turnoverCls(totalTurnover)}`}>{totalTurnover == null ? '—' : `${totalTurnover}%`}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2">
+            在廠人數／排班人次僅計長期人力；排班人次＝班表「V」的格數。
+            到班率（長期）＝實到人次 ÷ 已點名的應到人次（未點名不列入分母）；
+            到班率（臨時）＝點名表派工名單中已到班的人次 ÷ 該期間派工人次；
+            新進／離開＝與前一{spans.unit}比較有無排班紀錄；流失率＝離開人數 ÷ 前一{spans.unit}人數。
+            倉別沿用上方篩選列，其餘條件以本區塊的「報表篩選」為準。
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Reports() {
   const { employees, schedule, selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
-    vendorCompanyNames, currentUser, deptRanges } = useApp();
+    vendorCompanyNames, currentUser, deptRanges, deptSegments } = useApp();
   const toast = useToast();
 
   const [viewOffset, setViewOffset] = useState(0);
   // 全域區間已取消，報表檢視改用各課別區間的聯集（涵蓋所有課別）
-  const reportRange = useMemo(() => unionDeptRange(deptRanges), [deptRanges]);
+  const reportRange = useMemo(() => unionAllSegments(deptSegments, deptRanges), [deptSegments, deptRanges]);
   const didInitOffset = useRef(false);
   useEffect(() => {
     if (didInitOffset.current || !reportRange.start || !reportRange.end) return;
@@ -5124,6 +6246,12 @@ function Reports() {
           );
         })}
       </div>
+
+      {/* 日報表與月報表僅日翊員工／管理員可見 */}
+      {(currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA) && (<>
+        <DailySummary />
+        <MonthlySummary />
+      </>)}
 
       <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 text-sm text-blue-700">
         <p className="font-medium mb-1">匯出說明</p>
@@ -7143,6 +8271,9 @@ function Settings() {
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
+    deptSegments, setDeptSegments,
+    dailyDemand, setDailyDemand,
+    unlockPwd, setUnlockPwd,
     periodRange, setPeriodRange,
     lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,
@@ -7162,10 +8293,11 @@ function Settings() {
   // 系統設定含破壞性（刪除倉別／課別／廠商）與全域設定，日翊僅開放課別鎖定與開放區間
   const isAdminUser = currentUser?.role === ROLES.ADMIN;
   // 全域區間已取消，國定假日改以各課別區間的聯集決定篩選範圍
-  const unionRange = useMemo(() => unionDeptRange(deptRanges), [deptRanges]);
+  const unionRange = useMemo(() => unionAllSegments(deptSegments, deptRanges), [deptSegments, deptRanges]);
 
   // ── 作業區設定 ──
   const [areaInput, setAreaInput] = useState('');
+  const [unlockInput, setUnlockInput] = useState('');
   const addArea = () => {
     const v = areaInput.trim();
     if (!v) { toast('請輸入作業區名稱', 'error'); return; }
@@ -7202,6 +8334,9 @@ function Settings() {
 
   // 課別鎖定／開放區間只列出自己權責範圍內的倉別：
   // 管理員為全倉；其餘角色依 allowedWarehouses（未指派則不顯示任何倉別）。
+  // 各倉可分別展開／收合，避免課別一次全部攤開
+  const [openLockWh, setOpenLockWh] = useState(() => new Set());
+
   const lockableWarehouses = useMemo(() => {
     if (currentUser?.role === ROLES.ADMIN) return warehouses;
     const allowed = currentUser?.allowedWarehouses ?? [];
@@ -7420,79 +8555,183 @@ function Settings() {
           </p>
         ) : (
           <div className="space-y-4">
-            {lockableWarehouses.map(w => (
-              <div key={w.id}>
-                <div className="text-sm font-semibold text-slate-600 mb-2">🏭 {w.name}</div>
-                {(w.departments ?? []).length === 0 ? (
-                  <p className="text-xs text-slate-400 pl-4">此倉別尚無課別</p>
+            {lockableWarehouses.map(w => {
+              const open = openLockWh.has(w.id);
+              // 摘要：讓收合狀態下也看得出哪些倉已設定
+              const setCount = (w.departments ?? [])
+                .filter(d => segmentsOf(deptSegments, deptRanges, deptLocks, d.name).length > 0).length;
+              return (
+              <div key={w.id} className="border border-[#DDD9D0] rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setOpenLockWh(prev => {
+                    const n = new Set(prev);
+                    n.has(w.id) ? n.delete(w.id) : n.add(w.id);
+                    return n;
+                  })}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 bg-[#F5F2EC] hover:bg-[#EFEAE1] transition-colors">
+                  <span className="text-slate-400 text-xs">{open ? '▼' : '▶'}</span>
+                  <span className="text-sm font-semibold text-slate-700">🏭 {w.name}</span>
+                  <span className="text-xs text-slate-400">
+                    {(w.departments ?? []).length} 課
+                    {setCount > 0
+                      ? <span className="text-indigo-600 font-medium">　已設定 {setCount} 課</span>
+                      : <span className="text-amber-600 font-medium">　尚未設定</span>}
+                  </span>
+                </button>
+                {!open ? null : (w.departments ?? []).length === 0 ? (
+                  <p className="text-xs text-slate-400 p-3">此倉別尚無課別</p>
                 ) : (
-                  <div className="space-y-1.5 pl-4">
+                  <div className="space-y-1.5 p-3">
                     {(w.departments ?? []).map(d => {
-                      const cur = normalizeLockMode(deptLocks[d.name]);
+                      const segs = segmentsOf(deptSegments, deptRanges, deptLocks, d.name);
+                      const groupOpts = d.groups ?? [];
+                      const write = (next) => {
+                        setDeptSegments(prev => ({ ...prev, [d.name]: next }));
+                        // 新格式一旦建立即以其為準，清掉同課的舊格式避免兩套並存
+                        setDeptRanges(prev => { const n = { ...prev }; delete n[d.name]; return n; });
+                        setDeptLocks(prev  => { const n = { ...prev }; delete n[d.name]; return n; });
+                      };
+                      const addSeg = () => write([...segs, {
+                        id: 'sg' + Date.now() + Math.random().toString(36).slice(2, 5),
+                        start: '', end: '', lock: 'none', groups: [],
+                      }]);
+                      const patch = (i, k, v) => write(segs.map((s, idx) => idx === i ? { ...s, [k]: v } : s));
+                      const drop = (i) => {
+                        const next = segs.filter((_, idx) => idx !== i);
+                        write(next);
+                        toast(`${d.name}：已刪除一段區間${next.length === 0 ? '，該課目前僅能查看班表' : ''}`, 'warn');
+                      };
+
                       return (
-                        <div key={d.id ?? d.name} className="flex items-center gap-3 flex-wrap">
-                          <span className="text-sm text-slate-700 w-40 shrink-0 truncate">{d.name}</span>
-                          <div className="flex gap-1">
-                            {LOCK_MODES.map(m => {
-                              const active = cur === m.key;
-                              const tone = m.key === 'none' ? 'bg-emerald-600' : m.key === 'partial' ? 'bg-amber-500' : 'bg-red-600';
+                        <div key={d.id ?? d.name} className="border border-[#DDD9D0] rounded-xl p-3 bg-white">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-700">{d.name}</span>
+                            {segs.length === 0
+                              ? <span className="text-xs text-amber-600 font-medium">尚未設定，僅能查看班表</span>
+                              : <span className="text-xs text-slate-400">{segs.length} 段區間</span>}
+                            <button onClick={addSeg}
+                              className="ml-auto px-2.5 py-1 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+                              ＋ 新增區間
+                            </button>
+                          </div>
+
+                          {segs.length === 0 && (
+                            <p className="text-xs text-slate-400">
+                              按「新增區間」設定開放排班的日期；同一課的不同組別、不同期間可各自設定鎖定模式。
+                            </p>
+                          )}
+
+                          <div className="space-y-2">
+                            {segs.map((sg, i) => {
+                              const cur = normalizeLockMode(sg.lock);
                               return (
-                                <button key={m.key}
-                                  onClick={() => {
-                                    setDeptLocks(prev => {
-                                      const next = { ...prev };
-                                      if (m.key === 'none') delete next[d.name];
-                                      else next[d.name] = m.key;
-                                      return next;
-                                    });
-                                    toast(`${d.name}：${m.label}`, m.key === 'none' ? 'info' : 'warn');
-                                  }}
-                                  title={m.desc}
-                                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors
-                                    ${active ? `${tone} text-white border-transparent` : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
-                                  {m.icon} {m.label}
-                                </button>
+                                <div key={sg.id ?? i} className="flex items-center gap-2 flex-wrap
+                                                                 border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
+                                  <input type="date" value={sg.start ?? ''} onChange={e => patch(i, 'start', e.target.value)}
+                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
+                                  <span className="text-xs text-slate-400">~</span>
+                                  <input type="date" value={sg.end ?? ''} onChange={e => patch(i, 'end', e.target.value)}
+                                    className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
+
+                                  <div className="flex gap-1">
+                                    {LOCK_MODES.map(m => {
+                                      const active = cur === m.key;
+                                      const tone = m.key === 'none' ? 'bg-emerald-600' : m.key === 'partial' ? 'bg-amber-500' : 'bg-red-600';
+                                      return (
+                                        <button key={m.key} onClick={() => patch(i, 'lock', m.key)} title={m.desc}
+                                          className={`px-2.5 py-1 text-xs rounded-lg border transition-colors
+                                            ${active ? `${tone} text-white border-transparent` : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                                          {m.icon} {m.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-xs text-slate-400">適用組別</span>
+                                    <button onClick={() => patch(i, 'groups', [])}
+                                      className={`px-2 py-1 text-xs rounded-lg border transition-colors
+                                        ${(sg.groups ?? []).length === 0
+                                          ? 'bg-slate-700 text-white border-transparent'
+                                          : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                                      全部
+                                    </button>
+                                    {groupOpts.map(g => {
+                                      const on = (sg.groups ?? []).includes(g);
+                                      return (
+                                        <button key={g}
+                                          onClick={() => patch(i, 'groups', on
+                                            ? (sg.groups ?? []).filter(x => x !== g)
+                                            : [...(sg.groups ?? []), g])}
+                                          className={`px-2 py-1 text-xs rounded-lg border transition-colors
+                                            ${on ? 'bg-blue-600 text-white border-transparent'
+                                                 : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                                          {g}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+
+                                  <button onClick={() => drop(i)}
+                                    className="ml-auto px-2 py-1 text-xs rounded-lg border border-[#DDD9D0] text-red-500 hover:bg-red-50">
+                                    刪除
+                                  </button>
+                                </div>
                               );
                             })}
                           </div>
-                          {(() => {
-                            const r = deptRanges[d.name] ?? {};
-                            const custom = !!(r.start && r.end);
-                            const set = (k, v) => setDeptRanges(prev => {
-                              const next = { ...prev, [d.name]: { ...(prev[d.name] ?? {}), [k]: v } };
-                              return next;
-                            });
-                            return (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className={`text-xs shrink-0 ${custom ? 'text-indigo-600 font-medium' : 'text-amber-600 font-medium'}`}>
-                                  {custom ? '開放區間' : '尚未設定'}
-                                </span>
-                                <input type="date" value={r.start ?? ''} onChange={e => set('start', e.target.value)}
-                                  className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
-                                <span className="text-xs text-slate-400">~</span>
-                                <input type="date" value={r.end ?? ''} onChange={e => set('end', e.target.value)}
-                                  className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-xs" />
-                                {custom && (
-                                  <button onClick={() => { setDeptRanges(prev => { const n = { ...prev }; delete n[d.name]; return n; }); toast(`${d.name}：已清除開放區間，該課將僅能查看班表`, 'warn'); }}
-                                    className="px-2 py-1 text-xs rounded-lg border border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC]">
-                                    清除
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })()}
                         </div>
                       );
                     })}
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </SettingsSection>
 
       {/* ── 開放排班國定假日 ── */}
+      {/* ── 快速解鎖密碼 ── */}
+      {isAdminUser && (<SettingsSection title="快速解鎖密碼" desc="日翊在班表被鎖定時臨時開啟編輯所需的密碼">
+        <p className="text-xs text-slate-500 mb-3">
+          課別被鎖定或日期不在開放排班區間時，班表上方會出現「🔓 快速解鎖」按鈕（<strong>僅日翊員工與管理員看得到</strong>）。
+          輸入此密碼後可暫時編輯，時間到自動恢復鎖定。
+          <br />解鎖只影響操作者當下那台電腦，不會變更任何課別的設定，委外幹部與委外人員也不受影響。
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="password" value={unlockInput} onChange={e => setUnlockInput(e.target.value)}
+            placeholder={unlockPwd ? '輸入新密碼以變更' : '設定解鎖密碼'}
+            className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-52" />
+          <button
+            onClick={async () => {
+              const v = unlockInput.trim();
+              if (v.length < 4) { toast('密碼至少 4 個字元', 'error'); return; }
+              setUnlockPwd(await hashPwd(v));
+              setUnlockInput('');
+              toast(unlockPwd ? '解鎖密碼已變更' : '解鎖密碼已設定', 'success');
+            }}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            {unlockPwd ? '變更密碼' : '設定密碼'}
+          </button>
+          {unlockPwd && (
+            <button
+              onClick={() => {
+                if (!window.confirm('清除後，班表將不再提供快速解鎖功能。確定清除？')) return;
+                setUnlockPwd('');
+                toast('已清除解鎖密碼', 'warn');
+              }}
+              className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-500 hover:bg-[#F5F2EC]">
+              清除
+            </button>
+          )}
+          <span className={`text-xs font-medium ${unlockPwd ? 'text-teal-700' : 'text-amber-600'}`}>
+            {unlockPwd ? '✅ 已設定' : '🔒 尚未設定，班表不會顯示解鎖按鈕'}
+          </span>
+        </div>
+      </SettingsSection>)}
+
       {/* ── 作業區設定 ── */}
       {isAdminUser && (<SettingsSection title="作業區設定" desc="維護可指派給人員的作業區項目">
         <p className="text-xs text-slate-500 mb-3">
@@ -10176,6 +11415,12 @@ export default function App() {
   // 各課別開放排班區間 { 課別名稱: {start,end} }；未設定＝該課尚未開放，不可排班。
   // 全域 scheduleRange 已停用（保留欄位以相容舊資料，不再影響任何判斷）
   const [deptRanges, setDeptRanges] = useState(() => LS.get('sms_dept_ranges', {}));
+  // 多段區間（每段自帶鎖定模式與適用組別）；空值時沿用上面的單一區間
+  const [deptSegments, setDeptSegments] = useState(() => LS.get('sms_dept_segments', {}));
+  // 每日需求人數：key 為「課別|組別|日期」，各課各組分別記錄
+  const [dailyDemand, setDailyDemand] = useState(() => LS.get('sms_daily_demand', {}));
+  // 快速解鎖密碼（雜湊後儲存）；供日翊在課別鎖定或區間外時臨時開啟編輯
+  const [unlockPwd, setUnlockPwd] = useState(() => LS.get('sms_unlock_pwd', ''));
   // 手機控管櫃號 { 員工id: {cab,slot} }：固定綁定人員，不隨每日出勤變動
   const [lockerAssign, setLockerAssign] = useState(() => LS.get('sms_locker_assign', {}));
   const [scheduleRange, setScheduleRange] = useState(() => LS.get('sms_range',      {}));
@@ -10320,6 +11565,9 @@ export default function App() {
           systemLocked:       LS.get('sms_locked', false),
           deptLocks:          LS.get('sms_dept_locks', {}),
           deptRanges:         LS.get('sms_dept_ranges', {}),
+          deptSegments:       LS.get('sms_dept_segments', {}),
+          dailyDemand:        LS.get('sms_daily_demand', {}),
+          unlockPwd:          LS.get('sms_unlock_pwd', ''),
           workAreas:          LS.get('sms_work_areas', SEED_WORK_AREAS),
           periodRange:        LS.get('sms_period_range', {}),
           lockerAssign:       LS.get('sms_locker_assign', {}),
@@ -10369,6 +11617,9 @@ export default function App() {
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
+          if (s.deptSegments) setDeptSegments(s.deptSegments);
+          if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+          if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
@@ -10401,6 +11652,9 @@ export default function App() {
           if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
+          if (s.deptSegments) setDeptSegments(s.deptSegments);
+          if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+          if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
@@ -10436,6 +11690,9 @@ export default function App() {
         if (state?.systemLocked   != null) setSystemLocked(state.systemLocked);
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
+        if (state?.deptSegments)           setDeptSegments(state.deptSegments);
+        if (state?.dailyDemand)            setDailyDemand(state.dailyDemand);
+        if (state?.unlockPwd !== undefined) setUnlockPwd(state.unlockPwd);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
         if (state?.lockerAssign)           setLockerAssign(state.lockerAssign);
@@ -10503,6 +11760,9 @@ export default function App() {
       if (s.systemLocked != null)    setSystemLocked(s.systemLocked);
       if (s.deptLocks)               setDeptLocks(s.deptLocks);
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
+      if (s.deptSegments) setDeptSegments(s.deptSegments);
+      if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+      if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
               if (s.lockerAssign)            setLockerAssign(s.lockerAssign);
@@ -10613,6 +11873,9 @@ export default function App() {
   useEffect(() => { LS.set('sms_locked',         systemLocked);  }, [systemLocked]);
   useEffect(() => { LS.set('sms_dept_locks',     deptLocks);     }, [deptLocks]);
   useEffect(() => { LS.set('sms_dept_ranges',    deptRanges);    }, [deptRanges]);
+  useEffect(() => { LS.set('sms_dept_segments',  deptSegments);  }, [deptSegments]);
+  useEffect(() => { LS.set('sms_daily_demand',   dailyDemand);   }, [dailyDemand]);
+  useEffect(() => { LS.set('sms_unlock_pwd',    unlockPwd);     }, [unlockPwd]);
   useEffect(() => { LS.set('sms_period_range',   periodRange);   }, [periodRange]);
   useEffect(() => { LS.set('sms_locker_assign',  lockerAssign);  }, [lockerAssign]);
   useEffect(() => { LS.set('sms_range',          scheduleRange); }, [scheduleRange]);
@@ -10639,7 +11902,7 @@ export default function App() {
   // 永遠指向最新狀態的 ref（每次 render 同步更新，供 saveNow 讀取）
   const latestStateRef = useRef({});
   latestStateRef.current = {
-    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
+    employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
     users, workerPwds,
@@ -10679,7 +11942,7 @@ export default function App() {
     const dirtySchedule = buildDirtySchedule(sentCells, scheduleRef.current);
     const clearSent = () => { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); };
     const body = JSON.stringify({
-      employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign,
+      employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
@@ -10713,7 +11976,7 @@ export default function App() {
         })
         .catch(e => console.warn('狀態同步失敗:', e.message));
     }, 2000);
-  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, periodRange, workAreas, lockerAssign, scheduleRange,
+  }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames, attendData, extras,
       shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
 
@@ -10851,6 +12114,9 @@ export default function App() {
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
+    deptSegments, setDeptSegments,
+    dailyDemand, setDailyDemand,
+    unlockPwd, setUnlockPwd,
     periodRange, setPeriodRange,
     lockerAssign, setLockerAssign,
     scheduleRange, setScheduleRange,

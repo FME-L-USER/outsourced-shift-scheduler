@@ -387,6 +387,8 @@ const DAXI_AREA_EMPLOYEES = [
 ];
 
 async function seedDaxiAreaEmployees() {
+  // 一次性資料校正：套用過就不再執行，否則每次容器啟動都會把已刪除的人員加回來
+  if (await seedAlreadyApplied('daxiAreaEmployees')) return;
   const { rows: existingUsers } = await pool.query('SELECT username FROM users');
   const existingUsernames = new Set(existingUsers.map(r => r.username));
 
@@ -451,6 +453,7 @@ async function seedDaxiAreaEmployees() {
     [JSON.stringify(merged)]
   );
   console.log(`大溪倉人員清冊：新增 ${added} 筆、更新 ${updated} 筆`);
+  await markSeedApplied('daxiAreaEmployees');
 }
 
 // ── 大溪倉員工種子資料 ────────────────────────────────────────────────────────
@@ -518,6 +521,8 @@ const DAXI_EMPLOYEES = [
 ];
 
 async function seedDaxiEmployees() {
+  // 一次性資料校正：套用過就不再執行，否則每次容器啟動都會把已刪除的人員加回來
+  if (await seedAlreadyApplied('daxiEmployees')) return;
   // 1. 批次建立 users（ON CONFLICT DO NOTHING，冪等）
   for (const e of DAXI_EMPLOYEES) {
     await pool.query(
@@ -554,6 +559,7 @@ async function seedDaxiEmployees() {
     [{ ...state, employees: merged }]
   );
   console.log(`大溪倉員工清冊：新增 ${toAdd.length} 筆`);
+  await markSeedApplied('daxiEmployees');
 }
 
 // ── 大肚倉/岡山倉 Area 員工種子資料 ──────────────────────────────────────────
@@ -607,6 +613,8 @@ const AREA_EMPLOYEES = [
 ];
 
 async function seedAreaEmployees() {
+  // 一次性資料校正：套用過就不再執行，否則每次容器啟動都會把已刪除的人員加回來
+  if (await seedAlreadyApplied('areaEmployees')) return;
   // 取得已建立帳號集合，避免重複
   const { rows: existingUsers } = await pool.query('SELECT username FROM users');
   const existingUsernames = new Set(existingUsers.map(r => r.username));
@@ -661,6 +669,7 @@ async function seedAreaEmployees() {
     [{ ...state, employees: merged }]
   );
   console.log(`大肚/岡山員工清冊：新增 ${toAdd.length} 筆`);
+  await markSeedApplied('areaEmployees');
 }
 
 // ── EIP AD 驗證 ───────────────────────────────────────────
@@ -907,6 +916,8 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     systemLocked: data.systemLocked ?? false,
     deptLocks:    data.deptLocks ?? {},
     deptRanges:   data.deptRanges ?? {},
+    deptSegments: data.deptSegments ?? {},
+    dailyDemand:  data.dailyDemand ?? {},
     // 每期日期區間：委外幹部／人員的班表也要依同一週期分頁，
     // 未回傳時他們會退回「以月份檢視」，看到的期間與日翊端對不上。
     periodRange:  data.periodRange ?? null,
@@ -953,24 +964,31 @@ app.put('/api/state', requireAuth, async (req, res) => {
       const mergedSchedule = { ...curSchedule };
       // 課別鎖定與開放排班區間：原本只在前端把關，已登入的委外人員／幹部在管理員
       // 改為鎖定後，未重新整理前仍可繼續排班並成功寫入。改由伺服器最終認定。
-      const deptLocks  = curData.deptLocks  ?? {};
-      const deptRanges = curData.deptRanges ?? {};
+      const deptLocks    = curData.deptLocks    ?? {};
+      const deptRanges   = curData.deptRanges   ?? {};
+      const deptSegments = curData.deptSegments ?? {};
       const empById = new Map(employees.map(e => [e.id, e]));
       const lockMode = v => (v === true ? 'full' : (v === false || v == null) ? 'none' : v);
-      // 委外身分可否編輯該課：完全鎖定與鎖定委外都不行
-      const deptEditable = dept => {
-        const m = lockMode(deptLocks[dept]);
-        return m !== 'full' && m !== 'partial';
-      };
-      // 日期是否落在該課的開放排班區間內（未設定區間＝尚未開放）
-      const dkInRange = (dept, dk) => {
+      // 一個課別可有多段區間，每段各自帶鎖定模式與適用組別；
+      // 沒有新格式時，由舊的單一區間推導成「一段、適用全部組別」。
+      const segsOf = dept => {
+        if (!dept) return [];
+        const segs = deptSegments[dept];
+        if (Array.isArray(segs) && segs.length > 0) return segs;
         const r = deptRanges[dept];
-        if (!r?.start || !r?.end) return false;
-        const [y, m, d] = dk.split('-').map(Number);
-        const t = new Date(y, m - 1, d).getTime();
-        const p = s => { const [a, b, c] = s.split('-').map(Number); return new Date(a, b - 1, c).getTime(); };
-        return t >= p(r.start) && t <= p(r.end);
+        if (r?.start && r?.end) return [{ start: r.start, end: r.end, lock: lockMode(deptLocks[dept]), groups: [] }];
+        return [];
       };
+      const toTs = str => { const [a, b, c] = String(str).split('-').map(Number); return new Date(a, b - 1, c).getTime(); };
+      // 委外身分可否編輯：需有任一段同時符合組別、日期，且該段未鎖定委外
+      const cellAllowed = (emp, dk) => segsOf(emp?.dept).some(sg => {
+        if (sg.groups?.length && !sg.groups.includes(emp?.group)) return false;
+        if (!sg.start || !sg.end) return false;
+        const t = toTs(dk);
+        if (t < toTs(sg.start) || t > toTs(sg.end)) return false;
+        const m = lockMode(sg.lock);
+        return m !== 'full' && m !== 'partial';
+      });
 
       const skipped = [];
       let lockedCells = 0;
@@ -979,11 +997,10 @@ app.put('/api/state', requireAuth, async (req, res) => {
         // 被擋下的筆數要回報，否則權限或廠商設定有誤時，會變成「按了沒反應也沒錯誤」。
         if (!allowedIds.has(empId)) { skipped.push(empId); continue; }
         if (!days || Object.keys(days).length === 0) continue;
-        const dept = empById.get(empId)?.dept;
-        if (!deptEditable(dept)) { lockedCells += Object.keys(days).length; continue; }
+        const emp = empById.get(empId);
         const accepted = {};
         for (const [dk, v] of Object.entries(days)) {
-          if (dkInRange(dept, dk)) accepted[dk] = v;
+          if (cellAllowed(emp, dk)) accepted[dk] = v;
           else lockedCells++;
         }
         if (Object.keys(accepted).length > 0)
@@ -1021,6 +1038,7 @@ app.put('/api/state', requireAuth, async (req, res) => {
     delete rest.vendorRestOpen;     // 委外幹部排休開關
     delete rest.workerRestOpen;     // 委外人員排休開關
     delete rest.vendorCompanyNames; // 廠商公司抬頭
+    delete rest.unlockPwd;          // 快速解鎖密碼（僅管理員可設定）
     delete rest.vendors;            // 廠商主檔
   }
   // 空的 schedule 一律移除，絕對不可寫入。
@@ -1036,7 +1054,7 @@ app.put('/api/state', requireAuth, async (req, res) => {
       (rest.workerPwds && Object.keys(rest.workerPwds).length >= 0) ||
       (Array.isArray(rest.employees) && rest.employees.length > 0) ||
       (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
-      rest.deptLocks || rest.deptRanges) {
+      rest.deptLocks || rest.deptRanges || rest.deptSegments) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1067,14 +1085,14 @@ app.put('/api/state', requireAuth, async (req, res) => {
       // 自己倉別的課，送出的快照卻是整份 —— 大溪的日翊存檔就會把大肚剛設好的區間洗掉。
       // 作法：只採用「來源可管轄倉別」底下課別的 key（含該範圍內的刪除，維持「清除」語意），
       // 其餘 key 一律沿用伺服器現值。admin 可管轄全部倉別，行為不變。
-      if (role === 'area' && (rest.deptLocks || rest.deptRanges)) {
+      if (role === 'area' && (rest.deptLocks || rest.deptRanges || rest.deptSegments)) {
         const allowedWh = new Set(req.user?.allowed_warehouses ?? []);
         const scopedDepts = new Set();
         for (const w of (cur.warehouses ?? [])) {
           if (!allowedWh.has(w.id)) continue;
           for (const d of (w.departments ?? [])) scopedDepts.add(d.name);
         }
-        for (const key of ['deptLocks', 'deptRanges']) {
+        for (const key of ['deptLocks', 'deptRanges', 'deptSegments']) {
           if (!rest[key]) continue;
           const merged = {};
           // 管轄範圍外：一律以伺服器現值為準
@@ -1091,12 +1109,45 @@ app.put('/api/state', requireAuth, async (req, res) => {
       // 會被尚未同步到該設定的舊快照洗掉。
       // 作法：以送出的清單為準（保留刪除語意），但同一筆人員中「現值有、來源沒有」
       // 的欄位予以保留；來源明確帶值的欄位仍會覆蓋，故正常編輯不受影響。
+      //
+      // 刪除語意另外需要「墓碑」保護：人員清冊是整份名單送出的，A 刪掉某人後，
+      // 另一台還開著舊名單的瀏覽器只要存檔一次就會把人加回來。故在此記錄已刪除的
+      // 內部 id，往後任何名單再帶著它都直接濾掉。
+      // 重新新增或重新匯入同一位員工時會產生新的 id，不受墓碑影響。
       if (Array.isArray(rest.employees) && rest.employees.length > 0) {
-        const curById = new Map((cur.employees ?? []).map(e => [e.id, e]));
-        rest.employees = rest.employees.map(e => {
-          const prev = curById.get(e.id);
-          return prev ? { ...prev, ...e } : e;
-        });
+        const curEmps = cur.employees ?? [];
+        const curById = new Map(curEmps.map(e => [e.id, e]));
+        const incomingIds = new Set(rest.employees.map(e => e.id));
+        const tomb = { ...(cur._deletedEmployees ?? {}) };
+        const now = Date.now();
+
+        // 這次沒送出、但資料庫現有的人 → 視為刪除
+        const removed = curEmps.filter(e => !incomingIds.has(e.id)).map(e => e.id);
+        // 安全閥：一次少掉太多人多半是名單載入不全，不當成刪除（避免整批誤刪）
+        const MAX_DELETE_PER_SAVE = 30;
+        if (removed.length > MAX_DELETE_PER_SAVE) {
+          console.warn(`PUT /api/state 一次移除 ${removed.length} 位人員，超過上限 ${MAX_DELETE_PER_SAVE}，` +
+                       `視為名單不完整，保留現有資料（user=${req.user?.username}）`);
+          const keep = curEmps.filter(e => !incomingIds.has(e.id));
+          rest.employees = [...rest.employees, ...keep];
+        } else {
+          for (const id of removed) tomb[id] = now;
+          if (removed.length > 0)
+            console.log(`PUT /api/state 移除 ${removed.length} 位人員並記錄墓碑（user=${req.user?.username}）`);
+        }
+
+        // 墓碑保留 90 天後清除，避免無限成長
+        const cutoff = now - 90 * 86400000;
+        for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
+
+        const blocked = rest.employees.filter(e => tomb[e.id]).length;
+        if (blocked > 0)
+          console.warn(`PUT /api/state 擋下 ${blocked} 位已刪除人員的復活（user=${req.user?.username}）`);
+
+        rest.employees = rest.employees
+          .filter(e => !tomb[e.id])
+          .map(e => { const prev = curById.get(e.id); return prev ? { ...prev, ...e } : e; });
+        rest._deletedEmployees = tomb;
       }
     } catch (e) {
       console.error('PUT /api/state merge 讀取失敗:', e.message);
