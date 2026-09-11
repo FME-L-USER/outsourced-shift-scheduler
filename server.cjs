@@ -117,6 +117,30 @@ async function initDB() {
     )
   `);
 
+  // 每次容器啟動（＝每次部署）先把當下的 app_state 原封不動另存一份快照。
+  // 部署是資料最容易出事的時間點，有了時間戳快照就能指定時間點還原，
+  // 不必再靠匯出的 Excel 回補。只保留最近 30 份，避免無限成長。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_state_backup (
+      id         SERIAL      PRIMARY KEY,
+      data       JSONB       NOT NULL,
+      note       TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  try {
+    const { rows: snap } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    if (snap[0]?.data) {
+      await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
+        [snap[0].data, '啟動備份 ' + new Date().toISOString()]);
+      await pool.query(`DELETE FROM app_state_backup WHERE id NOT IN
+        (SELECT id FROM app_state_backup ORDER BY created_at DESC LIMIT 30)`);
+      console.log('啟動備份完成：app_state 已另存快照');
+    }
+  } catch (e) {
+    console.error('啟動備份失敗（不影響服務啟動）:', e.message);
+  }
+
   // 確保 reyi 帳號存在（本地帳號，密碼由 ADMIN_INITIAL_PASSWORD 控制）
   const { rowCount } = await pool.query('SELECT id FROM users WHERE username = $1', ['reyi']);
   if (rowCount === 0) {
@@ -1150,7 +1174,14 @@ app.put('/api/state', requireAuth, async (req, res) => {
         rest._deletedEmployees = tomb;
       }
     } catch (e) {
-      console.error('PUT /api/state merge 讀取失敗:', e.message);
+      // 絕對不可以吞掉後繼續寫入。底下的寫入是 `data = 舊資料 || 新資料`，
+      // jsonb 的 || 是「整個 key 直接取代」，少了上面的合併就會變成：
+      //   workerPwds → 被送上來的（可能是空的）快照整份取代 → 委外密碼全部消失
+      //   schedule   → 被「只含本次異動格子」那包整份取代 → 班表倒退
+      // 讀取最容易失敗的時機正是部署當下（新容器冷啟動、DB 連線池未暖），
+      // 故改為直接回 503，讓前端保留未存檔內容並稍後重試。
+      console.error('PUT /api/state merge 讀取失敗，放棄本次寫入以免覆蓋:', e.message);
+      return res.status(503).json({ error: 'db_unavailable' });
     }
   }
   try {
