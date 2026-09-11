@@ -859,7 +859,13 @@ function ForcePwdChange({ user, onDone }) {
     if (form.pwd !== form.confirm)          { setErr('兩次密碼不一致'); return; }
     setBusy(true);
     const hashed = await hashPwd(form.pwd);
-    onDone({ ...user, password: hashed, mustChangePassword: false });
+    // 必須等 onDone 回報伺服器是否真的收到。以前不等結果就放行，寫入失敗時
+    // 密碼只留在本機，畫面卻顯示成功，之後新密碼一律「密碼錯誤」，只有員編能登入。
+    const ok = await onDone({ ...user, password: hashed, mustChangePassword: false });
+    if (ok === false) {
+      setBusy(false);
+      setErr('密碼未能儲存到伺服器，請確認網路後再試一次（尚未生效，請勿關閉本頁）');
+    }
   };
 
   return (
@@ -12189,19 +12195,27 @@ export default function App() {
     const isWorker = currentUser.role === ROLES.WORKER;
     return (
       <ToastProvider>
-        <ForcePwdChange user={currentUser} onDone={updated => {
+        <ForcePwdChange user={currentUser} onDone={async updated => {
           if (isWorker) {
-            // worker 密碼存入 sms_worker_pwds，不進 users
-            setWorkerPwds(prev => ({ ...prev, [updated.empId]: updated.password }));
-            // 同時寫入伺服器，避免只存在本機（Teams 等內嵌瀏覽器可能不保留本機資料）
+            // 委外人員的密碼只認伺服器上的那份（登入一律由伺服器驗證），
+            // 所以必須先確認伺服器收到，才能放行並寫入本機。
+            // 原本是送出後不看結果，失敗時密碼只留在本機、畫面卻顯示成功，
+            // 之後新密碼一律「密碼錯誤」，只有員編能登入。
             const token = localStorage.getItem(JWT_KEY);
-            if (token) {
-              fetch('/api/auth/worker-password', {
+            if (!token) return false;
+            try {
+              const r = await fetch('/api/auth/worker-password', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({ passwordHash: updated.password }),
-              }).catch(() => {});
+              });
+              if (!r.ok) { console.warn('委外密碼寫入伺服器失敗 HTTP', r.status); return false; }
+            } catch (e) {
+              console.warn('委外密碼寫入伺服器失敗:', e.message);
+              return false;
             }
+            // 伺服器已收到，再存一份到本機供離線備援
+            setWorkerPwds(prev => ({ ...prev, [updated.empId]: updated.password }));
           } else {
             setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
             // 廠商帳號以資料庫的 password_hash 驗證登入，只改本機會使新密碼無效
