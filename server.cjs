@@ -169,6 +169,31 @@ async function initDB() {
 // 這些 seed 是為了「一次性校正既有資料」而寫，不是每次啟動都該套用的設定。
 // 若每次啟動都覆寫，管理員在畫面上做的調整（例如把運務組拆成日/中/夜班）
 // 會在下次容器重啟時被打回原狀。故套用後記錄標記，之後一律跳過。
+// ── 班表逐格寫入（交由資料庫合併）────────────────────────────────
+// 不可以「讀出整份班表 → 在記憶體疊上異動 → 整份寫回」：兩人同時存檔時，
+// 後寫的人用的是他讀取當下的舊版本，會把這中間別人存進去的格子抹掉。
+// 各端每 2 秒自動存檔一次，多人同時排班撞上的機率很高，症狀是零星的
+// 「排好了過一下又不見」。改為每位員工一句 UPDATE，由資料庫在同一個
+// 敘述內完成合併，不存在讀取與寫入之間的時間差。
+async function mergeScheduleCells(sched) {
+  // 整份 schedule 不存在時，jsonb_set 到 {schedule,<empId>} 不會生效，先補空物件
+  await pool.query(
+    `UPDATE app_state SET data = jsonb_set(data, '{schedule}', COALESCE(data->'schedule', '{}'::jsonb))
+      WHERE id='main'`
+  );
+  for (const [empId, days] of Object.entries(sched ?? {})) {
+    if (!days || Object.keys(days).length === 0) continue;
+    await pool.query(
+      `UPDATE app_state
+          SET data = jsonb_set(data, ARRAY['schedule', $1],
+                COALESCE(data->'schedule'->$1, '{}'::jsonb) || $2::jsonb),
+              updated_at = NOW()
+        WHERE id='main'`,
+      [String(empId), JSON.stringify(days)]
+    );
+  }
+}
+
 async function seedAlreadyApplied(key) {
   const { rows } = await pool.query("SELECT data->'_seedApplied'->>$1 AS v FROM app_state WHERE id='main'", [key]);
   return rows[0]?.v === 'true';
@@ -983,9 +1008,9 @@ app.put('/api/state', requireAuth, async (req, res) => {
         allowedIds = new Set([req.user.employeeId]);
       }
 
-      // 逐員工、逐日 merge（避免整包快照覆蓋其他人剛存入的異動，造成資料遺失）
-      const curSchedule = curData.schedule ?? {};
-      const mergedSchedule = { ...curSchedule };
+      // 逐員工、逐日 merge（避免整包快照覆蓋其他人剛存入的異動，造成資料遺失）。
+      // 實際寫入交給 mergeScheduleCells 由資料庫合併，這裡只負責挑出可接受的格子。
+      const acceptedByEmp = {};
       // 課別鎖定與開放排班區間：原本只在前端把關，已登入的委外人員／幹部在管理員
       // 改為鎖定後，未重新整理前仍可繼續排班並成功寫入。改由伺服器最終認定。
       const deptLocks    = curData.deptLocks    ?? {};
@@ -1027,21 +1052,14 @@ app.put('/api/state', requireAuth, async (req, res) => {
           if (cellAllowed(emp, dk)) accepted[dk] = v;
           else lockedCells++;
         }
-        if (Object.keys(accepted).length > 0)
-          mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...accepted };
+        if (Object.keys(accepted).length > 0) acceptedByEmp[empId] = accepted;
       }
       if (lockedCells > 0)
         console.warn(`PUT /api/state 鎖定/區間外拒絕：user=${req.user?.username} role=${role} 拒絕 ${lockedCells} 格`);
       if (skipped.length > 0)
         console.warn(`PUT /api/state 越權過濾：user=${req.user?.username} role=${role} 略過 ${skipped.length} 位人員`);
 
-      await pool.query(
-        `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
-         ON CONFLICT (id) DO UPDATE
-           SET data = jsonb_set(app_state.data, '{schedule}', $1::jsonb->'schedule'),
-               updated_at = NOW()`,
-        [JSON.stringify({ schedule: mergedSchedule })]
-      );
+      await mergeScheduleCells(acceptedByEmp);
       return res.json({ ok: true, skipped: skipped.length, locked: lockedCells });
     } catch (e) {
       console.error('PUT /api/state (vendor/worker) DB error:', e.message);
@@ -1083,13 +1101,10 @@ app.put('/api/state', requireAuth, async (req, res) => {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
       if (rest.schedule && Object.keys(rest.schedule).length > 0) {
-        const curSchedule = cur.schedule ?? {};
-        const mergedSchedule = { ...curSchedule };
-        for (const [empId, days] of Object.entries(rest.schedule)) {
-          if (days && Object.keys(days).length > 0)
-            mergedSchedule[empId] = { ...(curSchedule[empId] ?? {}), ...days };
-        }
-        rest.schedule = mergedSchedule;
+        // 由資料庫逐格合併後，班表就不再隨這次的整包寫入送出，
+        // 避免讀取與寫入之間別人剛存的格子被蓋掉（見 mergeScheduleCells）
+        await mergeScheduleCells(rest.schedule);
+        delete rest.schedule;
       }
       if (rest.workerPwds) {
         // 伺服器現值優先：本人剛設定的密碼不可被他人的舊快照覆蓋

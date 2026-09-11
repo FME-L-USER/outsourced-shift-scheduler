@@ -2768,7 +2768,8 @@ function UnlockDialog({ hasPwd, onVerify, onOk, onClose }) {
 
   return (
     <Modal onClose={onClose}>
-      <div className="p-5 w-[340px]">
+      {/* 需自備不透明底色：Modal 只提供半透明遮罩，少了這層會直接透出底下的班表 */}
+      <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[340px]">
         <h3 className="font-bold text-slate-800 mb-1">🔓 快速解鎖</h3>
         <p className="text-xs text-slate-500 mb-4">
           解鎖後可暫時編輯此課別的班表，不受鎖定與開放排班區間限制。
@@ -11924,9 +11925,18 @@ export default function App() {
         const d = buildDirtySchedule(sentCells, scheduleRef.current);
         return Object.keys(d).length > 0 ? { ...rest, schedule: d } : rest;
       })()),
-    }).then(r => {
+    }).then(async r => {
       if (r.ok) { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); }
       if (onDone) onDone(r.ok);
+      if (!r.ok) return;
+      // 與自動存檔一致：伺服器擋下的格子要出聲，否則會變成「按了沒反應也沒錯誤」
+      const j = await r.json().catch(() => null);
+      if (j?.skipped > 0)
+        globalToast?.(`有 ${j.skipped} 位人員的班表未儲存（權限或廠商歸屬不符）`, 'error');
+      if (j?.locked > 0) {
+        globalToast?.('該課別已鎖定或不在開放排班區間，剛才的異動未儲存。', 'error');
+        syncFromServerBackground();
+      }
     }).catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
   }, []); // 不需任何 deps，永遠讀最新 ref
 
@@ -11966,7 +11976,8 @@ export default function App() {
           if (!r.ok) { console.warn('自動存檔失敗 HTTP', r.status); return; }
           // 伺服器因權限／廠商歸屬過濾掉部分人員時要出聲，不能靜靜地當作存檔成功
           const j = await r.json().catch(() => null);
-          if (j?.skipped > 0) console.warn(`存檔時有 ${j.skipped} 位人員的班表被伺服器過濾（權限或廠商歸屬不符）`);
+          if (j?.skipped > 0)
+            globalToast?.(`有 ${j.skipped} 位人員的班表未儲存（權限或廠商歸屬不符）`, 'error');
           // 課別在本機畫面開著的期間被改為鎖定／區間關閉時，伺服器會拒收；
           // 必須讓使用者知道剛才排的沒有存進去，並立即抓回最新設定收合畫面。
           if (j?.locked > 0) {
