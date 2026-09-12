@@ -1863,6 +1863,7 @@ function HealthDrawer() {
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState(() => new Set());   // 勾選要合併的員編
   const [pickedOrphans, setPickedOrphans] = useState(() => new Set());   // 勾選要歸戶的孤兒資料列
+  const [showIgnored, setShowIgnored] = useState(false);   // 是否顯示已略過的項目
   const isAdmin = currentUser?.role === ROLES.ADMIN;
 
   const [err, setErr] = useState('');
@@ -1920,7 +1921,8 @@ function HealthDrawer() {
     return () => window.removeEventListener('keydown', esc);
   }, [open]);
 
-  const chosen = (report?.duplicates ?? []).filter(d => picked.has(d.key));
+  const dupList = (report?.duplicates ?? []).filter(d => showIgnored ? d.ignored : !d.ignored);
+  const chosen = dupList.filter(d => picked.has(d.key));
 
   const merge = async () => {
     if (chosen.length === 0) return;
@@ -1945,7 +1947,9 @@ function HealthDrawer() {
     }
   };
 
-  const orphanList = (report?.orphans ?? []).filter(o => o.matched && o.restore > 0);
+  const orphanList = (report?.orphans ?? [])
+    .filter(o => o.matched && o.restore > 0)
+    .filter(o => showIgnored ? o.ignored : !o.ignored);
   const chosenOrphans = orphanList.filter(o => pickedOrphans.has(o.id));
 
   const adopt = async () => {
@@ -1965,6 +1969,21 @@ function HealthDrawer() {
     } finally { setBusy(false); }
     if (d?.ok) {
       toast(`歸戶完成：救回 ${d.merged} 格、清除 ${d.removed} 列失聯資料`, 'success');
+      check();
+    }
+  };
+
+  const setIgnore = async (undo) => {
+    const dupKeys   = [...picked];
+    const orphanIds = [...pickedOrphans];
+    if (dupKeys.length === 0 && orphanIds.length === 0) return;
+    setBusy(true);
+    setErr('');
+    let d = null;
+    try { d = await call('/api/maintenance/ignore', 'POST', { dupKeys, orphanIds, undo }); }
+    finally { setBusy(false); }
+    if (d?.ok) {
+      toast(undo ? '已取消略過' : '已略過，之後不再顯示', 'success');
       check();
     }
   };
@@ -1999,13 +2018,13 @@ function HealthDrawer() {
               className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
               {busy ? '處理中…' : '重新健檢'}
             </button>
-            {report && report.duplicates.length > 0 && (
+            {report && dupList.length > 0 && (
               <>
                 <button onClick={merge} disabled={busy || chosen.length === 0}
                   className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
                   合併勾選的 {chosen.length} 位
                 </button>
-                <button onClick={() => setPicked(new Set(report.duplicates.map(d => d.key)))}
+                <button onClick={() => setPicked(new Set(dupList.map(d => d.key)))}
                   className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
                   全選
                 </button>
@@ -2016,6 +2035,21 @@ function HealthDrawer() {
                   </button>
                 )}
               </>
+            )}
+            {report && (chosen.length > 0 || chosenOrphans.length > 0) && (
+              <button onClick={() => setIgnore(showIgnored)} disabled={busy}
+                title={showIgnored ? '讓這些項目重新出現在清單中' : '確認過不需處理，之後健檢不再顯示'}
+                className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
+                {showIgnored
+                  ? `取消略過 ${chosen.length + chosenOrphans.length} 項`
+                  : `略過 ${chosen.length + chosenOrphans.length} 項（不再顯示）`}
+              </button>
+            )}
+            {report && ((report.ignoredCount ?? 0) > 0 || showIgnored) && (
+              <button onClick={() => { setShowIgnored(v => !v); setPicked(new Set()); setPickedOrphans(new Set()); }}
+                className="px-3 py-1.5 text-sm text-slate-500 underline hover:text-slate-700">
+                {showIgnored ? '← 回到待處理清單' : `檢視已略過（${report.ignoredCount}）`}
+              </button>
             )}
           </div>
 
@@ -2045,11 +2079,13 @@ function HealthDrawer() {
                 ))}
               </div>
 
-              {report.duplicates.length === 0 && report.orphans.length === 0 && (
-                <p className="text-teal-700">✅ 未發現重複或孤兒資料。</p>
+              {dupList.length === 0 && orphanList.length === 0 && (
+                <p className="text-teal-700">
+                  {showIgnored ? '沒有已略過的項目。' : '✅ 沒有需要處理的項目。'}
+                </p>
               )}
 
-              {report.duplicates.length > 0 && (
+              {dupList.length > 0 && (
                 <div>
                   <h4 className="font-bold text-slate-700 mb-1">重複的人員記錄</h4>
                   <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
@@ -2069,7 +2105,7 @@ function HealthDrawer() {
                       </tr>
                     </thead>
                     <tbody>
-                      {report.duplicates.map(d => {
+                      {dupList.map(d => {
                         // 同一組員編底下姓名不一致，極可能是員編打錯或號碼重複配發，
                         // 合併會把兩個不同的人混在一起，故特別標示出來。
                         const nameMismatch = d.drops.some(x => (x.name ?? '') !== (d.name ?? ''));

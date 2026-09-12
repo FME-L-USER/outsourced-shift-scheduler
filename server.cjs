@@ -1146,6 +1146,9 @@ async function buildHealthReport() {
   const employees = data.employees ?? [];
   const schedule  = data.schedule  ?? {};
   const cellCount = id => Object.keys(schedule[id] ?? {}).length;
+  // 使用者標記為「略過」的項目：確認過不需處理，之後不再列出，
+  // 但仍保留在資料中，可隨時取消略過。
+  const ignored = data._healthIgnored ?? { dup: {}, orphan: {} };
 
   // 依正規化員編分群，找出重複
   const byKey = new Map();
@@ -1176,6 +1179,7 @@ async function buildHealthReport() {
     }
     duplicates.push({
       empNo: keep.empId, name: keep.name, key,
+      ignored: !!ignored.dup?.[key],
       keep:  { id: keep.id, cells: cellCount(keep.id) },
       drops: drops.map(d => ({ id: d.id, name: d.name, empId: d.empId, cells: cellCount(d.id) })),
       restoreCount: restore.length,
@@ -1235,6 +1239,7 @@ async function buildHealthReport() {
     }
     return {
       id, cells: dks.length, nonV: nonVdks.length,
+      ignored: !!ignored.orphan?.[id],
       sample: nonVdks.slice(0, 8),
       empNo: found?.empId ?? null,
       name:  found?.name ?? null,
@@ -1251,8 +1256,10 @@ async function buildHealthReport() {
     // 可救回多的排前面，方便使用者優先處理真正有資料可救的
     duplicates: duplicates.sort((a, b) => b.restoreCount - a.restoreCount),
     orphans: orphans.sort((a, b) => b.restore - a.restore),
-    totalRestore: duplicates.reduce((a, d) => a + d.restoreCount, 0),
-    orphanRestore: orphans.reduce((a, o) => a + o.restore, 0),
+    // 統計只計入未略過的項目，數字才反映「還需要處理的量」
+    totalRestore:  duplicates.filter(d => !d.ignored).reduce((a, d) => a + d.restoreCount, 0),
+    orphanRestore: orphans.filter(o => !o.ignored).reduce((a, o) => a + o.restore, 0),
+    ignoredCount:  duplicates.filter(d => d.ignored).length + orphans.filter(o => o.ignored).length,
   };
 }
 
@@ -1394,6 +1401,33 @@ app.post('/api/maintenance/adopt-orphans', requireAuth, requireAdmin, async (req
     res.json({ ok: true, merged, removed });
   } catch (e) {
     console.error('adopt orphans error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 略過／取消略過健檢項目。只記錄「不用再看」，不異動任何班表或清冊資料。
+app.post('/api/maintenance/ignore', requireAuth, requireAdmin, async (req, res) => {
+  const dupKeys   = Array.isArray(req.body?.dupKeys)   ? req.body.dupKeys.map(k => normEmpKey(k)) : [];
+  const orphanIds = Array.isArray(req.body?.orphanIds) ? req.body.orphanIds.map(String) : [];
+  const undo = !!req.body?.undo;
+  if (dupKeys.length === 0 && orphanIds.length === 0)
+    return res.status(400).json({ error: '請先選擇項目' });
+  try {
+    const { rows } = await pool.query("SELECT data->'_healthIgnored' AS ig FROM app_state WHERE id='main'");
+    const ig = rows[0]?.ig ?? {};
+    const dup    = { ...(ig.dup ?? {}) };
+    const orphan = { ...(ig.orphan ?? {}) };
+    const now = Date.now();
+    for (const k of dupKeys)   { if (undo) delete dup[k];    else dup[k] = now; }
+    for (const id of orphanIds){ if (undo) delete orphan[id]; else orphan[id] = now; }
+    await pool.query(
+      `UPDATE app_state SET data = jsonb_set(data, '{_healthIgnored}', $1::jsonb), updated_at = NOW()
+        WHERE id='main'`,
+      [JSON.stringify({ dup, orphan })]
+    );
+    res.json({ ok: true, ignored: Object.keys(dup).length + Object.keys(orphan).length });
+  } catch (e) {
+    console.error('ignore error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
   }
 });
