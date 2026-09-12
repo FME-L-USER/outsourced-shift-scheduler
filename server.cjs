@@ -1712,14 +1712,19 @@ app.post('/api/auth/worker-login', async (req, res) => {
     const data = rows[0]?.data ?? {};
     const employees  = data.employees  ?? [];
 
-    const emp = employees.find(e => String(e.empId ?? '').trim() === String(empId).trim());
+    // 員編一律以「去空白＋大寫」比對。清冊的員編大小寫可能與員工輸入的不一致
+    // （匯入時保留檔案原樣，不擅自改寫資料），若登入區分大小寫，帳密就是員編的
+    // 情況下會直接登入不了。
+    const normEmp = v => String(v ?? '').trim().toUpperCase();
+    const inputKey = normEmp(empId);
+    const emp = employees.find(e => normEmp(e.empId) === inputKey);
     if (!emp) return res.status(401).json({ error: '員工編號不存在' });
 
     // 依日翊決定：委外人員一律「帳號＝密碼＝員工編號」，不再自訂密碼。
     // 現場多為輪替人力與共用裝置，自訂密碼造成大量忘記密碼與登入不了的狀況；
     // 委外端只看得到自己的班表，故接受此風險。app_state.workerPwds 不再參與驗證。
     const pwdKey = String(emp.empId ?? '').trim();
-    if (String(password).trim() !== pwdKey) {
+    if (normEmp(password) !== normEmp(pwdKey)) {
       console.warn(`worker-login 失敗：empId=${pwdKey} 密碼與員編不符`);
       return res.status(401).json({ error: '密碼錯誤' });
     }
