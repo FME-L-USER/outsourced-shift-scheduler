@@ -1313,6 +1313,14 @@ app.put('/api/state', requireAuth, async (req, res) => {
         if (Array.isArray(rest[k]) && rest[k].length === 0 && Array.isArray(cur[k]) && cur[k].length > 0)
           delete rest[k];
       }
+
+      // 期別區間、顯示區間是全系統唯一的設定，沒有可供合併的「筆」，
+      // 只需防止尚未載入完成的裝置用空值把既有設定清掉。
+      for (const k of ['periodRange', 'scheduleRange']) {
+        const v = rest[k];
+        const empty = v == null || (typeof v === 'object' && Object.keys(v).length === 0);
+        if (empty && cur[k] != null) delete rest[k];
+      }
     } catch (e) {
       // 絕對不可以吞掉後繼續寫入。底下的寫入是 `data = 舊資料 || 新資料`，
       // jsonb 的 || 是「整個 key 直接取代」，少了上面的合併就會變成：
