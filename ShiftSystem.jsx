@@ -1851,6 +1851,118 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 // WAREHOUSE / DEPT SELECTOR BAR
 // ─────────────────────────────────────────────
 
+/** 資料健檢與合併面板：先檢查、確認後才合併 */
+function DataHealthPanel() {
+  const { toast } = useToast();
+  const [report, setReport] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const call = async (path, method = 'GET') => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return null;
+    const r = await fetch(path, { method, headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) { toast('執行失敗，請稍後再試', 'error'); return null; }
+    return r.json();
+  };
+
+  const check = async () => {
+    setBusy(true);
+    const d = await call('/api/maintenance/health');
+    setBusy(false);
+    if (d?.report) { setReport(d.report); toast('健檢完成', 'success'); }
+  };
+
+  const merge = async () => {
+    if (!report) return;
+    if (!window.confirm(
+      `將把 ${report.duplicates.length} 位人員的重複記錄合併：
+` +
+      `． 救回 ${report.totalRestore} 格被洗掉的休／例／國
+` +
+      `． 移除 ${report.duplicates.reduce((a, d) => a + d.drops.length, 0)} 筆重複的清冊記錄
+
+` +
+      `執行前會自動備份，且不會覆蓋現有的排班。確定執行？`)) return;
+    setBusy(true);
+    const d = await call('/api/maintenance/merge-duplicates', 'POST');
+    setBusy(false);
+    if (d?.ok) {
+      toast(`合併完成：救回 ${d.merged} 格、移除 ${d.removed} 筆重複記錄`, 'success');
+      check();
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <button onClick={check} disabled={busy}
+          className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
+          {busy ? '處理中…' : '開始健檢'}
+        </button>
+        {report && report.duplicates.length > 0 && (
+          <button onClick={merge} disabled={busy}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+            執行合併
+          </button>
+        )}
+      </div>
+
+      {report && (
+        <div className="text-xs text-slate-600 space-y-3">
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            <span>清冊人數：<b>{report.employees}</b></span>
+            <span>班表資料列：<b>{report.scheduleRows}</b></span>
+            <span>重複人員：<b className={report.duplicates.length ? 'text-red-600' : 'text-teal-700'}>{report.duplicates.length}</b></span>
+            <span>可救回格數：<b className={report.totalRestore ? 'text-red-600' : 'text-teal-700'}>{report.totalRestore}</b></span>
+            <span>孤兒資料列：<b className={report.orphans.length ? 'text-amber-600' : 'text-teal-700'}>{report.orphans.length}</b></span>
+          </div>
+
+          {report.duplicates.length === 0 && report.orphans.length === 0 && (
+            <p className="text-teal-700">✅ 未發現重複或孤兒資料。</p>
+          )}
+
+          {report.duplicates.length > 0 && (
+            <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-[#F5F2EC] text-slate-500">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left">員工編號</th>
+                    <th className="px-2 py-1.5 text-left">姓名</th>
+                    <th className="px-2 py-1.5 text-right">重複筆數</th>
+                    <th className="px-2 py-1.5 text-right">可救回格數</th>
+                    <th className="px-2 py-1.5 text-left">範例（日期：舊值）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.duplicates.map(d => (
+                    <tr key={d.key} className="border-t border-[#EFEBE3]">
+                      <td className="px-2 py-1.5 font-mono">{d.empNo}</td>
+                      <td className="px-2 py-1.5">{d.name}</td>
+                      <td className="px-2 py-1.5 text-right">{d.drops.length}</td>
+                      <td className="px-2 py-1.5 text-right font-semibold text-red-600">{d.restoreCount}</td>
+                      <td className="px-2 py-1.5 text-slate-500">
+                        {d.restoreSample.map(x => `${x.dk}:${x.after}`).join('、') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {report.orphans.length > 0 && (
+            <p className="text-amber-700">
+              另有 <b>{report.orphans.length}</b> 列班表資料在清冊中已無對應人員（共
+              {report.orphans.reduce((a, o) => a + o.nonV, 0)} 格非 V 的內容）。
+              這些資料無法判斷歸屬，工具不會自動處理，需要時請提供給維護人員人工比對。
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 每日快照狀態：讓多機使用的主管一眼看到資料已備份到哪個時間點 */
 function SnapshotBadge() {
   const { currentUser } = useApp();
@@ -8768,6 +8880,16 @@ function Settings() {
             {unlockPwd ? '✅ 已設定' : '🔒 尚未設定，班表不會顯示解鎖按鈕'}
           </span>
         </div>
+      </SettingsSection>)}
+
+      {/* ── 資料健檢與合併 ── */}
+      {isAdminUser && (<SettingsSection title="資料健檢與合併" desc="找出重複的人員記錄，並把舊記錄底下的排休救回現用記錄">
+        <p className="text-xs text-slate-500 mb-3">
+          早期清冊匯入以未正規化的員編比對，同一個人可能被當成新人重建，舊記錄底下的休／例／國
+          會留在資料庫但畫面上看不到。此工具先<strong>只檢查不異動</strong>，確認報告後再執行合併。
+          <br />合併只會在現用記錄該格是「V 或空白」時才寫入舊值，<strong>不會覆蓋您現有的排班</strong>，且執行前會自動備份。
+        </p>
+        <DataHealthPanel />
       </SettingsSection>)}
 
       {/* ── 作業區設定 ── */}

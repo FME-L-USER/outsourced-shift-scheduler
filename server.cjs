@@ -1133,6 +1133,151 @@ app.get('/api/audit/schedule', requireAuth, requireManagerOrAdmin, async (req, r
   }
 });
 
+// ── 資料健檢與合併（僅管理員）──────────────────────────────
+// 背景：早期清冊匯入以未正規化的員編比對，同一個人會被當成新人重建。
+// 舊記錄底下的排休仍留在資料庫，只是畫面上看不到（清冊已改指向新記錄）。
+// 這裡提供「先檢查、再合併」的工具，把舊記錄的休／例／國救回現用記錄。
+const normEmpKey = v => String(v ?? '').trim().toUpperCase();
+
+/** 產出健檢報告；不做任何異動 */
+async function buildHealthReport() {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const data = rows[0]?.data ?? {};
+  const employees = data.employees ?? [];
+  const schedule  = data.schedule  ?? {};
+  const cellCount = id => Object.keys(schedule[id] ?? {}).length;
+
+  // 依正規化員編分群，找出重複
+  const byKey = new Map();
+  for (const e of employees) {
+    const k = normEmpKey(e.empId);
+    if (!k) continue;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(e);
+  }
+
+  const duplicates = [];
+  for (const [key, list] of byKey) {
+    if (list.length < 2) continue;
+    // 保留「現用」那一筆：清冊中最後出現的記錄即為最近一次匯入的結果
+    const keep = list[list.length - 1];
+    const drops = list.slice(0, -1);
+    const restore = [];      // 會被救回的格子
+    for (const d of drops) {
+      const oldRow = schedule[d.id] ?? {};
+      const newRow = schedule[keep.id] ?? {};
+      for (const [dk, v] of Object.entries(oldRow)) {
+        // 舊記錄有休／例／國，而現用記錄是 V 或空白 → 視為被重建洗掉的排休
+        if (v === 'V' || v == null) continue;
+        const cur = newRow[dk];
+        if (cur === v) continue;
+        if (cur == null || cur === 'V') restore.push({ from: d.id, dk, before: cur ?? null, after: v });
+      }
+    }
+    duplicates.push({
+      empNo: keep.empId, name: keep.name, key,
+      keep:  { id: keep.id, cells: cellCount(keep.id) },
+      drops: drops.map(d => ({ id: d.id, name: d.name, empId: d.empId, cells: cellCount(d.id) })),
+      restoreCount: restore.length,
+      restoreSample: restore.slice(0, 12),
+    });
+  }
+
+  // 真正的孤兒：班表存在但清冊已無此內部 id
+  const empIds = new Set(employees.map(e => e.id));
+  const orphans = Object.keys(schedule)
+    .filter(id => !empIds.has(id))
+    .map(id => {
+      const row = schedule[id] ?? {};
+      const dks = Object.keys(row);
+      const nonV = dks.filter(dk => row[dk] && row[dk] !== 'V');
+      return { id, cells: dks.length, nonV: nonV.length, sample: nonV.slice(0, 8) };
+    });
+
+  return {
+    employees: employees.length,
+    scheduleRows: Object.keys(schedule).length,
+    duplicates,
+    orphans,
+    totalRestore: duplicates.reduce((a, d) => a + d.restoreCount, 0),
+  };
+}
+
+app.get('/api/maintenance/health', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    res.json({ ok: true, report: await buildHealthReport() });
+  } catch (e) {
+    console.error('health report error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 執行合併：把重複記錄的休／例／國寫回現用記錄，並移除重複的清冊記錄。
+// 執行前先備份，且只處理報告中列出的項目。
+app.post('/api/maintenance/merge-duplicates', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const report = await buildHealthReport();
+    if (report.duplicates.length === 0)
+      return res.json({ ok: true, merged: 0, removed: 0, message: '沒有需要合併的重複記錄' });
+
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const data = rows[0]?.data ?? {};
+    await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
+      [data, '合併前備份 ' + new Date().toISOString()]);
+
+    const employees = data.employees ?? [];
+    const schedule  = { ...(data.schedule ?? {}) };
+    const tomb = { ...(data._deletedEmployees ?? {}) };
+    const now = Date.now();
+    let merged = 0, removed = 0;
+    const audit = [];
+
+    for (const d of report.duplicates) {
+      const target = { ...(schedule[d.keep.id] ?? {}) };
+      for (const drop of d.drops) {
+        const oldRow = schedule[drop.id] ?? {};
+        for (const [dk, v] of Object.entries(oldRow)) {
+          if (!v || v === 'V') continue;
+          const cur = target[dk];
+          if (cur != null && cur !== 'V') continue;   // 現用記錄已有非 V 值，尊重現值
+          audit.push([req.user?.username ?? null, req.user?.role ?? null, clientIp(req),
+                      String(d.keep.id), d.empNo ?? null, d.name ?? null,
+                      String(dk), cur ?? null, v]);
+          target[dk] = v;
+          merged++;
+        }
+        delete schedule[drop.id];
+        tomb[drop.id] = now;      // 加墓碑，避免其他裝置的舊名單把重複記錄加回來
+        removed++;
+      }
+      schedule[d.keep.id] = target;
+    }
+
+    const dropIds = new Set(report.duplicates.flatMap(d => d.drops.map(x => x.id)));
+    const nextEmployees = employees.filter(e => !dropIds.has(e.id));
+
+    await pool.query(
+      `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
+      [JSON.stringify({ employees: nextEmployees, schedule, _deletedEmployees: tomb })]
+    );
+
+    if (audit.length > 0) {
+      const vals = audit.map((_, i) => {
+        const b = i * 9;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`;
+      }).join(',');
+      await pool.query(
+        `INSERT INTO schedule_audit (username, role, ip, emp_id, emp_no, emp_name, dk, before_val, after_val)
+         VALUES ${vals}`, audit.flat());
+    }
+    console.log(`資料合併：救回 ${merged} 格、移除 ${removed} 筆重複記錄（by ${req.user?.username}）`);
+    res.json({ ok: true, merged, removed });
+  } catch (e) {
+    console.error('merge duplicates error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
