@@ -11515,8 +11515,8 @@ export default function App() {
   // 但這份清單必須有時效。存檔若一直失敗（網路不穩、伺服器忙），格子會永遠留著，
   // 而且每次收到伺服器資料時都用本機舊值蓋過去，隔天再推回伺服器 ——
   // 症狀是「昨天調好的班表，今天又變回調整前的樣子」。
-  // 超過 30 分鐘的未存檔紀錄一律放棄，改以伺服器為準（舊格式無時間戳，一併放棄）。
-  const DIRTY_TTL_MS = 30 * 60 * 1000;
+  // 超過 10 分鐘的未存檔紀錄一律放棄，改以伺服器為準（舊格式無時間戳，一併放棄）。
+  const DIRTY_TTL_MS = 10 * 60 * 1000;
   const dirtyAtRef = useRef(new Map());
   const dirtyCellsRef = useRef((() => {
     const raw = LS.get('sms_dirty_cells', {});
