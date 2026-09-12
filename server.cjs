@@ -187,17 +187,19 @@ async function pruneBackups() {
 const twNow = () => new Date(Date.now() + 8 * 3600 * 1000);
 const twDateStr = d => d.toISOString().slice(0, 10);
 
-// 每日 23:00（台灣時間）保存當日資料。
-// Cloud Run 在沒人使用時容器會休眠，單靠定時器不保證 23:00 當下醒著，
-// 故改為「到點就做，沒做到的隔天補做」：只要當日 23:00 已過而該日尚無
+// 每日固定時間（台灣時間，預設 23:00）保存當日資料。
+// 時間點可用環境變數 BACKUP_HOUR 調整，不需改程式。
+// Cloud Run 在沒人使用時容器會休眠，單靠定時器不保證該時刻醒著，
+// 故改為「到點就做，沒做到的隔天補做」：只要當日該時刻已過而該日尚無
 // 備份，下一次檢查（定時器或有人操作時）就立刻補上。半夜無人異動，
-// 補做的內容與 23:00 當下實質相同。
+// 補做的內容與到點當下實質相同。
+const BACKUP_HOUR = Math.min(23, Math.max(0, Number(process.env.BACKUP_HOUR ?? 23) || 0));
 let lastDailyCheck = 0;
 async function ensureDailyBackup() {
   try {
     const now = twNow();
-    // 23:00 前屬於「前一天」的備份週期
-    const target = new Date(now.getTime() - 23 * 3600 * 1000);
+    // 該時刻之前屬於「前一天」的備份週期
+    const target = new Date(now.getTime() - BACKUP_HOUR * 3600 * 1000);
     const key = 'daily-' + twDateStr(target);
     const { rowCount } = await pool.query(
       'SELECT 1 FROM app_state_backup WHERE note = $1 LIMIT 1', [key]);
@@ -999,6 +1001,19 @@ app.get('/api/backups', requireAuth, requireAdmin, async (_req, res) => {
     res.json({ ok: true, backups: rows });
   } catch (e) {
     console.error('backups list error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 最近一次每日快照的時間，供畫面顯示「已完成資料快照備份」
+app.get('/api/backups/latest', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT note, created_at FROM app_state_backup
+        WHERE note LIKE 'daily-%' ORDER BY created_at DESC LIMIT 1`);
+    res.json({ ok: true, latest: rows[0] ?? null, hour: BACKUP_HOUR });
+  } catch (e) {
+    console.error('backups latest error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
   }
 });

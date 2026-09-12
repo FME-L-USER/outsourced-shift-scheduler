@@ -1851,6 +1851,43 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 // WAREHOUSE / DEPT SELECTOR BAR
 // ─────────────────────────────────────────────
 
+/** 每日快照狀態：讓多機使用的主管一眼看到資料已備份到哪個時間點 */
+function SnapshotBadge() {
+  const { currentUser } = useApp();
+  const [info, setInfo] = useState(null);
+  const canSee = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA;
+
+  useEffect(() => {
+    if (!canSee) return;
+    let alive = true;
+    const load = () => {
+      const token = localStorage.getItem(JWT_KEY);
+      if (!token) return;
+      fetch('/api/backups/latest', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (alive && d) setInfo(d); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30 * 60 * 1000);   // 半小時更新一次即可
+    return () => { alive = false; clearInterval(t); };
+  }, [canSee]);
+
+  if (!canSee || !info?.latest) return null;
+  const at = new Date(info.latest.created_at);
+  const pad = n => String(n).padStart(2, '0');
+  const when = `${at.getMonth() + 1}/${at.getDate()} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  // 超過 36 小時沒有新快照代表排程異常，改以警示色提醒
+  const stale = Date.now() - at.getTime() > 36 * 3600 * 1000;
+  return (
+    <span title={`每日 ${String(info.hour ?? 23).padStart(2, '0')}:00 自動保存當日資料，保留 60 天`}
+      className={`hidden md:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border whitespace-nowrap
+        ${stale ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-teal-50 border-teal-200 text-teal-700'}`}>
+      {stale ? '🟠' : '🟢'} 資料快照備份 {when}
+    </span>
+  );
+}
+
 function WarehouseDeptBar() {
   const {
     warehouses, employees, currentUser,
@@ -1976,6 +2013,7 @@ function WarehouseDeptBar() {
       {/* Desktop */}
       <div className="hidden md:flex items-center gap-2 px-4 py-2 flex-wrap text-sm">
         {selects}
+        <span className="ml-auto"><SnapshotBadge /></span>
       </div>
       {/* Mobile: 摺疊列 */}
       <div className="md:hidden">
