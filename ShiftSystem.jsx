@@ -1861,17 +1861,25 @@ function HealthDrawer() {
   const [open, setOpen] = useState(false);
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState(() => new Set());   // 勾選要合併的員編
   const isAdmin = currentUser?.role === ROLES.ADMIN;
 
   const [err, setErr] = useState('');
 
   // 任何非預期的回應都要明確報錯。伺服器若尚未更新，這些網址會被當成一般網頁
   // 請求而回傳首頁（HTTP 200 但內容是 HTML），若不處理就會卡在「處理中…」。
-  const call = async (path, method = 'GET') => {
+  const call = async (path, method = 'GET', body) => {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) { setErr('尚未登入或登入已逾時，請重新登入'); return null; }
     try {
-      const r = await fetch(path, { method, headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
       const ct = r.headers.get('content-type') ?? '';
       if (!ct.includes('application/json')) {
         setErr('伺服器尚未提供此功能（系統可能還沒更新到最新版本），請通知系統管理員。');
@@ -1891,7 +1899,7 @@ function HealthDrawer() {
     setErr('');
     try {
       const d = await call('/api/maintenance/health');
-      if (d?.report) setReport(d.report);
+      if (d?.report) { setReport(d.report); setPicked(new Set()); }
     } finally {
       setBusy(false);   // 無論成功或失敗都要解除忙碌狀態
     }
@@ -1911,19 +1919,25 @@ function HealthDrawer() {
     return () => window.removeEventListener('keydown', esc);
   }, [open]);
 
+  const chosen = (report?.duplicates ?? []).filter(d => picked.has(d.key));
+
   const merge = async () => {
-    if (!report) return;
-    const dropCount = report.duplicates.reduce((a, d) => a + d.drops.length, 0);
+    if (chosen.length === 0) return;
+    const dropCount = chosen.reduce((a, d) => a + d.drops.length, 0);
+    const restore   = chosen.reduce((a, d) => a + d.restoreCount, 0);
+    const names     = chosen.map(d => `${d.empNo} ${d.name ?? ''}`.trim()).join('、');
     if (!window.confirm(
-      '將把 ' + report.duplicates.length + ' 位人員的重複記錄合併：\n' +
-      '． 救回 ' + report.totalRestore + ' 格被洗掉的休／例／國\n' +
+      '將合併以下 ' + chosen.length + ' 位人員的重複記錄：\n' + names + '\n\n' +
+      '． 救回 ' + restore + ' 格被洗掉的休／例／國\n' +
       '． 移除 ' + dropCount + ' 筆重複的清冊記錄\n\n' +
       '執行前會自動備份，且不會覆蓋現有的排班。確定執行？')) return;
     setBusy(true);
     setErr('');
     let d = null;
-    try { d = await call('/api/maintenance/merge-duplicates', 'POST'); }
-    finally { setBusy(false); }
+    try {
+      d = await call('/api/maintenance/merge-duplicates', 'POST',
+        { keys: chosen.map(x => x.key) });
+    } finally { setBusy(false); }
     if (d?.ok) {
       toast(`合併完成：救回 ${d.merged} 格、移除 ${d.removed} 筆重複記錄`, 'success');
       check();
@@ -1951,6 +1965,8 @@ function HealthDrawer() {
             早期清冊匯入以未正規化的員編比對，同一個人可能被當成新人重建，舊記錄底下的休／例／國
             會留在資料庫但畫面上看不到。健檢<strong>只讀取不異動</strong>；合併只在現用記錄該格是
             「V 或空白」時才寫入舊值，<strong>不會覆蓋現有排班</strong>，且執行前自動備份。
+            <br /><strong className="text-amber-700">請逐筆確認後再勾選</strong>：若某格的休假是<strong>後來主動取消</strong>的，
+            資料上與「被系統洗掉」無法分辨，合併會把它還原回去。姓名不一致者會標紅，那可能根本不是同一個人。
           </p>
 
           <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -1959,10 +1975,22 @@ function HealthDrawer() {
               {busy ? '處理中…' : '重新健檢'}
             </button>
             {report && report.duplicates.length > 0 && (
-              <button onClick={merge} disabled={busy}
-                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
-                執行合併
-              </button>
+              <>
+                <button onClick={merge} disabled={busy || chosen.length === 0}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+                  合併勾選的 {chosen.length} 位
+                </button>
+                <button onClick={() => setPicked(new Set(report.duplicates.map(d => d.key)))}
+                  className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+                  全選
+                </button>
+                {chosen.length > 0 && (
+                  <button onClick={() => setPicked(new Set())}
+                    className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-500 hover:bg-[#F5F2EC]">
+                    清除選取
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -2000,6 +2028,7 @@ function HealthDrawer() {
                   <table className="w-full text-xs">
                     <thead className="bg-[#F5F2EC] text-slate-500">
                       <tr>
+                        <th className="px-2 py-1.5 w-8"></th>
                         <th className="px-2 py-1.5 text-left">員工編號</th>
                         <th className="px-2 py-1.5 text-left">姓名</th>
                         <th className="px-2 py-1.5 text-right">重複</th>
@@ -2008,17 +2037,37 @@ function HealthDrawer() {
                       </tr>
                     </thead>
                     <tbody>
-                      {report.duplicates.map(d => (
-                        <tr key={d.key} className="border-t border-[#EFEBE3] align-top">
+                      {report.duplicates.map(d => {
+                        // 同一組員編底下姓名不一致，極可能是員編打錯或號碼重複配發，
+                        // 合併會把兩個不同的人混在一起，故特別標示出來。
+                        const nameMismatch = d.drops.some(x => (x.name ?? '') !== (d.name ?? ''));
+                        return (
+                        <tr key={d.key} className={`border-t border-[#EFEBE3] align-top ${picked.has(d.key) ? 'bg-blue-50/60' : ''}`}>
+                          <td className="px-2 py-1.5">
+                            <input type="checkbox" checked={picked.has(d.key)}
+                              onChange={e => setPicked(prev => {
+                                const n = new Set(prev);
+                                if (e.target.checked) n.add(d.key); else n.delete(d.key);
+                                return n;
+                              })} />
+                          </td>
                           <td className="px-2 py-1.5 font-mono whitespace-nowrap">{d.empNo}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap">{d.name}</td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">
+                            {d.name}
+                            {nameMismatch && (
+                              <div className="text-[11px] text-red-600 font-semibold mt-0.5"
+                                   title="兩筆記錄的姓名不同，可能不是同一個人">
+                                ⚠ 舊記錄為「{d.drops.map(x => x.name).filter(Boolean).join('、')}」
+                              </div>
+                            )}
+                          </td>
                           <td className="px-2 py-1.5 text-right">{d.drops.length}</td>
                           <td className="px-2 py-1.5 text-right font-semibold text-red-600">{d.restoreCount}</td>
                           <td className="px-2 py-1.5 text-slate-500">
                             {d.restoreSample.map(x => `${x.dk}:${x.after}`).join('、') || '—'}
                           </td>
                         </tr>
-                      ))}
+                      );})}
                     </tbody>
                   </table>
                 </div>

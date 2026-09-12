@@ -1216,7 +1216,13 @@ app.get('/api/maintenance/health', requireAuth, requireAdmin, async (_req, res) 
 // 執行前先備份，且只處理報告中列出的項目。
 app.post('/api/maintenance/merge-duplicates', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const report = await buildHealthReport();
+    const full = await buildHealthReport();
+    // 只合併呼叫端明確指定的員編。未指定時不做任何事：這個操作會動到正式資料，
+    // 必須由使用者在報告上逐筆確認，不接受「全部照做」的隱含授權。
+    const picked = Array.isArray(req.body?.keys) ? req.body.keys.map(k => normEmpKey(k)) : null;
+    if (!picked || picked.length === 0)
+      return res.status(400).json({ error: '請先選擇要合併的人員' });
+    const report = { ...full, duplicates: full.duplicates.filter(d => picked.includes(d.key)) };
     if (report.duplicates.length === 0)
       return res.json({ ok: true, merged: 0, removed: 0, message: '沒有需要合併的重複記錄' });
 
