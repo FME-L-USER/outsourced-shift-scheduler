@@ -3137,6 +3137,12 @@ function ScheduleTable() {
 
   const resetChecked = () => {
     if (checkedEmpIds.size === 0) return;
+    // 這是系統中唯一會一次覆蓋整段區間的操作，誤按等同抹掉這些人的排休，
+    // 故明確告知影響範圍後才執行。
+    const first = dayHeaders[0]?.dk, last = dayHeaders[dayHeaders.length - 1]?.dk;
+    if (!window.confirm(
+      `將把 ${checkedEmpIds.size} 位人員在 ${first} ～ ${last} 的班表全部重設為「V（上班）」，\n` +
+      `已排的休假、例假、國定假日都會被覆蓋。確定執行？`)) return;
     setSchedule(prev => {
       const next = { ...prev };
       checkedEmpIds.forEach(empId => {
@@ -4601,16 +4607,8 @@ function EmployeeRoster() {
       toast('員編、姓名、廠商為必填', 'error'); return;
     }
     const emp = { ...data, id: 'e' + Date.now() };
-    setEmployees(prev => {
-      const next = [...prev, emp];
-      setSchedule(s => {
-        const daysInMo = getDaysInMonth(selectedYear, selectedMonth);
-        const row = {};
-        for (let d = 1; d <= daysInMo; d++) row[dateKey(selectedYear, selectedMonth, d)] = 'V';
-        return { ...s, [emp.id]: row };
-      });
-      return next;
-    });
+    // 不預填整月的 V：空白格子本來就顯示 V，寫滿只會多出一份可被誤覆蓋的資料
+    setEmployees(prev => [...prev, emp]);
     toast('已新增人員：' + emp.name, 'success');
     setShowAddModal(false);
     setNewEmp({ empId: '', name: '', vendor: '', group: '', status: '在職' });
@@ -4713,7 +4711,11 @@ function EmployeeRoster() {
         const canonDept   = d => (d ? (deptCanon.get(normName(d))   ?? d.trim()) : '');
 
         let added = 0, updated = 0, skippedTemp = 0, skippedLeave = 0;
-        const existingMap = new Map(employees.map(e => [e.empId, e]));
+        // 員編正規化後比對。主檔的員編若帶有看不見的空白（早期匯入留下），
+        // 用原始字串當鍵會對不上檔案裡去空白後的員編，同一個人就會被當成
+        // 新人重建：產生新的內部 id、班表重來，昨天排的休全部變成孤兒資料。
+        const normEmpId = v => String(v ?? '').trim().toUpperCase();
+        const existingMap = new Map(employees.map(e => [normEmpId(e.empId), e]));
         const newEmps = [];
         const updatedEmps = [];   // 同員工編號 → 更新基本資料、保留 shiftTypeId
         const seenInFile = new Set();
@@ -4744,13 +4746,14 @@ function EmployeeRoster() {
           const group  = parseCodeName(groupRaw);
           const dept   = canonDept(parseCodeName(deptRaw));
 
-          if (empId && existingMap.has(empId) && !seenInFile.has(empId)) {
-            // 同員工編號：更新基本資料，保留 shiftTypeId
-            const old = existingMap.get(empId);
-            updatedEmps.push({ ...old, name, vendor, dept, group, status: '在職' });
-            seenInFile.add(empId);
+          const empKey = normEmpId(empId);
+          if (empKey && existingMap.has(empKey) && !seenInFile.has(empKey)) {
+            // 同員工編號：更新基本資料，保留 shiftTypeId 與既有班表
+            const old = existingMap.get(empKey);
+            updatedEmps.push({ ...old, empId, name, vendor, dept, group, status: '在職' });
+            seenInFile.add(empKey);
             updated++;
-          } else if (!seenInFile.has(empId)) {
+          } else if (!seenInFile.has(empKey)) {
             const emp = {
               id:     `imp_${baseTs}_${i}`,
               empId,
@@ -4761,22 +4764,15 @@ function EmployeeRoster() {
               status: '在職',
             };
             newEmps.push(emp);
-            if (empId) { existingMap.set(empId, emp); seenInFile.add(empId); }
+            if (empKey) { existingMap.set(empKey, emp); seenInFile.add(empKey); }
             added++;
           }
         }
 
         setEmployees(prev => {
-          const days = getDaysInMonth(selectedYear, selectedMonth);
-          setSchedule(s => {
-            const ns = { ...s };
-            newEmps.forEach(emp => {
-              const row = {};
-              for (let d = 1; d <= days; d++) row[dateKey(selectedYear, selectedMonth, d)] = 'V';
-              ns[emp.id] = row;
-            });
-            return ns;
-          });
+          // 不預先寫入整月的 V：畫面上沒有資料的格子本來就顯示 V，
+          // 主動寫滿反而會在比對失誤時覆蓋掉既有排休。
+
           // 合併：更新既有員工資料、附加新員工
           const updatedMap = new Map(updatedEmps.map(e => [e.id, e]));
           const merged = prev.map(e => updatedMap.get(e.id) ?? e);

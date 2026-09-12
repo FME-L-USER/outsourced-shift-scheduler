@@ -120,6 +120,26 @@ async function initDB() {
   // 每次容器啟動（＝每次部署）先把當下的 app_state 原封不動另存一份快照。
   // 部署是資料最容易出事的時間點，有了時間戳快照就能指定時間點還原，
   // 不必再靠匯出的 Excel 回補。只保留最近 30 份，避免無限成長。
+  // 單格異動軌跡：誰、什麼時候、把哪一位員工的哪一天、從什麼改成什麼。
+  // 排班爭議只靠推論永遠說不清楚，這張表就是唯一的事實來源。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schedule_audit (
+      id         BIGSERIAL   PRIMARY KEY,
+      at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username   TEXT,
+      role       TEXT,
+      ip         TEXT,
+      emp_id     TEXT,
+      emp_no     TEXT,
+      emp_name   TEXT,
+      dk         TEXT,
+      before_val TEXT,
+      after_val  TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS schedule_audit_emp_idx ON schedule_audit (emp_no, at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS schedule_audit_at_idx  ON schedule_audit (at DESC)`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_state_backup (
       id         SERIAL      PRIMARY KEY,
@@ -163,12 +183,40 @@ async function initDB() {
   await seedWarehouseVendors();
   // 課別／組別正規化（以使用者提供之正式清單為準）
   await seedDeptGroups();
+  // 一次性校正：把員編前後的空白清掉。帶空白的員編會讓清冊匯入比對失敗，
+  // 同一個人被當成新人重建（新 id、班表重來），既有排休變成孤兒資料。
+  await normalizeEmpIds();
 }
 
 // ── 一次性遷移標記 ────────────────────────────────────────────────
 // 這些 seed 是為了「一次性校正既有資料」而寫，不是每次啟動都該套用的設定。
 // 若每次啟動都覆寫，管理員在畫面上做的調整（例如把運務組拆成日/中/夜班）
 // 會在下次容器重啟時被打回原狀。故套用後記錄標記，之後一律跳過。
+async function normalizeEmpIds() {
+  try {
+    const { rows } = await pool.query("SELECT data->'employees' AS emps FROM app_state WHERE id='main'");
+    const emps = rows[0]?.emps;
+    if (!Array.isArray(emps) || emps.length === 0) return;
+    let fixed = 0;
+    const next = emps.map(e => {
+      const t = String(e?.empId ?? '').trim();
+      if (e && e.empId !== t) { fixed++; return { ...e, empId: t }; }
+      return e;
+    });
+    if (fixed === 0) return;
+    await pool.query(
+      `UPDATE app_state SET data = jsonb_set(data, '{employees}', $1::jsonb), updated_at = NOW() WHERE id='main'`,
+      [JSON.stringify(next)]
+    );
+    console.log(`員編正規化：修正 ${fixed} 筆前後空白`);
+  } catch (e) {
+    console.error('員編正規化失敗:', e.message);
+  }
+}
+
+const clientIp = req =>
+  (req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket?.remoteAddress ?? '').trim() || null;
+
 // ── 備份 ──────────────────────────────────────────────────────────
 // 保留策略分開計算：啟動備份（每次部署）留 10 份，每日備份留 60 天。
 // 兩者混在一起用同一個上限時，密集部署的那幾天會把每日備份擠掉。
@@ -228,12 +276,25 @@ function dailyBackupTick() {
 // 各端每 2 秒自動存檔一次，多人同時排班撞上的機率很高，症狀是零星的
 // 「排好了過一下又不見」。改為每位員工一句 UPDATE，由資料庫在同一個
 // 敘述內完成合併，不存在讀取與寫入之間的時間差。
-async function mergeScheduleCells(sched) {
+async function mergeScheduleCells(sched, meta) {
   // 整份 schedule 不存在時，jsonb_set 到 {schedule,<empId>} 不會生效，先補空物件
   await pool.query(
     `UPDATE app_state SET data = jsonb_set(data, '{schedule}', COALESCE(data->'schedule', '{}'::jsonb))
       WHERE id='main'`
   );
+  // 先取得異動前的值，供軌跡記錄使用（只取本次涉及的員工）
+  let before = {};
+  if (meta) {
+    try {
+      const ids = Object.keys(sched ?? {});
+      if (ids.length > 0) {
+        const { rows } = await pool.query(
+          `SELECT COALESCE(data->'schedule', '{}'::jsonb) AS sc FROM app_state WHERE id='main'`);
+        const sc = rows[0]?.sc ?? {};
+        for (const id of ids) before[id] = sc[id] ?? {};
+      }
+    } catch (e) { console.warn('取得異動前班表失敗（不影響存檔）:', e.message); }
+  }
   for (const [empId, days] of Object.entries(sched ?? {})) {
     if (!days || Object.keys(days).length === 0) continue;
     await pool.query(
@@ -244,6 +305,36 @@ async function mergeScheduleCells(sched) {
         WHERE id='main'`,
       [String(empId), JSON.stringify(days)]
     );
+  }
+  if (meta) await writeScheduleAudit(sched, before, meta);
+}
+
+/** 寫入單格異動軌跡。記錄失敗絕不影響存檔本身。 */
+async function writeScheduleAudit(sched, before, meta) {
+  try {
+    const rows = [];
+    for (const [empId, days] of Object.entries(sched ?? {})) {
+      const emp = meta.empById?.get(empId);
+      for (const [dk, after] of Object.entries(days ?? {})) {
+        const prev = before?.[empId]?.[dk] ?? null;
+        if (prev === after) continue;   // 值沒變就不記，避免自動存檔灌爆
+        rows.push([meta.username ?? null, meta.role ?? null, meta.ip ?? null,
+                   String(empId), emp?.empId ?? null, emp?.name ?? null,
+                   String(dk), prev, after ?? null]);
+      }
+    }
+    if (rows.length === 0) return;
+    const vals = rows.map((_, i) => {
+      const b = i * 9;
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`;
+    }).join(',');
+    await pool.query(
+      `INSERT INTO schedule_audit (username, role, ip, emp_id, emp_no, emp_name, dk, before_val, after_val)
+       VALUES ${vals}`, rows.flat());
+    // 保留 90 天
+    await pool.query(`DELETE FROM schedule_audit WHERE at < NOW() - INTERVAL '90 days'`);
+  } catch (e) {
+    console.warn('寫入班表異動軌跡失敗（不影響存檔）:', e.message);
   }
 }
 
@@ -1018,6 +1109,30 @@ app.get('/api/backups/latest', requireAuth, requireManagerOrAdmin, async (_req, 
   }
 });
 
+// ── GET /api/audit/schedule（管理員或日翊）────────────────────
+// 單格異動軌跡查詢：可用員工編號、日期、操作者過濾。
+// 用途是釐清「這格是誰、什麼時候改的」，不提供任何修改功能。
+app.get('/api/audit/schedule', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { empNo, dk, username, limit } = req.query ?? {};
+  const where = [];
+  const args = [];
+  if (empNo)   { args.push(String(empNo).trim()); where.push(`emp_no = $${args.length}`); }
+  if (dk)      { args.push(String(dk).trim());    where.push(`dk = $${args.length}`); }
+  if (username){ args.push(String(username).trim()); where.push(`username = $${args.length}`); }
+  args.push(Math.min(500, Math.max(1, Number(limit) || 200)));
+  try {
+    const { rows } = await pool.query(
+      `SELECT at, username, role, ip, emp_no, emp_name, dk, before_val, after_val
+         FROM schedule_audit
+        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        ORDER BY at DESC LIMIT $${args.length}`, args);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    console.error('audit query error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
@@ -1143,7 +1258,9 @@ app.put('/api/state', requireAuth, async (req, res) => {
       if (skipped.length > 0)
         console.warn(`PUT /api/state 越權過濾：user=${req.user?.username} role=${role} 略過 ${skipped.length} 位人員`);
 
-      await mergeScheduleCells(acceptedByEmp);
+      await mergeScheduleCells(acceptedByEmp, {
+        username: req.user?.username, role, ip: clientIp(req), empById,
+      });
       return res.json({ ok: true, skipped: skipped.length, locked: lockedCells });
     } catch (e) {
       console.error('PUT /api/state (vendor/worker) DB error:', e.message);
@@ -1188,7 +1305,10 @@ app.put('/api/state', requireAuth, async (req, res) => {
       if (rest.schedule && Object.keys(rest.schedule).length > 0) {
         // 由資料庫逐格合併後，班表就不再隨這次的整包寫入送出，
         // 避免讀取與寫入之間別人剛存的格子被蓋掉（見 mergeScheduleCells）
-        await mergeScheduleCells(rest.schedule);
+        await mergeScheduleCells(rest.schedule, {
+          username: req.user?.username, role, ip: clientIp(req),
+          empById: new Map((cur.employees ?? []).map(e => [e.id, e])),
+        });
         delete rest.schedule;
       }
       if (rest.workerPwds) {
