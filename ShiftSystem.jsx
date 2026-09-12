@@ -11475,8 +11475,33 @@ export default function App() {
   // 未存檔清單同時寫入 localStorage：本機班表本來就會存在 localStorage，
   // 若清單只放在記憶體，使用者改完 2 秒內關掉分頁，重開後畫面看得到改動卻永遠不會上傳，
   // 還會被背景同步洗掉。兩者一起持久化才不會出現「看得到卻沒存到」的落差。
-  const dirtyCellsRef    = useRef(new Set(LS.get('sms_dirty_cells', [])));
-  const persistDirty     = () => LS.set('sms_dirty_cells', [...dirtyCellsRef.current]);
+  // 但這份清單必須有時效。存檔若一直失敗（網路不穩、伺服器忙），格子會永遠留著，
+  // 而且每次收到伺服器資料時都用本機舊值蓋過去，隔天再推回伺服器 ——
+  // 症狀是「昨天調好的班表，今天又變回調整前的樣子」。
+  // 超過 30 分鐘的未存檔紀錄一律放棄，改以伺服器為準（舊格式無時間戳，一併放棄）。
+  const DIRTY_TTL_MS = 30 * 60 * 1000;
+  const dirtyAtRef = useRef(new Map());
+  const dirtyCellsRef = useRef((() => {
+    const raw = LS.get('sms_dirty_cells', {});
+    const now = Date.now();
+    const keep = new Set();
+    if (raw && !Array.isArray(raw)) {
+      for (const [k, ts] of Object.entries(raw)) {
+        if (typeof ts === 'number' && now - ts < DIRTY_TTL_MS) { keep.add(k); dirtyAtRef.current.set(k, ts); }
+      }
+    }
+    return keep;
+  })());
+  const persistDirty = () => {
+    const now = Date.now();
+    const out = {};
+    for (const k of dirtyCellsRef.current) {
+      if (!dirtyAtRef.current.has(k)) dirtyAtRef.current.set(k, now);
+      out[k] = dirtyAtRef.current.get(k);
+    }
+    for (const k of [...dirtyAtRef.current.keys()]) if (!dirtyCellsRef.current.has(k)) dirtyAtRef.current.delete(k);
+    LS.set('sms_dirty_cells', out);
+  };
   const applyingRemoteRef = useRef(false);
   const cellKey = (empId, dk) => empId + CELL_SEP + dk;
 
@@ -11510,7 +11535,11 @@ export default function App() {
     try {
       const merged = {};
       for (const [empId, days] of Object.entries(remote)) merged[empId] = { ...days };
-      for (const key of dirtyCellsRef.current) {
+      const now = Date.now();
+      for (const key of [...dirtyCellsRef.current]) {
+        // 過期的未存檔紀錄不再覆蓋伺服器值，否則會變成每天把舊值推回去
+        const ts = dirtyAtRef.current.get(key);
+        if (ts && now - ts >= DIRTY_TTL_MS) { dirtyCellsRef.current.delete(key); dirtyAtRef.current.delete(key); continue; }
         const [empId, dk] = key.split(CELL_SEP);
         const localVal = scheduleRef.current?.[empId]?.[dk];
         if (localVal === undefined) continue;

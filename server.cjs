@@ -1452,15 +1452,25 @@ app.post('/api/auth/worker-login', async (req, res) => {
     const emp = employees.find(e => String(e.empId ?? '').trim() === String(empId).trim());
     if (!emp) return res.status(401).json({ error: '員工編號不存在' });
 
-    const stored = workerPwds[emp.empId];
+    // 密碼以員編為索引。員編若夾帶看不見的空白（Excel 匯入很常見），
+    // 存密碼與查密碼用的字串就可能不一致，導致「昨天還能登入，清冊重新匯入後
+    // 新密碼就說錯誤、只有員編進得去」。一律以去空白後的員編為準，
+    // 並相容早期用原始字串存進去的資料。
+    const pwdKey = String(emp.empId ?? '').trim();
+    const stored = workerPwds[pwdKey] ?? workerPwds[emp.empId];
     let ok = false;
     if (stored) {
       ok = await verifyPbkdf2(password, stored);
     } else {
       // 首次登入：密碼必須等於員編
-      ok = (password === String(emp.empId).trim());
+      ok = (password === pwdKey);
     }
-    if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+    if (!ok) {
+      // 記錄「伺服器上到底有沒有這筆密碼」，才能分辨是使用者打錯，
+      // 還是密碼根本沒存進來／索引對不上。不記錄任何密碼內容。
+      console.warn(`worker-login 失敗：empId=${pwdKey} 伺服器${stored ? '有' : '無'}密碼紀錄`);
+      return res.status(401).json({ error: '密碼錯誤' });
+    }
     // 委外人員多半不存在於 users 表（清冊人員直接以員編登入），原本的 UPDATE 匹配不到任何列，
     // 導致登入次數永遠是 0。改為 upsert：第一次登入時建立一列僅供統計用的紀錄
     //（password_hash 留空，密碼仍存於 app_state.workerPwds；approved 不影響其登入）。
@@ -1476,7 +1486,7 @@ app.post('/api/auth/worker-login', async (req, res) => {
     ).catch(e => console.warn('worker 登入計數失敗:', e.message));
     const token = issueToken({
       id: 'worker_' + emp.id,
-      username: emp.empId,
+      username: pwdKey,   // 後續設定密碼會以此為索引，必須與查密碼時同一把鑰匙
       role: 'worker',
       page_perms: [],
       fn_perms: [],
@@ -1504,7 +1514,7 @@ app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
   if (req.user?.role !== 'worker') return res.status(403).json({ error: '無存取權限' });
   const { passwordHash } = req.body ?? {};
   if (!passwordHash || !passwordHash.startsWith('pbkdf2:')) return res.status(400).json({ error: '密碼格式錯誤' });
-  const empId = req.user.username;
+  const empId = String(req.user.username ?? '').trim();
   try {
     const newHash = passwordHash;
     await pool.query(
@@ -1773,9 +1783,9 @@ app.post('/api/auth/reset-password', requireAuth, requireManagerOrAdmin, async (
                   COALESCE(data->'workerPwds', '{}'::jsonb) - $1),
                 updated_at = NOW()
           WHERE id = 'main'`,
-        [emp.empId]
+        [String(emp.empId ?? '').trim()]
       );
-      return res.json({ ok: true, username: emp.empId, name: emp.name, defaultPassword: emp.empId });
+      return res.json({ ok: true, username: key, name: emp.name, defaultPassword: key });
     }
 
     return res.status(400).json({ error: '不支援的重設類型' });
