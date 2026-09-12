@@ -133,13 +133,13 @@ async function initDB() {
     if (snap[0]?.data) {
       await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
         [snap[0].data, '啟動備份 ' + new Date().toISOString()]);
-      await pool.query(`DELETE FROM app_state_backup WHERE id NOT IN
-        (SELECT id FROM app_state_backup ORDER BY created_at DESC LIMIT 30)`);
+      await pruneBackups();
       console.log('啟動備份完成：app_state 已另存快照');
     }
   } catch (e) {
     console.error('啟動備份失敗（不影響服務啟動）:', e.message);
   }
+  await ensureDailyBackup();   // 啟動時順便補做昨天的每日備份（若尚未做）
 
   // 確保 reyi 帳號存在（本地帳號，密碼由 ADMIN_INITIAL_PASSWORD 控制）
   const { rowCount } = await pool.query('SELECT id FROM users WHERE username = $1', ['reyi']);
@@ -169,6 +169,57 @@ async function initDB() {
 // 這些 seed 是為了「一次性校正既有資料」而寫，不是每次啟動都該套用的設定。
 // 若每次啟動都覆寫，管理員在畫面上做的調整（例如把運務組拆成日/中/夜班）
 // 會在下次容器重啟時被打回原狀。故套用後記錄標記，之後一律跳過。
+// ── 備份 ──────────────────────────────────────────────────────────
+// 保留策略分開計算：啟動備份（每次部署）留 10 份，每日備份留 60 天。
+// 兩者混在一起用同一個上限時，密集部署的那幾天會把每日備份擠掉。
+async function pruneBackups() {
+  await pool.query(`DELETE FROM app_state_backup
+     WHERE note LIKE '啟動備份%' AND id NOT IN (
+       SELECT id FROM app_state_backup WHERE note LIKE '啟動備份%'
+       ORDER BY created_at DESC LIMIT 10)`);
+  await pool.query(`DELETE FROM app_state_backup
+     WHERE note LIKE 'daily-%' AND id NOT IN (
+       SELECT id FROM app_state_backup WHERE note LIKE 'daily-%'
+       ORDER BY created_at DESC LIMIT 60)`);
+}
+
+// 台灣時間（UTC+8）的 YYYY-MM-DD 與小時
+const twNow = () => new Date(Date.now() + 8 * 3600 * 1000);
+const twDateStr = d => d.toISOString().slice(0, 10);
+
+// 每日 23:00（台灣時間）保存當日資料。
+// Cloud Run 在沒人使用時容器會休眠，單靠定時器不保證 23:00 當下醒著，
+// 故改為「到點就做，沒做到的隔天補做」：只要當日 23:00 已過而該日尚無
+// 備份，下一次檢查（定時器或有人操作時）就立刻補上。半夜無人異動，
+// 補做的內容與 23:00 當下實質相同。
+let lastDailyCheck = 0;
+async function ensureDailyBackup() {
+  try {
+    const now = twNow();
+    // 23:00 前屬於「前一天」的備份週期
+    const target = new Date(now.getTime() - 23 * 3600 * 1000);
+    const key = 'daily-' + twDateStr(target);
+    const { rowCount } = await pool.query(
+      'SELECT 1 FROM app_state_backup WHERE note = $1 LIMIT 1', [key]);
+    if (rowCount > 0) return;
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    if (!rows[0]?.data) return;
+    await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)', [rows[0].data, key]);
+    await pruneBackups();
+    console.log(`每日備份完成：${key}`);
+  } catch (e) {
+    console.error('每日備份失敗:', e.message);
+  }
+}
+// 容器醒著時每 10 分鐘檢查一次；休眠期間漏掉的由上面的補做機制補上
+setInterval(() => { ensureDailyBackup(); }, 10 * 60 * 1000).unref?.();
+// 有人操作時也順便檢查（最多每 10 分鐘一次），涵蓋整夜休眠後的第一個請求
+function dailyBackupTick() {
+  if (Date.now() - lastDailyCheck < 10 * 60 * 1000) return;
+  lastDailyCheck = Date.now();
+  ensureDailyBackup();
+}
+
 // ── 班表逐格寫入（交由資料庫合併）────────────────────────────────
 // 不可以「讀出整份班表 → 在記憶體疊上異動 → 整份寫回」：兩人同時存檔時，
 // 後寫的人用的是他讀取當下的舊版本，會把這中間別人存進去的格子抹掉。
@@ -935,6 +986,23 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ── GET /api/state ────────────────────────────────────────
+// ── GET /api/backups（管理員）──────────────────────────────
+// 只列出有哪些備份與各自的資料量，不回傳備份內容本身。
+// 還原屬於高風險操作，一律不開放 API，必要時由維運人員在資料庫執行。
+app.get('/api/backups', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT note, created_at,
+              jsonb_array_length(COALESCE(data->'employees','[]'::jsonb)) AS employees,
+              (SELECT COUNT(*) FROM jsonb_object_keys(COALESCE(data->'schedule','{}'::jsonb))) AS schedule_rows
+         FROM app_state_backup ORDER BY created_at DESC LIMIT 100`);
+    res.json({ ok: true, backups: rows });
+  } catch (e) {
+    console.error('backups list error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
@@ -980,6 +1048,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 // 以 merge 方式更新，保留 attendData / extras（由 PUT /api/attendance 管理）
 // vendor/worker 角色只允許寫入 schedule 欄位，其餘欄位由 admin/area 管理
 app.put('/api/state', requireAuth, async (req, res) => {
+  dailyBackupTick();   // 整夜休眠後的第一個請求會在此補做前一日備份
   const role = req.user?.role;
   if (role !== 'admin' && role !== 'area' && role !== 'vendor' && role !== 'worker')
     return res.status(403).json({ error: '無存取權限' });
