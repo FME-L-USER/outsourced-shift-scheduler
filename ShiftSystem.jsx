@@ -12597,11 +12597,14 @@ export default function App() {
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
+      // 先把凍結期間沒送出的內容補送，再拉伺服器資料，
+      // 否則剛補回來的遠端資料會先蓋掉本機尚未存檔的格子
+      flushDirty();
       syncFromServerBackground();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [syncFromServerBackground]);
+  }, [syncFromServerBackground, flushDirty]);
 
   // ── 定期背景輪詢（30 秒）：確保長時間停留在同一分頁也能同步其他裝置的變更 ──
   useEffect(() => {
@@ -12707,6 +12710,43 @@ export default function App() {
       }
     }).catch(e => { console.warn('手動存檔失敗:', e.message); noteSaveResult(false); if (onDone) onDone(false); });
   }, []); // 不需任何 deps，永遠讀最新 ref
+
+  // ── 離開前強制送出未存檔的格子 ──────────────────────────────
+  // 手機上點完格子若在 2 秒的自動存檔觸發前就鎖螢幕或切到其他 App，
+  // 瀏覽器會凍結計時器，那次存檔永遠不會發生，未存檔紀錄過期後就被丟棄
+  //（症狀：排了休，下次打開卻不見）。故在頁面隱藏前主動送出。
+  // 只送班表格子，不帶其他狀態：keepalive 請求有大小上限，也不需要整包。
+  const flushDirty = useCallback(() => {
+    if (!serverSyncedRef.current) return;
+    if (dirtyCellsRef.current.size === 0) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    const sentCells = [...dirtyCellsRef.current];
+    const dirtySchedule = buildDirtySchedule(sentCells, scheduleRef.current);
+    if (Object.keys(dirtySchedule).length === 0) return;
+    try {
+      fetch('/api/state', {
+        method: 'PUT',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ schedule: dirtySchedule }),
+      }).then(r => {
+        noteSaveResult(r.ok, r.status);
+        if (r.ok) { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); }
+      }).catch(() => {});
+    } catch { /* 頁面正在卸載，送不出去就留待下次 */ }
+  }, [noteSaveResult]);
+
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') flushDirty(); };
+    // pagehide 涵蓋手機切換 App 與關閉分頁；visibilitychange 涵蓋切到背景
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flushDirty);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', flushDirty);
+    };
+  }, [flushDirty]);
 
   // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
   useEffect(() => {
