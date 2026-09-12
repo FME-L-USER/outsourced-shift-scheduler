@@ -1361,13 +1361,18 @@ app.post('/api/maintenance/adopt-orphans', requireAuth, requireAdmin, async (req
     await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
       [data, '孤兒歸戶前備份 ' + new Date().toISOString()]);
 
-    const schedule = { ...(data.schedule ?? {}) };
+    // 不可整份讀出再寫回：那樣會把這期間別人剛存的格子一併抹掉。
+    // 改為逐格合併（由資料庫在單句 UPDATE 內完成），失聯資料列另以 jsonb 的
+    // 移除運算子單獨刪除。
+    const schedule = data.schedule ?? {};
     let merged = 0, removed = 0;
     const audit = [];
+    const toWrite = {};
 
     for (const o of picked) {
       const oldRow = schedule[o.id] ?? {};
-      const target = { ...(schedule[o.targetId] ?? {}) };
+      const target = schedule[o.targetId] ?? {};
+      const days = {};
       for (const [dk, v] of Object.entries(oldRow)) {
         if (!v || v === 'V') continue;
         const cur = target[dk];
@@ -1375,18 +1380,24 @@ app.post('/api/maintenance/adopt-orphans', requireAuth, requireAdmin, async (req
         audit.push([req.user?.username ?? null, req.user?.role ?? null, clientIp(req),
                     String(o.targetId), o.empNo ?? null, o.targetName ?? null,
                     String(dk), cur ?? null, v]);
-        target[dk] = v;
+        days[dk] = v;
         merged++;
       }
-      schedule[o.targetId] = target;
-      delete schedule[o.id];
-      removed++;
+      if (Object.keys(days).length > 0) toWrite[o.targetId] = days;
     }
 
-    await pool.query(
-      `UPDATE app_state SET data = jsonb_set(data, '{schedule}', $1::jsonb), updated_at = NOW() WHERE id='main'`,
-      [JSON.stringify(schedule)]
-    );
+    await mergeScheduleCells(toWrite);
+
+    for (const o of picked) {
+      await pool.query(
+        `UPDATE app_state
+            SET data = jsonb_set(data, '{schedule}', COALESCE(data->'schedule','{}'::jsonb) - $1),
+                updated_at = NOW()
+          WHERE id='main'`,
+        [String(o.id)]
+      );
+      removed++;
+    }
 
     if (audit.length > 0) {
       const vals = audit.map((_, i) => {
@@ -1428,6 +1439,137 @@ app.post('/api/maintenance/ignore', requireAuth, requireAdmin, async (req, res) 
     res.json({ ok: true, ignored: Object.keys(dup).length + Object.keys(orphan).length });
   } catch (e) {
     console.error('ignore error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// ── 從備份還原班表（僅管理員）────────────────────────────
+// 這是唯一能覆蓋現有排班的功能，故刻意設計得麻煩：
+//   1. 必須指定備份時間點與日期範圍，且一次只處理選定的人員
+//   2. 一律先看差異（哪一格、現在是什麼、備份是什麼），逐筆勾選後才執行
+//   3. 執行前再備份一次，每一格寫入異動軌跡
+// 不提供「整份倒回去」的入口：那會把其他人當天的工作一併抹掉。
+const dkTs = dk => {
+  const [y, m, d] = String(dk).split('-').map(Number);
+  return (y && m && d) ? new Date(y, m - 1, d).getTime() : NaN;
+};
+
+app.get('/api/maintenance/restore-points', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, note, created_at,
+              (SELECT COUNT(*) FROM jsonb_object_keys(COALESCE(data->'schedule','{}'::jsonb))) AS schedule_rows
+         FROM app_state_backup ORDER BY created_at DESC LIMIT 100`);
+    res.json({ ok: true, points: rows });
+  } catch (e) {
+    console.error('restore points error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+/** 比對備份與現況的班表差異。empNo 可留空＝該範圍內所有有差異的人。 */
+async function buildRestoreDiff({ backupId, empNo, from, to }) {
+  const { rows: bk } = await pool.query(
+    'SELECT data, note, created_at FROM app_state_backup WHERE id=$1', [backupId]);
+  if (!bk[0]) return { error: '找不到指定的備份' };
+  const bakData = bk[0].data ?? {};
+  const { rows: cur } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const curData = cur[0]?.data ?? {};
+
+  const employees = curData.employees ?? [];
+  const bakSched  = bakData.schedule ?? {};
+  const curSched  = curData.schedule ?? {};
+
+  const fromTs = from ? dkTs(from) : -Infinity;
+  const toTs   = to   ? dkTs(to)   :  Infinity;
+  const wanted = empNo ? normEmpKey(empNo) : null;
+
+  const rows = [];
+  for (const e of employees) {
+    if (wanted && normEmpKey(e.empId) !== wanted) continue;
+    const b = bakSched[e.id]; if (!b) continue;
+    const c = curSched[e.id] ?? {};
+    const diffs = [];
+    for (const [dk, bv] of Object.entries(b)) {
+      const t = dkTs(dk);
+      if (!(t >= fromTs && t <= toTs)) continue;
+      const cv = c[dk] ?? null;
+      if ((bv ?? null) === cv) continue;
+      diffs.push({ dk, cur: cv, bak: bv });
+    }
+    if (diffs.length === 0) continue;
+    diffs.sort((x, y) => dkTs(x.dk) - dkTs(y.dk));
+    rows.push({
+      empId: e.id, empNo: e.empId, name: e.name,
+      dept: e.dept ?? '', group: e.group ?? '', vendor: e.vendor ?? '',
+      count: diffs.length, diffs: diffs.slice(0, 40),
+    });
+  }
+  rows.sort((a, b) => b.count - a.count);
+  return {
+    backup: { id: bk[0].id, note: bk[0].note, created_at: bk[0].created_at },
+    rows: rows.slice(0, 200),
+    truncated: rows.length > 200,
+  };
+}
+
+app.get('/api/maintenance/restore-diff', requireAuth, requireAdmin, async (req, res) => {
+  const { backupId, empNo, from, to } = req.query ?? {};
+  if (!backupId) return res.status(400).json({ error: '請選擇備份時間點' });
+  try {
+    const d = await buildRestoreDiff({ backupId: Number(backupId), empNo, from, to });
+    if (d.error) return res.status(404).json({ error: d.error });
+    res.json({ ok: true, ...d });
+  } catch (e) {
+    console.error('restore diff error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+app.post('/api/maintenance/restore', requireAuth, requireAdmin, async (req, res) => {
+  const { backupId, empIds, from, to } = req.body ?? {};
+  if (!backupId) return res.status(400).json({ error: '請選擇備份時間點' });
+  if (!Array.isArray(empIds) || empIds.length === 0)
+    return res.status(400).json({ error: '請先選擇要還原的人員' });
+  try {
+    const d = await buildRestoreDiff({ backupId: Number(backupId), from, to });
+    if (d.error) return res.status(404).json({ error: d.error });
+    const picked = d.rows.filter(r => empIds.includes(r.empId));
+    if (picked.length === 0) return res.json({ ok: true, restored: 0, message: '沒有需要還原的內容' });
+
+    const { rows: cur } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const curData = cur[0]?.data ?? {};
+    await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
+      [curData, '還原前備份 ' + new Date().toISOString()]);
+
+    // 逐格寫入，交由資料庫合併，不整份覆蓋
+    const sched = {};
+    const audit = [];
+    for (const r of picked) {
+      const days = {};
+      for (const df of r.diffs) {
+        days[df.dk] = df.bak;
+        audit.push([req.user?.username ?? null, req.user?.role ?? null, clientIp(req),
+                    String(r.empId), r.empNo ?? null, r.name ?? null,
+                    String(df.dk), df.cur ?? null, df.bak ?? null]);
+      }
+      if (Object.keys(days).length > 0) sched[r.empId] = days;
+    }
+    await mergeScheduleCells(sched);
+
+    if (audit.length > 0) {
+      const vals = audit.map((_, i) => {
+        const b = i * 9;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`;
+      }).join(',');
+      await pool.query(
+        `INSERT INTO schedule_audit (username, role, ip, emp_id, emp_no, emp_name, dk, before_val, after_val)
+         VALUES ${vals}`, audit.flat());
+    }
+    console.log(`從備份還原：${picked.length} 位、${audit.length} 格（by ${req.user?.username}）`);
+    res.json({ ok: true, restored: audit.length, people: picked.length });
+  } catch (e) {
+    console.error('restore error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
   }
 });
@@ -1476,7 +1618,22 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 // ── PUT /api/state ────────────────────────────────────────
 // 以 merge 方式更新，保留 attendData / extras（由 PUT /api/attendance 管理）
 // vendor/worker 角色只允許寫入 schedule 欄位，其餘欄位由 admin/area 管理
-app.put('/api/state', requireAuth, async (req, res) => {
+// 前端版本閘門：JWT 有效 24 小時，昨天開著沒關的舊分頁最久可以再寫一整天。
+// 舊版前端送的是整份快照，會把別人新存的內容蓋回舊值 —— 這正是「今天排好、
+// 明天不見」的其中一條路徑。故要求寫入請求帶上前端版本，低於下限一律拒絕，
+// 並請使用者重新整理換到新版。讀取不受影響，舊分頁仍看得到資料。
+const MIN_CLIENT_VERSION = process.env.MIN_CLIENT_VERSION ?? '2026-09-12';
+function requireClientVersion(req, res, next) {
+  const v = String(req.headers['x-app-version'] ?? '');
+  if (v && v >= MIN_CLIENT_VERSION) return next();
+  console.warn(`拒絕舊版前端寫入：version=${v || '(無)'} user=${req.user?.username}`);
+  return res.status(426).json({
+    error: '您的頁面版本過舊，請重新整理（Ctrl+F5）後再操作，以免覆蓋他人剛儲存的資料。',
+    minVersion: MIN_CLIENT_VERSION,
+  });
+}
+
+app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
   dailyBackupTick();   // 整夜休眠後的第一個請求會在此補做前一日備份
   const role = req.user?.role;
   if (role !== 'admin' && role !== 'area' && role !== 'vendor' && role !== 'worker')
@@ -1889,7 +2046,7 @@ app.get('/api/attendance', requireAuth, async (req, res) => {
 });
 
 // ── PUT /api/attendance （admin / area / vendor / worker 可寫）─────
-app.put('/api/attendance', requireAuth, async (req, res) => {
+app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) => {
   const role = req.user?.role;
   if (!['admin','area','vendor','worker'].includes(role))
     return res.status(403).json({ error: '無存取權限' });

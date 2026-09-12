@@ -129,6 +129,9 @@ const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worke
 // 臨時人力自助簽到僅開放給手機控管實際使用的倉別
 const TEMP_WAREHOUSE = '大肚倉';
 const JWT_KEY = 'sms_jwt';
+// 前端版本：隨寫入請求送出，伺服器據此擋下舊分頁的覆蓋。
+// 有破壞性的資料格式或寫入邏輯變更時才需要調高（要同步調整伺服器的 MIN_CLIENT_VERSION）。
+const APP_VERSION = '2026-09-12';
 
 // 代碼一律用黑字：彩色文字在淺色底上對比不足，現場列印或光線不佳時難以辨識
 const SHIFT_CODES = {
@@ -1851,6 +1854,266 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 // WAREHOUSE / DEPT SELECTOR BAR
 // ─────────────────────────────────────────────
 
+/** 開啟「從備份還原班表」面板 */
+const openRestoreDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-restore'));
+
+/**
+ * 從備份還原班表（右側滑出，僅管理員）。
+ * 這是唯一能覆蓋現有排班的功能，流程刻意分成三步：
+ * 選時間點與範圍 → 看差異 → 逐筆勾選後執行。不提供整份倒回去的入口。
+ */
+function RestoreDrawer() {
+  const { toast } = useToast();
+  const { currentUser } = useApp();
+  const [open, setOpen]   = useState(false);
+  const [points, setPoints] = useState([]);
+  const [pointId, setPointId] = useState('');
+  const [empNo, setEmpNo] = useState('');
+  const [from, setFrom]   = useState('');
+  const [to, setTo]       = useState('');
+  const [diff, setDiff]   = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [busy, setBusy]   = useState(false);
+  const [err, setErr]     = useState('');
+  const isAdmin = currentUser?.role === ROLES.ADMIN;
+
+  const call = async (path, method = 'GET', body) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) { setErr('尚未登入或登入已逾時，請重新登入'); return null; }
+    try {
+      const r = await fetch(path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const ct = r.headers.get('content-type') ?? '';
+      if (!ct.includes('application/json')) {
+        setErr('伺服器尚未提供此功能（系統可能還沒更新到最新版本），請通知系統管理員。');
+        return null;
+      }
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d) { setErr(d?.error || `執行失敗（HTTP ${r.status}）`); return null; }
+      return d;
+    } catch (e) {
+      setErr('連線失敗，請檢查網路後再試：' + e.message);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const h = async () => {
+      setOpen(true); setErr(''); setDiff(null); setPicked(new Set());
+      const d = await call('/api/maintenance/restore-points');
+      if (d?.points) {
+        setPoints(d.points);
+        if (d.points[0]) setPointId(String(d.points[0].id));
+      }
+    };
+    window.addEventListener('vsp-open-restore', h);
+    return () => window.removeEventListener('vsp-open-restore', h);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!open) return;
+    const esc = e => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [open]);
+
+  const loadDiff = async () => {
+    if (!pointId) { setErr('請先選擇備份時間點'); return; }
+    setBusy(true); setErr(''); setPicked(new Set());
+    try {
+      const q = new URLSearchParams({ backupId: pointId });
+      if (empNo.trim()) q.set('empNo', empNo.trim());
+      if (from) q.set('from', from);
+      if (to)   q.set('to', to);
+      const d = await call('/api/maintenance/restore-diff?' + q.toString());
+      if (d) setDiff(d);
+    } finally { setBusy(false); }
+  };
+
+  const rows = diff?.rows ?? [];
+  const chosen = rows.filter(r => picked.has(r.empId));
+
+  const doRestore = async () => {
+    if (chosen.length === 0) return;
+    const cells = chosen.reduce((a, r) => a + r.count, 0);
+    const names = chosen.slice(0, 8).map(r => `${r.empNo} ${r.name ?? ''}`.trim()).join('、')
+                + (chosen.length > 8 ? ` 等 ${chosen.length} 位` : '');
+    if (!window.confirm(
+      '將以備份的內容覆蓋以下人員的班表：\n' + names + '\n\n' +
+      '． 影響 ' + cells + ' 格\n' +
+      '． 這些格子目前的值會被備份當時的值取代\n\n' +
+      '執行前會先備份現況。確定還原？')) return;
+    setBusy(true); setErr('');
+    let d = null;
+    try {
+      d = await call('/api/maintenance/restore', 'POST', {
+        backupId: Number(pointId),
+        empIds: chosen.map(r => r.empId),
+        from: from || undefined,
+        to: to || undefined,
+      });
+    } finally { setBusy(false); }
+    if (d?.ok) {
+      toast(`還原完成：${d.people} 位、${d.restored} 格`, 'success');
+      loadDiff();
+    }
+  };
+
+  if (!isAdmin || !open) return null;
+
+  const fmt = t => {
+    const d = new Date(t), p = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex justify-end"
+         onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
+      <div className="absolute inset-0 bg-black/30" />
+      <aside className="relative bg-white h-full w-full max-w-[720px] shadow-2xl flex flex-col border-l border-[#DDD9D0]">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-[#DDD9D0] shrink-0">
+          <div>
+            <h3 className="font-bold text-slate-800">⏱ 從備份還原班表</h3>
+            <p className="text-xs text-slate-500 mt-0.5">選時間點與範圍 → 看差異 → 逐筆勾選後還原</p>
+          </div>
+          <button onClick={() => setOpen(false)}
+            className="text-slate-400 hover:text-slate-600 text-xl leading-none px-2">✕</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 text-sm">
+          <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs leading-relaxed">
+            <strong>這是唯一會覆蓋現有排班的功能。</strong>
+            被選中的格子會直接換成備份當時的值，請務必先看清楚差異。
+            執行前系統會先備份現況，每一格也都會寫入異動軌跡。
+          </div>
+
+          {err && (
+            <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs">
+              {err}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <label className="col-span-2 block">
+              <span className="block text-xs font-medium text-slate-600 mb-1">備份時間點</span>
+              <select value={pointId} onChange={e => { setPointId(e.target.value); setDiff(null); }}
+                className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+                {points.length === 0 && <option value="">（尚無備份）</option>}
+                {points.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {fmt(p.created_at)}　{p.note?.startsWith('daily-') ? '每日快照' : p.note?.slice(0, 20)}
+                    　（{p.schedule_rows} 列班表）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-xs font-medium text-slate-600 mb-1">員工編號（留空＝全部）</span>
+              <input value={empNo} onChange={e => setEmpNo(e.target.value)}
+                placeholder="例：CY11202052"
+                className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm" />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1">起日</span>
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm" />
+              </label>
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1">迄日</span>
+                <input type="date" value={to} onChange={e => setTo(e.target.value)}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm" />
+              </label>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <button onClick={loadDiff} disabled={busy || !pointId}
+              className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
+              {busy ? '處理中…' : '比對差異'}
+            </button>
+            {rows.length > 0 && (
+              <>
+                <button onClick={doRestore} disabled={busy || chosen.length === 0}
+                  className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-40">
+                  還原勾選的 {chosen.length} 位
+                </button>
+                <button onClick={() => setPicked(new Set(rows.map(r => r.empId)))}
+                  className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+                  全選
+                </button>
+                {chosen.length > 0 && (
+                  <button onClick={() => setPicked(new Set())}
+                    className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-500 hover:bg-[#F5F2EC]">
+                    清除選取
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {diff && rows.length === 0 && (
+            <p className="text-teal-700 text-xs">✅ 這個範圍內，目前的班表與該備份完全相同，沒有需要還原的內容。</p>
+          )}
+
+          {rows.length > 0 && (
+            <>
+              <p className="text-xs text-slate-500 mb-2">
+                共 {rows.length} 位人員與備份不同（差異多的排前面）。
+                「現在 → 備份」代表還原後那一格會變成什麼。
+                {diff.truncated && ' 超過 200 位，僅顯示前 200 位，建議縮小範圍。'}
+              </p>
+              <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#F5F2EC] text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1.5 w-8"></th>
+                      <th className="px-2 py-1.5 text-left">員工編號</th>
+                      <th className="px-2 py-1.5 text-left">姓名</th>
+                      <th className="px-2 py-1.5 text-right">差異</th>
+                      <th className="px-2 py-1.5 text-left">明細（日期：現在 → 備份）</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.empId}
+                          className={`border-t border-[#EFEBE3] align-top ${picked.has(r.empId) ? 'bg-red-50/60' : ''}`}>
+                        <td className="px-2 py-1.5">
+                          <input type="checkbox" checked={picked.has(r.empId)}
+                            onChange={e => setPicked(prev => {
+                              const n = new Set(prev);
+                              if (e.target.checked) n.add(r.empId); else n.delete(r.empId);
+                              return n;
+                            })} />
+                        </td>
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap">{r.empNo}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{r.name}</td>
+                        <td className="px-2 py-1.5 text-right font-semibold text-red-600">{r.count}</td>
+                        <td className="px-2 py-1.5 text-slate-500">
+                          {r.diffs.map(d => `${d.dk}：${d.cur ?? '空白'} → ${d.bak}`).join('、')}
+                          {r.count > r.diffs.length && ` …等 ${r.count} 格`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+}
+
 /** 開啟資料健檢面板（右側滑出）。以事件傳遞，讓設定頁與篩選列都能叫出同一個面板 */
 const openHealthDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-health'));
 
@@ -2401,13 +2664,18 @@ function WarehouseDeptBar() {
         {selects}
         <span className="ml-auto flex items-center gap-2">
           <SnapshotBadge />
-          {currentUser?.role === ROLES.ADMIN && (
+          {currentUser?.role === ROLES.ADMIN && (<>
             <button onClick={openHealthDrawer} title="資料健檢與合併"
               className="hidden md:inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border
                          border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC] whitespace-nowrap">
               🩺 資料健檢
             </button>
-          )}
+            <button onClick={openRestoreDrawer} title="從備份還原班表"
+              className="hidden md:inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border
+                         border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC] whitespace-nowrap">
+              ⏱ 還原
+            </button>
+          </>)}
         </span>
       </div>
       {/* Mobile: 摺疊列 */}
@@ -7414,7 +7682,7 @@ function WorkerSelfCheck() {
     if (!token) return;
     fetch('/api/attendance', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
       body: JSON.stringify({ attendData: { [todayStr]: { [empId]: newRecord } }, extras: {} }),
     }).then(r => { if (!r.ok) toast('儲存失敗，請檢查網路後重新勾選', 'error'); })
       .catch(() => toast('儲存失敗，請檢查網路後重新勾選', 'error'));
@@ -9172,10 +9440,16 @@ function Settings() {
           會留在資料庫但畫面上看不到。此工具先<strong>只檢查不異動</strong>，確認報告後再執行合併。
           <br />合併只會在現用記錄該格是「V 或空白」時才寫入舊值，<strong>不會覆蓋您現有的排班</strong>，且執行前會自動備份。
         </p>
-        <button onClick={openHealthDrawer}
-          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-          開始健檢（於右側面板顯示）
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={openHealthDrawer}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            開始健檢（於右側面板顯示）
+          </button>
+          <button onClick={openRestoreDrawer}
+            className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+            ⏱ 從備份還原班表
+          </button>
+        </div>
       </SettingsSection>)}
 
       {/* ── 作業區設定 ── */}
@@ -11944,6 +12218,18 @@ export default function App() {
     LS.set('sms_dirty_cells', out);
   };
   const applyingRemoteRef = useRef(false);
+  // 存檔異常提示：斷線或伺服器拒絕時，畫面必須明講，否則使用者會以為存好了，
+  // 而未存檔的內容在 10 分鐘後就會被放棄。
+  const [saveIssue, setSaveIssue] = useState(null);   // { kind:'offline'|'outdated', since:number }
+  const failSinceRef = useRef(0);
+  const noteSaveResult = useCallback((ok, status) => {
+    if (status === 426) { setSaveIssue({ kind: 'outdated' }); return; }
+    if (ok) { failSinceRef.current = 0; setSaveIssue(prev => (prev?.kind === 'outdated' ? prev : null)); return; }
+    if (!failSinceRef.current) failSinceRef.current = Date.now();
+    // 連續失敗超過 1 分鐘才提示，避免偶發的一次逾時就跳警告
+    if (Date.now() - failSinceRef.current > 60000)
+      setSaveIssue(prev => prev ?? { kind: 'offline', since: failSinceRef.current });
+  }, []);
   const cellKey = (empId, dk) => empId + CELL_SEP + dk;
 
   const markScheduleDiff = (prev, next) => {
@@ -12201,11 +12487,16 @@ export default function App() {
         if (Array.isArray(state?.users) && state.users.length > 0) setUsers(state.users);
         if (state?.workerPwds && Object.keys(state.workerPwds).length > 0) setWorkerPwds(state.workerPwds);
 
-        // 本地員工數多於 DB 且 DB 有基本資料（vendors/warehouses 存在）→ 可能有尚未入庫的匯入資料，回寫 DB
+        // 僅在資料庫「完全沒有人員」時，才以本機資料做一次初始化回寫。
+        //
+        // 原本還有一條「本機員工數多於 DB 就整份回寫」的規則，那是早期把本機資料
+        // 搬進資料庫的過渡設計。現在資料庫才是唯一來源，這條規則會變成破壞來源：
+        // 只要有人清理過清冊（例如合併重複記錄使人數變少），所有尚未重新整理的
+        // 瀏覽器都會符合條件，登入時就把自己本機那份舊班表整份推回伺服器，
+        // 覆蓋掉別人新排好的內容 —— 症狀正是「今天排好的，隔天登入後不見了」。
+        // 故移除該規則，一律以伺服器為準。
         const dbHasBaseData = (state?.vendors?.length > 0) || (state?.warehouses?.length > 0);
-        if (dbHasBaseData && localEmps.length > serverEmps.length) writeLocalToServer();
-        // DB 無員工且本地有員工 → 寫回 DB（但 DB 必須已有 vendors/warehouses，否則本地資料不完整不寫回）
-        else if (dbHasBaseData && serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
+        if (dbHasBaseData && serverEmps.length === 0 && localEmps.length > 0) writeLocalToServer();
         // 成功讀取 DB 狀態後才啟用 auto-save
         else serverSyncedRef.current = true;
       }
@@ -12395,13 +12686,14 @@ export default function App() {
     const sentCells = [...dirtyCellsRef.current];
     fetch('/api/state', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
       body: JSON.stringify((() => {
         const { schedule: _full, ...rest } = latestStateRef.current;
         const d = buildDirtySchedule(sentCells, scheduleRef.current);
         return Object.keys(d).length > 0 ? { ...rest, schedule: d } : rest;
       })()),
     }).then(async r => {
+      noteSaveResult(r.ok, r.status);
       if (r.ok) { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); }
       if (onDone) onDone(r.ok);
       if (!r.ok) return;
@@ -12413,7 +12705,7 @@ export default function App() {
         globalToast?.('該課別已鎖定或不在開放排班區間，剛才的異動未儲存。', 'error');
         syncFromServerBackground();
       }
-    }).catch(e => { console.warn('手動存檔失敗:', e.message); if (onDone) onDone(false); });
+    }).catch(e => { console.warn('手動存檔失敗:', e.message); noteSaveResult(false); if (onDone) onDone(false); });
   }, []); // 不需任何 deps，永遠讀最新 ref
 
   // ── 同步共用狀態至後端（debounced 2s，登入後才生效） ──
@@ -12434,21 +12726,22 @@ export default function App() {
       users, workerPwds,
       ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
     });
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
     dirtyRef.current = true;
     const done = ok => { if (ok) { dirtyRef.current = false; clearSent(); } };
     if (forceSaveRef.current) {
       // 匯入等重要操作後立即存，不經 setTimeout（避免關頁前 callback 被取消）
       forceSaveRef.current = false;
       fetch('/api/state', { method: 'PUT', headers, body })
-        .then(r => { done(r.ok); if (!r.ok) console.warn('匯入後立即存檔失敗 HTTP', r.status); })
-        .catch(e => console.warn('匯入後立即存檔失敗:', e.message));
+        .then(r => { done(r.ok); noteSaveResult(r.ok, r.status); if (!r.ok) console.warn('匯入後立即存檔失敗 HTTP', r.status); })
+        .catch(e => { console.warn('匯入後立即存檔失敗:', e.message); noteSaveResult(false); });
       return;
     }
     saveDebouncerRef.current = setTimeout(() => {
       fetch('/api/state', { method: 'PUT', headers, body })
         .then(async r => {
           done(r.ok);
+          noteSaveResult(r.ok, r.status);
           if (!r.ok) { console.warn('自動存檔失敗 HTTP', r.status); return; }
           // 伺服器因權限／廠商歸屬過濾掉部分人員時要出聲，不能靜靜地當作存檔成功
           const j = await r.json().catch(() => null);
@@ -12461,7 +12754,7 @@ export default function App() {
             syncFromServerBackground();
           }
         })
-        .catch(e => console.warn('狀態同步失敗:', e.message));
+        .catch(e => { console.warn('狀態同步失敗:', e.message); noteSaveResult(false); });
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames, attendData, extras,
@@ -12477,7 +12770,7 @@ export default function App() {
     if (!token) return;
     if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
     const body = JSON.stringify({ attendData, extras });
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
     if (forceSaveRef.current) {
       forceSaveRef.current = false;
       fetch('/api/attendance', { method: 'PUT', headers, body })
@@ -12597,7 +12890,7 @@ export default function App() {
     selectedWorkArea, setSelectedWorkArea,
     workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
-    schedule, setSchedule: setScheduleTracked, applyRemoteSchedule,
+    schedule, setSchedule: setScheduleTracked, applyRemoteSchedule, saveIssue,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
@@ -12745,8 +13038,31 @@ export default function App() {
             {/* 全域倉別 / 課別選擇列 */}
             {currentUser.role !== ROLES.WORKER && <WarehouseDeptBar />}
 
+            {/* 存檔異常橫幅：務必讓使用者當下就知道「現在改的東西沒有存進去」 */}
+            {saveIssue && (
+              <div className={`px-4 py-2 text-sm font-medium flex items-center gap-2 flex-wrap
+                ${saveIssue.kind === 'outdated'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-amber-500 text-white'}`}>
+                {saveIssue.kind === 'outdated' ? (
+                  <>
+                    <span>⚠ 頁面版本過舊，您的異動<strong>沒有儲存</strong>。請重新整理後再操作。</span>
+                    <button onClick={() => window.location.reload()}
+                      className="px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-xs">
+                      立即重新整理
+                    </button>
+                  </>
+                ) : (
+                  <span>
+                    ⚠ 目前<strong>無法儲存</strong>（可能是網路中斷）。請確認連線，此期間的異動可能不會保留。
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* 資料健檢面板（右側滑出，僅管理員）：由篩選列或系統設定叫出 */}
             <HealthDrawer />
+            <RestoreDrawer />
 
             <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
