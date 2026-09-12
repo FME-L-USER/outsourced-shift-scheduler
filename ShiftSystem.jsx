@@ -1851,115 +1851,192 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 // WAREHOUSE / DEPT SELECTOR BAR
 // ─────────────────────────────────────────────
 
-/** 資料健檢與合併面板：先檢查、確認後才合併 */
-function DataHealthPanel() {
+/** 開啟資料健檢面板（右側滑出）。以事件傳遞，讓設定頁與篩選列都能叫出同一個面板 */
+const openHealthDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-health'));
+
+/** 資料健檢與合併：右側滑出面板，先檢查、確認後才合併 */
+function HealthDrawer() {
   const { toast } = useToast();
+  const { currentUser } = useApp();
+  const [open, setOpen] = useState(false);
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
+  const isAdmin = currentUser?.role === ROLES.ADMIN;
 
+  const [err, setErr] = useState('');
+
+  // 任何非預期的回應都要明確報錯。伺服器若尚未更新，這些網址會被當成一般網頁
+  // 請求而回傳首頁（HTTP 200 但內容是 HTML），若不處理就會卡在「處理中…」。
   const call = async (path, method = 'GET') => {
     const token = localStorage.getItem(JWT_KEY);
-    if (!token) return null;
-    const r = await fetch(path, { method, headers: { Authorization: `Bearer ${token}` } });
-    if (!r.ok) { toast('執行失敗，請稍後再試', 'error'); return null; }
-    return r.json();
+    if (!token) { setErr('尚未登入或登入已逾時，請重新登入'); return null; }
+    try {
+      const r = await fetch(path, { method, headers: { Authorization: `Bearer ${token}` } });
+      const ct = r.headers.get('content-type') ?? '';
+      if (!ct.includes('application/json')) {
+        setErr('伺服器尚未提供此功能（系統可能還沒更新到最新版本），請通知系統管理員。');
+        return null;
+      }
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d) { setErr(d?.error || `執行失敗（HTTP ${r.status}）`); return null; }
+      return d;
+    } catch (e) {
+      setErr('連線失敗，請檢查網路後再試：' + e.message);
+      return null;
+    }
   };
 
-  const check = async () => {
+  const check = useCallback(async () => {
     setBusy(true);
-    const d = await call('/api/maintenance/health');
-    setBusy(false);
-    if (d?.report) { setReport(d.report); toast('健檢完成', 'success'); }
-  };
+    setErr('');
+    try {
+      const d = await call('/api/maintenance/health');
+      if (d?.report) setReport(d.report);
+    } finally {
+      setBusy(false);   // 無論成功或失敗都要解除忙碌狀態
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const h = () => { setOpen(true); check(); };
+    window.addEventListener('vsp-open-health', h);
+    return () => window.removeEventListener('vsp-open-health', h);
+  }, [isAdmin, check]);
+
+  useEffect(() => {
+    if (!open) return;
+    const esc = e => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [open]);
 
   const merge = async () => {
     if (!report) return;
+    const dropCount = report.duplicates.reduce((a, d) => a + d.drops.length, 0);
     if (!window.confirm(
-      `將把 ${report.duplicates.length} 位人員的重複記錄合併：
-` +
-      `． 救回 ${report.totalRestore} 格被洗掉的休／例／國
-` +
-      `． 移除 ${report.duplicates.reduce((a, d) => a + d.drops.length, 0)} 筆重複的清冊記錄
-
-` +
-      `執行前會自動備份，且不會覆蓋現有的排班。確定執行？`)) return;
+      '將把 ' + report.duplicates.length + ' 位人員的重複記錄合併：\n' +
+      '． 救回 ' + report.totalRestore + ' 格被洗掉的休／例／國\n' +
+      '． 移除 ' + dropCount + ' 筆重複的清冊記錄\n\n' +
+      '執行前會自動備份，且不會覆蓋現有的排班。確定執行？')) return;
     setBusy(true);
-    const d = await call('/api/maintenance/merge-duplicates', 'POST');
-    setBusy(false);
+    setErr('');
+    let d = null;
+    try { d = await call('/api/maintenance/merge-duplicates', 'POST'); }
+    finally { setBusy(false); }
     if (d?.ok) {
       toast(`合併完成：救回 ${d.merged} 格、移除 ${d.removed} 筆重複記錄`, 'success');
       check();
     }
   };
 
-  return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <button onClick={check} disabled={busy}
-          className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
-          {busy ? '處理中…' : '開始健檢'}
-        </button>
-        {report && report.duplicates.length > 0 && (
-          <button onClick={merge} disabled={busy}
-            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
-            執行合併
-          </button>
-        )}
-      </div>
+  if (!isAdmin || !open) return null;
 
-      {report && (
-        <div className="text-xs text-slate-600 space-y-3">
-          <div className="flex flex-wrap gap-x-5 gap-y-1">
-            <span>清冊人數：<b>{report.employees}</b></span>
-            <span>班表資料列：<b>{report.scheduleRows}</b></span>
-            <span>重複人員：<b className={report.duplicates.length ? 'text-red-600' : 'text-teal-700'}>{report.duplicates.length}</b></span>
-            <span>可救回格數：<b className={report.totalRestore ? 'text-red-600' : 'text-teal-700'}>{report.totalRestore}</b></span>
-            <span>孤兒資料列：<b className={report.orphans.length ? 'text-amber-600' : 'text-teal-700'}>{report.orphans.length}</b></span>
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex justify-end"
+         onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
+      <div className="absolute inset-0 bg-black/30" />
+      <aside className="relative bg-white h-full w-full max-w-[640px] shadow-2xl flex flex-col border-l border-[#DDD9D0]">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-[#DDD9D0] shrink-0">
+          <div>
+            <h3 className="font-bold text-slate-800">🩺 資料健檢與合併</h3>
+            <p className="text-xs text-slate-500 mt-0.5">找出重複的人員記錄，把舊記錄底下的排休救回現用記錄</p>
+          </div>
+          <button onClick={() => setOpen(false)}
+            className="text-slate-400 hover:text-slate-600 text-xl leading-none px-2">✕</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 text-sm">
+          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            早期清冊匯入以未正規化的員編比對，同一個人可能被當成新人重建，舊記錄底下的休／例／國
+            會留在資料庫但畫面上看不到。健檢<strong>只讀取不異動</strong>；合併只在現用記錄該格是
+            「V 或空白」時才寫入舊值，<strong>不會覆蓋現有排班</strong>，且執行前自動備份。
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <button onClick={check} disabled={busy}
+              className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC] disabled:opacity-40">
+              {busy ? '處理中…' : '重新健檢'}
+            </button>
+            {report && report.duplicates.length > 0 && (
+              <button onClick={merge} disabled={busy}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+                執行合併
+              </button>
+            )}
           </div>
 
-          {report.duplicates.length === 0 && report.orphans.length === 0 && (
-            <p className="text-teal-700">✅ 未發現重複或孤兒資料。</p>
-          )}
-
-          {report.duplicates.length > 0 && (
-            <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-[#F5F2EC] text-slate-500">
-                  <tr>
-                    <th className="px-2 py-1.5 text-left">員工編號</th>
-                    <th className="px-2 py-1.5 text-left">姓名</th>
-                    <th className="px-2 py-1.5 text-right">重複筆數</th>
-                    <th className="px-2 py-1.5 text-right">可救回格數</th>
-                    <th className="px-2 py-1.5 text-left">範例（日期：舊值）</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.duplicates.map(d => (
-                    <tr key={d.key} className="border-t border-[#EFEBE3]">
-                      <td className="px-2 py-1.5 font-mono">{d.empNo}</td>
-                      <td className="px-2 py-1.5">{d.name}</td>
-                      <td className="px-2 py-1.5 text-right">{d.drops.length}</td>
-                      <td className="px-2 py-1.5 text-right font-semibold text-red-600">{d.restoreCount}</td>
-                      <td className="px-2 py-1.5 text-slate-500">
-                        {d.restoreSample.map(x => `${x.dk}:${x.after}`).join('、') || '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {err && (
+            <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs leading-relaxed">
+              {err}
             </div>
           )}
 
-          {report.orphans.length > 0 && (
-            <p className="text-amber-700">
-              另有 <b>{report.orphans.length}</b> 列班表資料在清冊中已無對應人員（共
-              {report.orphans.reduce((a, o) => a + o.nonV, 0)} 格非 V 的內容）。
-              這些資料無法判斷歸屬，工具不會自動處理，需要時請提供給維護人員人工比對。
-            </p>
+          {!report && !err && <p className="text-slate-400 text-xs">健檢中…</p>}
+
+          {report && (
+            <div className="text-xs text-slate-600 space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  ['清冊人數', report.employees, ''],
+                  ['班表資料列', report.scheduleRows, ''],
+                  ['重複人員', report.duplicates.length, report.duplicates.length ? 'text-red-600' : 'text-teal-700'],
+                  ['可救回格數', report.totalRestore, report.totalRestore ? 'text-red-600' : 'text-teal-700'],
+                  ['孤兒資料列', report.orphans.length, report.orphans.length ? 'text-amber-600' : 'text-teal-700'],
+                ].map(([t, v, c]) => (
+                  <div key={t} className="border border-[#DDD9D0] rounded-lg px-3 py-2">
+                    <div className="text-[11px] text-slate-400">{t}</div>
+                    <div className={`text-lg font-bold ${c || 'text-slate-700'}`}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {report.duplicates.length === 0 && report.orphans.length === 0 && (
+                <p className="text-teal-700">✅ 未發現重複或孤兒資料。</p>
+              )}
+
+              {report.duplicates.length > 0 && (
+                <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#F5F2EC] text-slate-500">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left">員工編號</th>
+                        <th className="px-2 py-1.5 text-left">姓名</th>
+                        <th className="px-2 py-1.5 text-right">重複</th>
+                        <th className="px-2 py-1.5 text-right">可救回</th>
+                        <th className="px-2 py-1.5 text-left">範例（日期：舊值）</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.duplicates.map(d => (
+                        <tr key={d.key} className="border-t border-[#EFEBE3] align-top">
+                          <td className="px-2 py-1.5 font-mono whitespace-nowrap">{d.empNo}</td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">{d.name}</td>
+                          <td className="px-2 py-1.5 text-right">{d.drops.length}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold text-red-600">{d.restoreCount}</td>
+                          <td className="px-2 py-1.5 text-slate-500">
+                            {d.restoreSample.map(x => `${x.dk}:${x.after}`).join('、') || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {report.orphans.length > 0 && (
+                <p className="text-amber-700 leading-relaxed">
+                  另有 <b>{report.orphans.length}</b> 列班表資料在清冊中已無對應人員（共
+                  {report.orphans.reduce((a, o) => a + o.nonV, 0)} 格非 V 的內容）。
+                  這些資料無法判斷歸屬，工具不會自動處理，需要時請提供給維護人員人工比對。
+                </p>
+              )}
+            </div>
           )}
         </div>
-      )}
-    </div>
+      </aside>
+    </div>,
+    document.body
   );
 }
 
@@ -2125,7 +2202,16 @@ function WarehouseDeptBar() {
       {/* Desktop */}
       <div className="hidden md:flex items-center gap-2 px-4 py-2 flex-wrap text-sm">
         {selects}
-        <span className="ml-auto"><SnapshotBadge /></span>
+        <span className="ml-auto flex items-center gap-2">
+          <SnapshotBadge />
+          {currentUser?.role === ROLES.ADMIN && (
+            <button onClick={openHealthDrawer} title="資料健檢與合併"
+              className="hidden md:inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border
+                         border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC] whitespace-nowrap">
+              🩺 資料健檢
+            </button>
+          )}
+        </span>
       </div>
       {/* Mobile: 摺疊列 */}
       <div className="md:hidden">
@@ -8889,7 +8975,10 @@ function Settings() {
           會留在資料庫但畫面上看不到。此工具先<strong>只檢查不異動</strong>，確認報告後再執行合併。
           <br />合併只會在現用記錄該格是「V 或空白」時才寫入舊值，<strong>不會覆蓋您現有的排班</strong>，且執行前會自動備份。
         </p>
-        <DataHealthPanel />
+        <button onClick={openHealthDrawer}
+          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+          開始健檢（於右側面板顯示）
+        </button>
       </SettingsSection>)}
 
       {/* ── 作業區設定 ── */}
@@ -12458,6 +12547,9 @@ export default function App() {
 
             {/* 全域倉別 / 課別選擇列 */}
             {currentUser.role !== ROLES.WORKER && <WarehouseDeptBar />}
+
+            {/* 資料健檢面板（右側滑出，僅管理員）：由篩選列或系統設定叫出 */}
+            <HealthDrawer />
 
             <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
