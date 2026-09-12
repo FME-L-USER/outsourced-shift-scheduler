@@ -125,6 +125,7 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
+const ROLE_LABEL = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員', temp: '臨時人力' };
 const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker', TEMP: 'temp' };
 // 臨時人力自助簽到僅開放給手機控管實際使用的倉別
 const TEMP_WAREHOUSE = '大肚倉';
@@ -1854,6 +1855,169 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 // WAREHOUSE / DEPT SELECTOR BAR
 // ─────────────────────────────────────────────
 
+/** 開啟「班表異動軌跡」面板 */
+const openAuditDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-audit'));
+
+/**
+ * 班表異動軌跡（右側滑出，日翊與管理員）。
+ * 排班爭議不該靠回憶或推論：這裡直接顯示每一格是誰、什麼時候、從什麼改成什麼。
+ */
+function AuditDrawer() {
+  const { currentUser } = useApp();
+  const [open, setOpen] = useState(false);
+  const [empNo, setEmpNo] = useState('');
+  const [dk, setDk]       = useState('');
+  const [rows, setRows]   = useState(null);
+  const [busy, setBusy]   = useState(false);
+  const [err, setErr]     = useState('');
+  const canSee = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA;
+
+  useEffect(() => {
+    if (!canSee) return;
+    const h = () => { setOpen(true); setErr(''); };
+    window.addEventListener('vsp-open-audit', h);
+    return () => window.removeEventListener('vsp-open-audit', h);
+  }, [canSee]);
+
+  useEffect(() => {
+    if (!open) return;
+    const esc = e => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [open]);
+
+  const query = async () => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) { setErr('尚未登入或登入已逾時，請重新登入'); return; }
+    setBusy(true); setErr(''); setRows(null);
+    try {
+      const q = new URLSearchParams();
+      if (empNo.trim()) q.set('empNo', empNo.trim());
+      if (dk.trim())    q.set('dk', dk.trim());
+      const r = await fetch('/api/audit/schedule?' + q.toString(),
+        { headers: { Authorization: `Bearer ${token}` } });
+      const ct = r.headers.get('content-type') ?? '';
+      if (!ct.includes('application/json')) {
+        setErr('伺服器尚未提供此功能（系統可能還沒更新到最新版本）。');
+        return;
+      }
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d) { setErr(d?.error || `查詢失敗（HTTP ${r.status}）`); return; }
+      setRows(d.rows ?? []);
+    } catch (e) {
+      setErr('連線失敗：' + e.message);
+    } finally { setBusy(false); }
+  };
+
+  if (!canSee || !open) return null;
+
+  const fmt = t => {
+    const d = new Date(t), p = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const val = v => (v == null || v === '' ? '空白' : v);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex justify-end"
+         onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
+      <div className="absolute inset-0 bg-black/30" />
+      <aside className="relative bg-white h-full w-full max-w-[720px] shadow-2xl flex flex-col border-l border-[#DDD9D0]">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-[#DDD9D0] shrink-0">
+          <div>
+            <h3 className="font-bold text-slate-800">📜 班表異動軌跡</h3>
+            <p className="text-xs text-slate-500 mt-0.5">查每一格是誰、什麼時候、從什麼改成什麼</p>
+          </div>
+          <button onClick={() => setOpen(false)}
+            className="text-slate-400 hover:text-slate-600 text-xl leading-none px-2">✕</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 text-sm">
+          <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+            自 2026/09/12 起，任何人更動任何一格班別都會留下紀錄（保留 90 天）。
+            此處<strong>僅供查閱，不會異動任何資料</strong>。
+          </p>
+
+          {err && (
+            <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs">
+              {err}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-end gap-2 mb-4">
+            <label className="block">
+              <span className="block text-xs font-medium text-slate-600 mb-1">員工編號</span>
+              <input value={empNo} onChange={e => setEmpNo(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') query(); }}
+                placeholder="例：CY11202052"
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
+            </label>
+            <label className="block">
+              <span className="block text-xs font-medium text-slate-600 mb-1">日期（選填）</span>
+              <input value={dk} onChange={e => setDk(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') query(); }}
+                placeholder="例：2026-10-11"
+                className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-40" />
+            </label>
+            <button onClick={query} disabled={busy}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+              {busy ? '查詢中…' : '查詢'}
+            </button>
+          </div>
+
+          {rows && rows.length === 0 && (
+            <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs leading-relaxed">
+              <strong>查無任何異動紀錄。</strong>
+              代表這些格子從來沒有存進伺服器（例如當時網路中斷、或存檔被擋下），
+              而不是存進去之後被別人改掉。
+            </div>
+          )}
+
+          {rows && rows.length > 0 && (
+            <>
+              <p className="text-xs text-slate-500 mb-2">共 {rows.length} 筆，由新到舊。</p>
+              <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#F5F2EC] text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">時間</th>
+                      <th className="px-2 py-1.5 text-left">操作者</th>
+                      <th className="px-2 py-1.5 text-left">身分</th>
+                      <th className="px-2 py-1.5 text-left">員工</th>
+                      <th className="px-2 py-1.5 text-left">日期</th>
+                      <th className="px-2 py-1.5 text-left">異動</th>
+                      <th className="px-2 py-1.5 text-left">IP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className="border-t border-[#EFEBE3]">
+                        <td className="px-2 py-1.5 whitespace-nowrap">{fmt(r.at)}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap font-mono">{r.username}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{ROLE_LABEL[r.role] ?? r.role}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{r.emp_no} {r.emp_name}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{r.dk}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <span className="text-slate-400">{val(r.before_val)}</span>
+                          <span className="mx-1">→</span>
+                          <strong className={r.after_val === 'V' ? 'text-slate-700' : 'text-red-600'}>
+                            {val(r.after_val)}
+                          </strong>
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-400">{r.ip}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+}
+
 /** 開啟「從備份還原班表」面板 */
 const openRestoreDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-restore'));
 
@@ -2676,6 +2840,13 @@ function WarehouseDeptBar() {
               ⏱ 還原
             </button>
           </>)}
+          {(currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA) && (
+            <button onClick={openAuditDrawer} title="班表異動軌跡"
+              className="hidden md:inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border
+                         border-[#DDD9D0] text-slate-500 hover:bg-[#F5F2EC] whitespace-nowrap">
+              📜 異動軌跡
+            </button>
+          )}
         </span>
       </div>
       {/* Mobile: 摺疊列 */}
@@ -13122,6 +13293,7 @@ export default function App() {
             {/* 資料健檢面板（右側滑出，僅管理員）：由篩選列或系統設定叫出 */}
             <HealthDrawer />
             <RestoreDrawer />
+            <AuditDrawer />
 
             <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
