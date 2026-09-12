@@ -970,7 +970,7 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
   const IDENTITY_INFO = {
     riyi:       { text: '使用公司 AD 帳號（Windows 登入帳號）及密碼登入', color: 'bg-teal-50 border-blue-100 text-blue-700' },
     vendor_mgr: { text: '須請日翊申請，或由委外人員升級廠商幹部', color: 'bg-teal-50 border-teal-100 text-emerald-700' },
-    worker:     { text: '帳號為員工編號；首次登入密碼為員工編號，登入後須立即修改', color: 'bg-amber-50 border-amber-100 text-amber-700' },
+    worker:     { text: '帳號與密碼皆為員工編號，不需另外設定密碼', color: 'bg-amber-50 border-amber-100 text-amber-700' },
     temp:       { text: `${TEMP_WAREHOUSE}當日臨時支援人力，免帳號密碼；填寫廠商、班別與姓名即可簽到`, color: 'bg-violet-50 border-violet-100 text-violet-700' },
   };
 
@@ -1122,11 +1122,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
         return;
       }
       // ── 以下為連不上伺服器時的本機備援 ──
-      const storedPwd = workerPwds[emp.empId];
-      const isFirstLogin = !storedPwd;
-      const pwdOk = storedPwd
-        ? await verifyPwd(password, storedPwd)
-        : (password === emp.empId);   // 首次登入：密碼必須等於員編
+      // 委外人員一律「帳號＝密碼＝員工編號」，不再有自訂密碼
+      const pwdOk = String(password).trim() === String(emp.empId ?? '').trim();
       if (!pwdOk) {
         const r = recordFail(uKey);
         setError(r.locked ? '登入失敗次數過多，帳號已鎖定 15 分鐘' : `密碼錯誤（已失敗 ${r.count}/5 次）`);
@@ -1138,14 +1135,14 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       onLogin({
         id: 'worker_' + emp.id,
         username: emp.empId,
-        password: storedPwd ?? emp.empId,
+        password: emp.empId,
         name: emp.name,
         role: ROLES.WORKER,
         vendors: emp.vendor ? [emp.vendor] : [],
         empId: emp.empId,
         employeeId: emp.id,
         approved: true,
-        mustChangePassword: isFirstLogin,
+        mustChangePassword: false,
       }, workerToken);
       return;
     }
@@ -10332,7 +10329,9 @@ function AccountManagement() {
       if (r.ok) {
         // 委外人員密碼同時存在本機快取，一併清除以免舊密碼被誤用
         if (kind === 'worker') setWorkerPwds(prev => { const n = { ...prev }; delete n[target]; return n; });
-        toast(`${label} 密碼已重設，請以「${d.defaultPassword}」登入並設定新密碼`, 'success');
+        toast(kind === 'worker'
+          ? `${label} 請以員工編號「${d.defaultPassword}」登入（委外人員帳密皆為員工編號）`
+          : `${label} 密碼已重設，請以「${d.defaultPassword}」登入並設定新密碼`, 'success');
       } else {
         toast(d.error || '密碼重設失敗', 'error');
       }
@@ -12219,8 +12218,8 @@ export default function App() {
     );
   }
 
-  // 首次登入強制改密碼
-  if (currentUser.mustChangePassword) {
+  // 首次登入強制改密碼（委外人員已改為帳密皆為員工編號，一律跳過）
+  if (currentUser.mustChangePassword && currentUser.role !== ROLES.WORKER) {
     const isWorker = currentUser.role === ROLES.WORKER;
     return (
       <ToastProvider>

@@ -1447,28 +1447,16 @@ app.post('/api/auth/worker-login', async (req, res) => {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
     const data = rows[0]?.data ?? {};
     const employees  = data.employees  ?? [];
-    const workerPwds = data.workerPwds ?? {};
 
     const emp = employees.find(e => String(e.empId ?? '').trim() === String(empId).trim());
     if (!emp) return res.status(401).json({ error: '員工編號不存在' });
 
-    // 密碼以員編為索引。員編若夾帶看不見的空白（Excel 匯入很常見），
-    // 存密碼與查密碼用的字串就可能不一致，導致「昨天還能登入，清冊重新匯入後
-    // 新密碼就說錯誤、只有員編進得去」。一律以去空白後的員編為準，
-    // 並相容早期用原始字串存進去的資料。
+    // 依日翊決定：委外人員一律「帳號＝密碼＝員工編號」，不再自訂密碼。
+    // 現場多為輪替人力與共用裝置，自訂密碼造成大量忘記密碼與登入不了的狀況；
+    // 委外端只看得到自己的班表，故接受此風險。app_state.workerPwds 不再參與驗證。
     const pwdKey = String(emp.empId ?? '').trim();
-    const stored = workerPwds[pwdKey] ?? workerPwds[emp.empId];
-    let ok = false;
-    if (stored) {
-      ok = await verifyPbkdf2(password, stored);
-    } else {
-      // 首次登入：密碼必須等於員編
-      ok = (password === pwdKey);
-    }
-    if (!ok) {
-      // 記錄「伺服器上到底有沒有這筆密碼」，才能分辨是使用者打錯，
-      // 還是密碼根本沒存進來／索引對不上。不記錄任何密碼內容。
-      console.warn(`worker-login 失敗：empId=${pwdKey} 伺服器${stored ? '有' : '無'}密碼紀錄`);
+    if (String(password).trim() !== pwdKey) {
+      console.warn(`worker-login 失敗：empId=${pwdKey} 密碼與員編不符`);
       return res.status(401).json({ error: '密碼錯誤' });
     }
     // 委外人員多半不存在於 users 表（清冊人員直接以員編登入），原本的 UPDATE 匹配不到任何列，
@@ -1497,7 +1485,7 @@ app.post('/api/auth/worker-login', async (req, res) => {
     res.json({
       ok: true,
       token,
-      firstLogin: !stored,
+      firstLogin: false,   // 委外人員不再需要設定密碼
       emp: { id: emp.id, empId: emp.empId, name: emp.name, vendor: emp.vendor ?? '' },
     });
   } catch (e) {
@@ -1507,29 +1495,10 @@ app.post('/api/auth/worker-login', async (req, res) => {
 });
 
 // ── PUT /api/auth/worker-password ────────────────────────
-// 委外人員設定/變更密碼：真正寫入伺服器 workerPwds，避免只存在
-// 瀏覽器本機（Teams 等內嵌瀏覽器可能不保留本機資料，每次都被
-// 當成「首次登入」）
-app.put('/api/auth/worker-password', requireAuth, async (req, res) => {
-  if (req.user?.role !== 'worker') return res.status(403).json({ error: '無存取權限' });
-  const { passwordHash } = req.body ?? {};
-  if (!passwordHash || !passwordHash.startsWith('pbkdf2:')) return res.status(400).json({ error: '密碼格式錯誤' });
-  const empId = String(req.user.username ?? '').trim();
-  try {
-    const newHash = passwordHash;
-    await pool.query(
-      `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
-       ON CONFLICT (id) DO UPDATE
-         SET data = jsonb_set(app_state.data, '{workerPwds}',
-               COALESCE(app_state.data->'workerPwds', '{}'::jsonb) || $1::jsonb->'workerPwds'),
-             updated_at = NOW()`,
-      [JSON.stringify({ workerPwds: { [empId]: newHash } })]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('worker-password error:', e.message);
-    res.status(500).json({ error: '伺服器錯誤' });
-  }
+// 委外人員已改為「帳號＝密碼＝員工編號」，不再提供自訂密碼。
+// 保留路由只為讓尚未更新程式的舊分頁得到明確回應，不再寫入任何密碼。
+app.put('/api/auth/worker-password', requireAuth, async (_req, res) => {
+  res.status(410).json({ error: '委外人員已改為帳號密碼皆為員工編號，不需設定密碼' });
 });
 
 // ── PUT /api/auth/vendor-password ────────────────────────
