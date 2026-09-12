@@ -5211,7 +5211,7 @@ function fuzzyMatch(headers) {
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
     warehouses, setWarehouses, vendors, setVendors, workAreas,
-    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, saveNow, triggerForceSave } = useApp();
+    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, saveNow, triggerForceSave, markEmployeeDeleted } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -5278,6 +5278,7 @@ function EmployeeRoster() {
   };
 
   const handleDelete = (id) => {
+    markEmployeeDeleted(id);   // 明確告知伺服器這是刪除，而非名單不完整
     setEmployees(prev => prev.filter(e => e.id !== id));
     setSchedule(prev => { const n = { ...prev }; delete n[id]; return n; });
     toast('人員已移除', 'info');
@@ -12218,6 +12219,14 @@ export default function App() {
     LS.set('sms_dirty_cells', out);
   };
   const applyingRemoteRef = useRef(false);
+  // 明確刪除的人員 id：伺服器只接受這份清單，不再從「名單裡沒有」推論刪除。
+  // 同樣寫入 localStorage，避免刪完 2 秒內關掉分頁就漏送。
+  const deletedEmpsRef = useRef(new Set(LS.get('sms_deleted_emps', [])));
+  const markEmployeeDeleted = useCallback((id) => {
+    if (!id) return;
+    deletedEmpsRef.current.add(String(id));
+    LS.set('sms_deleted_emps', [...deletedEmpsRef.current]);
+  }, []);
   // 存檔異常提示：斷線或伺服器拒絕時，畫面必須明講，否則使用者會以為存好了，
   // 而未存檔的內容在 10 分鐘後就會被放棄。
   const [saveIssue, setSaveIssue] = useState(null);   // { kind:'offline'|'outdated', since:number }
@@ -12693,7 +12702,8 @@ export default function App() {
       body: JSON.stringify((() => {
         const { schedule: _full, ...rest } = latestStateRef.current;
         const d = buildDirtySchedule(sentCells, scheduleRef.current);
-        return Object.keys(d).length > 0 ? { ...rest, schedule: d } : rest;
+        const del = deletedEmpsRef.current.size > 0 ? { deletedEmployees: [...deletedEmpsRef.current] } : {};
+        return Object.keys(d).length > 0 ? { ...rest, ...del, schedule: d } : { ...rest, ...del };
       })()),
     }).then(async r => {
       noteSaveResult(r.ok, r.status);
@@ -12758,13 +12768,22 @@ export default function App() {
     const sentCells = [...dirtyCellsRef.current];
     // 沒有異動時不帶 schedule（送 {} 會被伺服器的 jsonb 合併當成「清空整份班表」）
     const dirtySchedule = buildDirtySchedule(sentCells, scheduleRef.current);
-    const clearSent = () => { sentCells.forEach(k => dirtyCellsRef.current.delete(k)); persistDirty(); };
+    const sentDeletes = [...deletedEmpsRef.current];
+    const clearSent = () => {
+      sentCells.forEach(k => dirtyCellsRef.current.delete(k));
+      persistDirty();
+      if (sentDeletes.length > 0) {
+        sentDeletes.forEach(id => deletedEmpsRef.current.delete(id));
+        LS.set('sms_deleted_emps', [...deletedEmpsRef.current]);
+      }
+    };
     const body = JSON.stringify({
       employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
       users, workerPwds,
       ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
+      ...(deletedEmpsRef.current.size > 0 ? { deletedEmployees: [...deletedEmpsRef.current] } : {}),
     });
     const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
     dirtyRef.current = true;
@@ -12930,7 +12949,7 @@ export default function App() {
     selectedWorkArea, setSelectedWorkArea,
     workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
-    schedule, setSchedule: setScheduleTracked, applyRemoteSchedule, saveIssue,
+    schedule, setSchedule: setScheduleTracked, applyRemoteSchedule, saveIssue, markEmployeeDeleted,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,

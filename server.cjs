@@ -194,6 +194,9 @@ async function initDB() {
 // 會在下次容器重啟時被打回原狀。故套用後記錄標記，之後一律跳過。
 async function normalizeEmpIds() {
   try {
+    // 一次性校正：整份改寫 employees 有覆蓋風險，套用過就不再執行。
+    // Cloud Run 可能同時啟動多個執行個體，重複執行會互相覆蓋。
+    if (await seedAlreadyApplied('normalizeEmpIds')) return;
     const { rows } = await pool.query("SELECT data->'employees' AS emps FROM app_state WHERE id='main'");
     const emps = rows[0]?.emps;
     if (!Array.isArray(emps) || emps.length === 0) return;
@@ -209,6 +212,7 @@ async function normalizeEmpIds() {
       [JSON.stringify(next)]
     );
     console.log(`員編正規化：修正 ${fixed} 筆前後空白`);
+    await markSeedApplied('normalizeEmpIds');
   } catch (e) {
     console.error('員編正規化失敗:', e.message);
   }
@@ -1821,20 +1825,22 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
         const tomb = { ...(cur._deletedEmployees ?? {}) };
         const now = Date.now();
 
-        // 這次沒送出、但資料庫現有的人 → 視為刪除
-        const removed = curEmps.filter(e => !incomingIds.has(e.id)).map(e => e.id);
-        // 安全閥：一次少掉太多人多半是名單載入不全，不當成刪除（避免整批誤刪）
+        // 刪除必須由前端明講，不能從「這次沒送出」推論。
+        // 舊作法會讓開著舊分頁的人一存檔，就把他清單裡沒有的同仁（例如今天剛
+        // 新增的）當成刪除，連帶那些人的班表變成看不到的孤兒資料。
+        const explicitDeletes = Array.isArray(req.body?.deletedEmployees)
+          ? req.body.deletedEmployees.map(String) : [];
         const MAX_DELETE_PER_SAVE = 30;
-        if (removed.length > MAX_DELETE_PER_SAVE) {
-          console.warn(`PUT /api/state 一次移除 ${removed.length} 位人員，超過上限 ${MAX_DELETE_PER_SAVE}，` +
-                       `視為名單不完整，保留現有資料（user=${req.user?.username}）`);
-          const keep = curEmps.filter(e => !incomingIds.has(e.id));
-          rest.employees = [...rest.employees, ...keep];
+        if (explicitDeletes.length > MAX_DELETE_PER_SAVE) {
+          console.warn(`PUT /api/state 一次要求刪除 ${explicitDeletes.length} 位，超過上限，已忽略（user=${req.user?.username}）`);
         } else {
-          for (const id of removed) tomb[id] = now;
-          if (removed.length > 0)
-            console.log(`PUT /api/state 移除 ${removed.length} 位人員並記錄墓碑（user=${req.user?.username}）`);
+          for (const id of explicitDeletes) tomb[id] = now;
+          if (explicitDeletes.length > 0)
+            console.log(`PUT /api/state 刪除 ${explicitDeletes.length} 位人員並記錄墓碑（user=${req.user?.username}）`);
         }
+        // 沒被明確刪除、但這次名單裡缺少的人一律保留
+        const missing = curEmps.filter(e => !incomingIds.has(e.id) && !tomb[e.id]);
+        if (missing.length > 0) rest.employees = [...rest.employees, ...missing];
 
         // 墓碑保留 90 天後清除，避免無限成長
         const cutoff = now - 90 * 86400000;
