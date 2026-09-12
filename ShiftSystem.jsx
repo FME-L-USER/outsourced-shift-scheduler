@@ -1862,6 +1862,7 @@ function HealthDrawer() {
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState(() => new Set());   // 勾選要合併的員編
+  const [pickedOrphans, setPickedOrphans] = useState(() => new Set());   // 勾選要歸戶的孤兒資料列
   const isAdmin = currentUser?.role === ROLES.ADMIN;
 
   const [err, setErr] = useState('');
@@ -1899,7 +1900,7 @@ function HealthDrawer() {
     setErr('');
     try {
       const d = await call('/api/maintenance/health');
-      if (d?.report) { setReport(d.report); setPicked(new Set()); }
+      if (d?.report) { setReport(d.report); setPicked(new Set()); setPickedOrphans(new Set()); }
     } finally {
       setBusy(false);   // 無論成功或失敗都要解除忙碌狀態
     }
@@ -1940,6 +1941,30 @@ function HealthDrawer() {
     } finally { setBusy(false); }
     if (d?.ok) {
       toast(`合併完成：救回 ${d.merged} 格、移除 ${d.removed} 筆重複記錄`, 'success');
+      check();
+    }
+  };
+
+  const orphanList = (report?.orphans ?? []).filter(o => o.matched && o.restore > 0);
+  const chosenOrphans = orphanList.filter(o => pickedOrphans.has(o.id));
+
+  const adopt = async () => {
+    if (chosenOrphans.length === 0) return;
+    const restore = chosenOrphans.reduce((a, o) => a + o.restore, 0);
+    const names = chosenOrphans.map(o => `${o.empNo} ${o.name ?? ''}`.trim()).join('、');
+    if (!window.confirm(
+      '將把以下 ' + chosenOrphans.length + ' 列失聯的班表資料歸戶：\n' + names + '\n\n' +
+      '． 救回 ' + restore + ' 格被洗掉的休／例／國\n\n' +
+      '執行前會自動備份，且不會覆蓋現有的排班。確定執行？')) return;
+    setBusy(true);
+    setErr('');
+    let d = null;
+    try {
+      d = await call('/api/maintenance/adopt-orphans', 'POST',
+        { ids: chosenOrphans.map(o => o.id) });
+    } finally { setBusy(false); }
+    if (d?.ok) {
+      toast(`歸戶完成：救回 ${d.merged} 格、清除 ${d.removed} 列失聯資料`, 'success');
       check();
     }
   };
@@ -2010,7 +2035,8 @@ function HealthDrawer() {
                   ['班表資料列', report.scheduleRows, ''],
                   ['重複人員', report.duplicates.length, report.duplicates.length ? 'text-red-600' : 'text-teal-700'],
                   ['可救回格數', report.totalRestore, report.totalRestore ? 'text-red-600' : 'text-teal-700'],
-                  ['孤兒資料列', report.orphans.length, report.orphans.length ? 'text-amber-600' : 'text-teal-700'],
+                  ['失聯資料列', report.orphans.length, report.orphans.length ? 'text-amber-600' : 'text-teal-700'],
+                  ['失聯可救回格數', report.orphanRestore ?? 0, report.orphanRestore ? 'text-red-600' : 'text-teal-700'],
                 ].map(([t, v, c]) => (
                   <div key={t} className="border border-[#DDD9D0] rounded-lg px-3 py-2">
                     <div className="text-[11px] text-slate-400">{t}</div>
@@ -2024,7 +2050,13 @@ function HealthDrawer() {
               )}
 
               {report.duplicates.length > 0 && (
-                <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                <div>
+                  <h4 className="font-bold text-slate-700 mb-1">重複的人員記錄</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    「可救回」為 <b>0</b> 的，代表只是清冊裡有兩筆記錄、沒有任何排班資料需要救回；
+                    合併它們只是清理重複，不會改變任何班表。<strong>優先處理可救回大於 0 的。</strong>
+                  </p>
+                  <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-[#F5F2EC] text-slate-500">
                       <tr>
@@ -2070,15 +2102,95 @@ function HealthDrawer() {
                       );})}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
 
               {report.orphans.length > 0 && (
-                <p className="text-amber-700 leading-relaxed">
-                  另有 <b>{report.orphans.length}</b> 列班表資料在清冊中已無對應人員（共
-                  {report.orphans.reduce((a, o) => a + o.nonV, 0)} 格非 V 的內容）。
-                  這些資料無法判斷歸屬，工具不會自動處理，需要時請提供給維護人員人工比對。
-                </p>
+                <div className="pt-2 border-t border-[#EFEBE3]">
+                  <h4 className="font-bold text-slate-700 mb-1">失聯的班表資料</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    這些班表在現行清冊中已找不到對應人員（多半是舊記錄被刪除所致）。
+                    系統改以<strong>歷史備份的清冊</strong>反查原本屬於誰，再對應到現行清冊中同員編的人。
+                    查得到對象且有內容可救回的才會列在下方；<strong>查不到對象的不會顯示，也不會被動到</strong>。
+                  </p>
+
+                  {orphanList.length === 0 ? (
+                    <p className="text-slate-500">
+                      共 {report.orphans.length} 列失聯資料，但都查不到可對應的人員或沒有可救回的內容，工具不會處理。
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <button onClick={adopt} disabled={busy || chosenOrphans.length === 0}
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+                          歸戶勾選的 {chosenOrphans.length} 列
+                        </button>
+                        <button onClick={() => setPickedOrphans(new Set(orphanList.map(o => o.id)))}
+                          className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+                          全選
+                        </button>
+                        {chosenOrphans.length > 0 && (
+                          <button onClick={() => setPickedOrphans(new Set())}
+                            className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-500 hover:bg-[#F5F2EC]">
+                            清除選取
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-[#F5F2EC] text-slate-500">
+                            <tr>
+                              <th className="px-2 py-1.5 w-8"></th>
+                              <th className="px-2 py-1.5 text-left">員工編號</th>
+                              <th className="px-2 py-1.5 text-left">姓名（備份／現行）</th>
+                              <th className="px-2 py-1.5 text-right">可救回</th>
+                              <th className="px-2 py-1.5 text-left">範例（日期：舊值）</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {orphanList.map(o => {
+                              const mismatch = (o.name ?? '') !== (o.targetName ?? '');
+                              return (
+                                <tr key={o.id} className={`border-t border-[#EFEBE3] align-top ${pickedOrphans.has(o.id) ? 'bg-blue-50/60' : ''}`}>
+                                  <td className="px-2 py-1.5">
+                                    <input type="checkbox" checked={pickedOrphans.has(o.id)}
+                                      onChange={e => setPickedOrphans(prev => {
+                                        const n = new Set(prev);
+                                        if (e.target.checked) n.add(o.id); else n.delete(o.id);
+                                        return n;
+                                      })} />
+                                  </td>
+                                  <td className="px-2 py-1.5 font-mono whitespace-nowrap">{o.empNo}</td>
+                                  <td className="px-2 py-1.5 whitespace-nowrap">
+                                    {o.name}
+                                    {mismatch
+                                      ? <div className="text-[11px] text-red-600 font-semibold mt-0.5"
+                                             title="備份中的姓名與現行清冊不同，可能不是同一個人">
+                                          ⚠ 現行為「{o.targetName}」
+                                        </div>
+                                      : <span className="text-slate-400"> → {o.targetName}</span>}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-right font-semibold text-red-600">{o.restore}</td>
+                                  <td className="px-2 py-1.5 text-slate-500">
+                                    {o.restoreSample.map(x => `${x.dk}:${x.after}`).join('、') || '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {report.orphans.length > orphanList.length && (
+                        <p className="text-[11px] text-slate-400 mt-2">
+                          另有 {report.orphans.length - orphanList.length} 列查不到對應人員或沒有可救回的內容，未列出。
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </div>
           )}

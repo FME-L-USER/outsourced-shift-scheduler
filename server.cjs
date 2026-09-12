@@ -1183,23 +1183,76 @@ async function buildHealthReport() {
     });
   }
 
-  // 真正的孤兒：班表存在但清冊已無此內部 id
+  // 真正的孤兒：班表存在但清冊已無此內部 id。
+  // 這些內部 id 在現行清冊裡查不到，但歷史備份的清冊仍保有它們，
+  // 因此可反查出這列班表原本屬於誰，再對應到現行清冊中同員編的人。
   const empIds = new Set(employees.map(e => e.id));
-  const orphans = Object.keys(schedule)
-    .filter(id => !empIds.has(id))
-    .map(id => {
-      const row = schedule[id] ?? {};
-      const dks = Object.keys(row);
-      const nonV = dks.filter(dk => row[dk] && row[dk] !== 'V');
-      return { id, cells: dks.length, nonV: nonV.length, sample: nonV.slice(0, 8) };
-    });
+  const orphanIds = Object.keys(schedule).filter(id => !empIds.has(id));
+
+  const idIndex = new Map();      // 內部 id → { empId, name }（取自歷史備份）
+  if (orphanIds.length > 0) {
+    try {
+      const { rows: bks } = await pool.query(
+        `SELECT data->'employees' AS emps FROM app_state_backup ORDER BY created_at DESC LIMIT 40`);
+      for (const b of bks) {
+        const list = b.emps;
+        if (!Array.isArray(list)) continue;
+        for (const e of list) {
+          if (!e?.id || idIndex.has(e.id)) continue;
+          if (!orphanIds.includes(e.id)) continue;
+          idIndex.set(e.id, { empId: e.empId ?? '', name: e.name ?? '' });
+        }
+      }
+    } catch (e) { console.warn('查歷史備份失敗:', e.message); }
+  }
+
+  // 現行清冊：正規化員編 → 現用記錄
+  const currentByKey = new Map();
+  for (const e of employees) {
+    const k = normEmpKey(e.empId);
+    if (k) currentByKey.set(k, e);   // 後出現者為準，與合併時保留的那筆一致
+  }
+
+  const orphans = orphanIds.map(id => {
+    const row = schedule[id] ?? {};
+    const dks = Object.keys(row);
+    const nonVdks = dks.filter(dk => row[dk] && row[dk] !== 'V');
+    const found = idIndex.get(id) ?? null;
+    const key = found ? normEmpKey(found.empId) : '';
+    const target = key ? currentByKey.get(key) : null;
+    // 現用記錄該格為 V 或空白時才算可救回，與重複合併的規則一致
+    let restore = 0;
+    const restoreSample = [];
+    if (target) {
+      const cur = schedule[target.id] ?? {};
+      for (const dk of nonVdks) {
+        const now = cur[dk];
+        if (now == null || now === 'V') {
+          restore++;
+          if (restoreSample.length < 12) restoreSample.push({ dk, after: row[dk] });
+        }
+      }
+    }
+    return {
+      id, cells: dks.length, nonV: nonVdks.length,
+      sample: nonVdks.slice(0, 8),
+      empNo: found?.empId ?? null,
+      name:  found?.name ?? null,
+      targetId: target?.id ?? null,
+      targetName: target?.name ?? null,
+      matched: !!target,
+      restore, restoreSample,
+    };
+  });
 
   return {
     employees: employees.length,
     scheduleRows: Object.keys(schedule).length,
-    duplicates,
-    orphans,
+    // 可救回多的排前面，方便使用者優先處理真正有資料可救的
+    duplicates: duplicates.sort((a, b) => b.restoreCount - a.restoreCount),
+    orphans: orphans.sort((a, b) => b.restore - a.restore),
     totalRestore: duplicates.reduce((a, d) => a + d.restoreCount, 0),
+    orphanRestore: orphans.reduce((a, o) => a + o.restore, 0),
   };
 }
 
@@ -1280,6 +1333,67 @@ app.post('/api/maintenance/merge-duplicates', requireAuth, requireAdmin, async (
     res.json({ ok: true, merged, removed });
   } catch (e) {
     console.error('merge duplicates error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 孤兒班表歸戶：把指定的孤兒資料列寫回現行清冊中同員編的人。
+// 與重複合併相同的保守規則：只補現用記錄為「V 或空白」的格子，執行前備份。
+app.post('/api/maintenance/adopt-orphans', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : null;
+    if (!ids || ids.length === 0) return res.status(400).json({ error: '請先選擇要歸戶的資料列' });
+
+    const full = await buildHealthReport();
+    const picked = full.orphans.filter(o => ids.includes(o.id) && o.matched);
+    if (picked.length === 0)
+      return res.json({ ok: true, merged: 0, removed: 0, message: '沒有可歸戶的資料列' });
+
+    const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+    const data = rows[0]?.data ?? {};
+    await pool.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)',
+      [data, '孤兒歸戶前備份 ' + new Date().toISOString()]);
+
+    const schedule = { ...(data.schedule ?? {}) };
+    let merged = 0, removed = 0;
+    const audit = [];
+
+    for (const o of picked) {
+      const oldRow = schedule[o.id] ?? {};
+      const target = { ...(schedule[o.targetId] ?? {}) };
+      for (const [dk, v] of Object.entries(oldRow)) {
+        if (!v || v === 'V') continue;
+        const cur = target[dk];
+        if (cur != null && cur !== 'V') continue;
+        audit.push([req.user?.username ?? null, req.user?.role ?? null, clientIp(req),
+                    String(o.targetId), o.empNo ?? null, o.targetName ?? null,
+                    String(dk), cur ?? null, v]);
+        target[dk] = v;
+        merged++;
+      }
+      schedule[o.targetId] = target;
+      delete schedule[o.id];
+      removed++;
+    }
+
+    await pool.query(
+      `UPDATE app_state SET data = jsonb_set(data, '{schedule}', $1::jsonb), updated_at = NOW() WHERE id='main'`,
+      [JSON.stringify(schedule)]
+    );
+
+    if (audit.length > 0) {
+      const vals = audit.map((_, i) => {
+        const b = i * 9;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`;
+      }).join(',');
+      await pool.query(
+        `INSERT INTO schedule_audit (username, role, ip, emp_id, emp_no, emp_name, dk, before_val, after_val)
+         VALUES ${vals}`, audit.flat());
+    }
+    console.log(`孤兒歸戶：救回 ${merged} 格、清除 ${removed} 列（by ${req.user?.username}）`);
+    res.json({ ok: true, merged, removed });
+  } catch (e) {
+    console.error('adopt orphans error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });
   }
 });
