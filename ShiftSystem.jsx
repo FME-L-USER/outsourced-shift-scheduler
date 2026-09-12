@@ -1952,11 +1952,14 @@ function AuditDrawer() {
                 className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
             </label>
             <label className="block">
-              <span className="block text-xs font-medium text-slate-600 mb-1">日期（選填）</span>
+              <span className="block text-xs font-medium text-slate-600 mb-1">班表日期（選填）</span>
               <input value={dk} onChange={e => setDk(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') query(); }}
                 placeholder="例：2026-10-11"
                 className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-40" />
+              <span className="block text-[11px] text-slate-400 mt-0.5">
+                指班表上的那一天，不是異動發生的日期；不確定就留空
+              </span>
             </label>
             <button onClick={query} disabled={busy}
               className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
@@ -1967,6 +1970,7 @@ function AuditDrawer() {
           {rows && rows.length === 0 && (
             <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs leading-relaxed">
               <strong>查無任何異動紀錄。</strong>
+              （若有填「班表日期」，請先清空再查一次——該欄位指的是班表上的日期，例如 2026-10-11。）
               代表這些格子從來沒有存進伺服器（例如當時網路中斷、或存檔被擋下），
               而不是存進去之後被別人改掉。
             </div>
