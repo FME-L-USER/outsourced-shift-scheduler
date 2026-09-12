@@ -1296,14 +1296,17 @@ app.post('/api/maintenance/merge-duplicates', requireAuth, requireAdmin, async (
       [data, '合併前備份 ' + new Date().toISOString()]);
 
     const employees = data.employees ?? [];
-    const schedule  = { ...(data.schedule ?? {}) };
+    const schedule  = data.schedule ?? {};
     const tomb = { ...(data._deletedEmployees ?? {}) };
     const now = Date.now();
     let merged = 0, removed = 0;
     const audit = [];
+    const toWrite = {};
+    const dropRowIds = [];
 
     for (const d of report.duplicates) {
-      const target = { ...(schedule[d.keep.id] ?? {}) };
+      const target = schedule[d.keep.id] ?? {};
+      const days = {};
       for (const drop of d.drops) {
         const oldRow = schedule[drop.id] ?? {};
         for (const [dk, v] of Object.entries(oldRow)) {
@@ -1313,22 +1316,34 @@ app.post('/api/maintenance/merge-duplicates', requireAuth, requireAdmin, async (
           audit.push([req.user?.username ?? null, req.user?.role ?? null, clientIp(req),
                       String(d.keep.id), d.empNo ?? null, d.name ?? null,
                       String(dk), cur ?? null, v]);
-          target[dk] = v;
+          days[dk] = v;
           merged++;
         }
-        delete schedule[drop.id];
+        dropRowIds.push(drop.id);
         tomb[drop.id] = now;      // 加墓碑，避免其他裝置的舊名單把重複記錄加回來
         removed++;
       }
-      schedule[d.keep.id] = target;
+      if (Object.keys(days).length > 0) toWrite[d.keep.id] = days;
     }
 
     const dropIds = new Set(report.duplicates.flatMap(d => d.drops.map(x => x.id)));
     const nextEmployees = employees.filter(e => !dropIds.has(e.id));
 
+    // 班表一律逐格合併，且重複記錄的資料列單獨移除。
+    // 不可把整份 schedule 讀出再寫回：那會把讀取與寫入之間別人剛存的格子抹掉。
+    await mergeScheduleCells(toWrite);
+    for (const id of dropRowIds) {
+      await pool.query(
+        `UPDATE app_state
+            SET data = jsonb_set(data, '{schedule}', COALESCE(data->'schedule','{}'::jsonb) - $1),
+                updated_at = NOW()
+          WHERE id='main'`,
+        [String(id)]
+      );
+    }
     await pool.query(
       `UPDATE app_state SET data = data || $1::jsonb, updated_at = NOW() WHERE id='main'`,
-      [JSON.stringify({ employees: nextEmployees, schedule, _deletedEmployees: tomb })]
+      [JSON.stringify({ employees: nextEmployees, _deletedEmployees: tomb })]
     );
 
     if (audit.length > 0) {
