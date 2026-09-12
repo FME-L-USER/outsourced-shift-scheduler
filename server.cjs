@@ -1180,7 +1180,8 @@ app.put('/api/state', requireAuth, async (req, res) => {
       (rest.workerPwds && Object.keys(rest.workerPwds).length >= 0) ||
       (Array.isArray(rest.employees) && rest.employees.length > 0) ||
       (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
-      rest.deptLocks || rest.deptRanges || rest.deptSegments) {
+      rest.deptLocks || rest.deptRanges || rest.deptSegments ||
+      rest.attendData || rest.extras || rest.dailyDemand || rest.shiftTypesByWh) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1271,6 +1272,46 @@ app.put('/api/state', requireAuth, async (req, res) => {
           .filter(e => !tomb[e.id])
           .map(e => { const prev = curById.get(e.id); return prev ? { ...prev, ...e } : e; });
         rest._deletedEmployees = tomb;
+      }
+
+      // ── 以下欄位原本是「最後存檔的人整份覆蓋」，改為逐筆合併 ──
+      // 這些資料多人同時維護（不同倉、不同課別、不同日期），整份覆蓋會讓
+      // 後存檔者把別人剛改好的內容一起帶回舊值。
+
+      // 點名表：日期 → 員工，兩層合併。同一天不同廠商各自回報不會互蓋。
+      if (rest.attendData && typeof rest.attendData === 'object') {
+        const curAttend = cur.attendData ?? {};
+        const merged = { ...curAttend };
+        for (const [date, dayMap] of Object.entries(rest.attendData)) {
+          if (dayMap && Object.keys(dayMap).length > 0)
+            merged[date] = { ...(curAttend[date] ?? {}), ...dayMap };
+        }
+        rest.attendData = merged;
+      }
+
+      // 臨時人力：逐日期取代（當日名單本來就是整份維護），其餘日期保留
+      if (rest.extras && typeof rest.extras === 'object') {
+        const curExtras = cur.extras ?? {};
+        const merged = { ...curExtras };
+        for (const [date, list] of Object.entries(rest.extras))
+          if (Array.isArray(list)) merged[date] = list;
+        rest.extras = merged;
+      }
+
+      // 需求人數：鍵為「課別|組別|日期」，逐鍵合併，各組別互不影響
+      if (rest.dailyDemand && typeof rest.dailyDemand === 'object')
+        rest.dailyDemand = { ...(cur.dailyDemand ?? {}), ...rest.dailyDemand };
+
+      // 班別設定：以倉別為鍵，逐倉合併。大溪調整班別不會蓋掉大肚的設定。
+      if (rest.shiftTypesByWh && typeof rest.shiftTypesByWh === 'object')
+        rest.shiftTypesByWh = { ...(cur.shiftTypesByWh ?? {}), ...rest.shiftTypesByWh };
+
+      // 作業區、國定假日清單、班別代號對照表是整份維護的清單，沒有可供比對的
+      // 單筆識別，無法逐筆合併；但送出空清單一律視為「尚未載入」而不予採用，
+      // 避免初始化中的裝置把既有設定清空。
+      for (const k of ['workAreas', 'openHolidays', 'shiftCodeRows', 'shiftCodeHeaders']) {
+        if (Array.isArray(rest[k]) && rest[k].length === 0 && Array.isArray(cur[k]) && cur[k].length > 0)
+          delete rest[k];
       }
     } catch (e) {
       // 絕對不可以吞掉後繼續寫入。底下的寫入是 `data = 舊資料 || 新資料`，
@@ -1474,43 +1515,54 @@ app.put('/api/attendance', requireAuth, async (req, res) => {
     extras     = filteredExtras;
   }
 
-  // 讀取現有資料，做員工層級 merge（避免不同廠商寫同一天時互蓋）
-  const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
-  const curAttend = curRows[0]?.data?.attendData ?? {};
-  const curExtras = curRows[0]?.data?.extras     ?? {};
-
   // 空 attendData → 不覆蓋 DB（避免桌機初始化時把空物件寫進 DB，導致其他裝置 init 被清空）
   if (Object.keys(attendData).length === 0 && Object.keys(extras).length === 0)
     return res.json({ ok: true });
 
-  const mergedAttend = { ...curAttend };
-  for (const [date, dayMap] of Object.entries(attendData)) {
-    if (Object.keys(dayMap).length > 0)
-      mergedAttend[date] = { ...(curAttend[date] ?? {}), ...dayMap };
-  }
+  // 逐日期、逐員工合併，且合併由資料庫在同一句 UPDATE 內完成。
+  // 先讀出整份再寫回會有時間差：兩個廠商同時回報時，後寫的那份是依據
+  // 他讀取當下的舊資料算出來的，會把對方剛寫入的內容抹掉。
+  try {
+    await pool.query(
+      `UPDATE app_state SET data = jsonb_set(jsonb_set(data,
+              '{attendData}', COALESCE(data->'attendData', '{}'::jsonb)),
+              '{extras}',     COALESCE(data->'extras',     '{}'::jsonb))
+        WHERE id='main'`);
 
-  const mergedExtras = { ...curExtras };
-  if (role === 'vendor') {
-    const allowedVendorSet = new Set(req.user.vendors ?? []);
-    for (const [date, list] of Object.entries(extras)) {
-      const others = (curExtras[date] ?? []).filter(e => !allowedVendorSet.has(e.vendor));
-      mergedExtras[date] = [...others, ...list];
+    for (const [date, dayMap] of Object.entries(attendData)) {
+      if (!dayMap || Object.keys(dayMap).length === 0) continue;
+      await pool.query(
+        `UPDATE app_state
+            SET data = jsonb_set(data, ARRAY['attendData', $1],
+                  COALESCE(data->'attendData'->$1, '{}'::jsonb) || $2::jsonb),
+                updated_at = NOW()
+          WHERE id='main'`,
+        [String(date), JSON.stringify(dayMap)]
+      );
     }
-  } else {
-    for (const [date, list] of Object.entries(extras)) {
-      mergedExtras[date] = list;
-    }
-  }
 
-  await pool.query(
-    `INSERT INTO app_state (id, data, updated_at) VALUES ('main', $1::jsonb, NOW())
-     ON CONFLICT (id) DO UPDATE
-       SET data = app_state.data
-             || jsonb_build_object('attendData', $1::jsonb->'attendData',
-                                   'extras',     $1::jsonb->'extras'),
-           updated_at = NOW()`,
-    [JSON.stringify({ attendData: mergedAttend, extras: mergedExtras })]
-  );
+    // 臨時人力是清單，沒有逐筆識別；廠商只能換掉自己那幾筆，其餘保留。
+    // 這段仍需先讀當日清單，但範圍縮到「單一日期」，衝突面遠小於整份覆蓋。
+    if (Object.keys(extras).length > 0) {
+      const { rows: exRows } = await pool.query("SELECT data->'extras' AS ex FROM app_state WHERE id='main'");
+      const curExtras = exRows[0]?.ex ?? {};
+      const allowedVendorSet = role === 'vendor' ? new Set(req.user.vendors ?? []) : null;
+      for (const [date, list] of Object.entries(extras)) {
+        const next = allowedVendorSet
+          ? [...(curExtras[date] ?? []).filter(e => !allowedVendorSet.has(e.vendor)), ...(list ?? [])]
+          : (list ?? []);
+        await pool.query(
+          `UPDATE app_state
+              SET data = jsonb_set(data, ARRAY['extras', $1], $2::jsonb), updated_at = NOW()
+            WHERE id='main'`,
+          [String(date), JSON.stringify(next)]
+        );
+      }
+    }
+  } catch (e) {
+    console.error('PUT /api/attendance DB error:', e.message);
+    return res.status(503).json({ error: 'db_unavailable' });
+  }
   res.json({ ok: true });
 });
 
