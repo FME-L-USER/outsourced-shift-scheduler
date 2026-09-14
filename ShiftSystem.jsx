@@ -5935,69 +5935,6 @@ function EmployeeRoster() {
     [...new Set(warehouses.flatMap(w => (w.departments ?? []).flatMap(d => d.groups ?? [])).filter(Boolean))],
     [warehouses]);
 
-  const EmpModal = ({ emp, onSave, onClose, title }) => {
-    const [form, setForm] = useState(emp);
-    const selectFields = [
-      { key: 'vendor', label: '廠商', options: vendorNameOptions },
-      { key: 'dept',   label: '課別', options: deptOptions },
-      { key: 'group',  label: '組別', options: groupOptions },
-    ];
-    return (
-      <Modal onClose={onClose}>
-        <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
-          <h3 className="font-bold text-lg text-slate-800 mb-4">{title}</h3>
-          {[
-            { key: 'empId',  label: '員編' },
-            { key: 'name',   label: '姓名' },
-          ].map(f => (
-            <div key={f.key} className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
-              <input value={form[f.key] ?? ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-            </div>
-          ))}
-          {selectFields.map(f => {
-            const current = form[f.key] ?? '';
-            const options = current && !f.options.includes(current) ? [current, ...f.options] : f.options;
-            return (
-              <div key={f.key} className="mb-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
-                <select value={current} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-                  <option value="">請選擇{f.label}</option>
-                  {options.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </div>
-            );
-          })}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-slate-700 mb-1">狀態</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-              <option>在職</option><option>已離職</option><option>臨時人員</option>
-            </select>
-          </div>
-          {/* 離職日：班表上會直接標示，報表也據此判斷該日是否仍在職，
-              避免離職後殘留的班表被算成應到而拉低到班率 */}
-          {String(form.status ?? '').includes('離職') && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">離職日</label>
-              <input type="date" value={form.leaveDate ?? ''}
-                onChange={e => setForm(p => ({ ...p, leaveDate: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
-              <p className="text-[11px] text-slate-400 mt-1">
-                班表會標示「已離職 M/D」；報表只計算離職日（含）以前的出勤。
-              </p>
-            </div>
-          )}
-          <div className="flex gap-2 justify-end">
-            <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
-            <button onClick={() => onSave(form)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
-          </div>
-        </div>
-      </Modal>
-    );
-  };
 
   return (
     <div className="p-6 space-y-4">
@@ -6149,12 +6086,14 @@ function EmployeeRoster() {
 
       {showAddModal && (
         <EmpModal
+          vendorNameOptions={vendorNameOptions} deptOptions={deptOptions} groupOptions={groupOptions}
           emp={newEmp} title="新增人員" onClose={() => setShowAddModal(false)}
           onSave={form => handleAdd(form)}
         />
       )}
       {editTarget && (
         <EmpModal
+          vendorNameOptions={vendorNameOptions} deptOptions={deptOptions} groupOptions={groupOptions}
           emp={editTarget} title="編輯人員"
           onClose={() => setEditTarget(null)}
           onSave={form => {
@@ -10679,6 +10618,78 @@ const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
   const m = i % 2 === 0 ? '00' : '30';
   return h + m;
 });
+
+/**
+ * 人員編輯／新增對話框。
+ *
+ * 必須定義在模組層級，不可寫在父元件內部：父元件每次重新渲染（本系統每 2 秒
+ * 自動存檔、每 30 秒背景同步都會觸發）都會產生新的元件型別，React 會把整個
+ * 對話框卸載重建，導致輸入中的游標焦點消失、已填內容被重置 ——
+ * 症狀就是「輸入到一半會跳掉」。
+ */
+function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions, groupOptions }) {
+  const [form, setForm] = useState(emp);
+  const selectFields = [
+    { key: 'vendor', label: '廠商', options: vendorNameOptions },
+    { key: 'dept',   label: '課別', options: deptOptions },
+    { key: 'group',  label: '組別', options: groupOptions },
+  ];
+  return (
+    <Modal onClose={onClose}>
+      <div className="bg-white rounded-xl shadow w-full max-w-md p-6">
+        <h3 className="font-bold text-lg text-slate-800 mb-4">{title}</h3>
+        {[
+          { key: 'empId',  label: '員編' },
+          { key: 'name',   label: '姓名' },
+        ].map(f => (
+          <div key={f.key} className="mb-3">
+            <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
+            <input value={form[f.key] ?? ''} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+        ))}
+        {selectFields.map(f => {
+          const current = form[f.key] ?? '';
+          const options = current && !f.options.includes(current) ? [current, ...f.options] : f.options;
+          return (
+            <div key={f.key} className="mb-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
+              <select value={current} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                <option value="">請選擇{f.label}</option>
+                {options.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          );
+        })}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-slate-700 mb-1">狀態</label>
+          <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
+            className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+            <option>在職</option><option>已離職</option><option>臨時人員</option>
+          </select>
+        </div>
+        {/* 離職日：班表上會直接標示，報表也據此判斷該日是否仍在職，
+            避免離職後殘留的班表被算成應到而拉低到班率 */}
+        {String(form.status ?? '').includes('離職') && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-700 mb-1">離職日</label>
+            <input type="date" value={form.leaveDate ?? ''}
+              onChange={e => setForm(p => ({ ...p, leaveDate: e.target.value }))}
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+            <p className="text-[11px] text-slate-400 mt-1">
+              班表會標示「已離職 M/D」；報表只計算離職日（含）以前的出勤。
+            </p>
+          </div>
+        )}
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+          <button onClick={() => onSave(form)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 function ShiftSetup() {
   const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, currentUser,
