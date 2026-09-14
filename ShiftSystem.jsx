@@ -657,11 +657,31 @@ let globalToast = null;
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
+  // 連續操作（例如一格一格點班別）會產生大量相同提示，堆疊起來會蓋住整個畫面。
+  // 作法：相同訊息不重複列出，只把次數累加並延長停留時間；同時最多保留 3 則。
+  const MAX_TOASTS = 3;
   const push = useCallback((message, type = 'info') => {
     const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+    setToasts(prev => {
+      const same = prev.find(t => t.message === message && t.type === type);
+      if (same) {
+        same.expire = Date.now() + 3500;
+        return prev.map(t => t === same ? { ...t, count: (t.count ?? 1) + 1 } : t);
+      }
+      const next = [...prev, { id, message, type, count: 1, expire: Date.now() + 3500 }];
+      return next.slice(-MAX_TOASTS);   // 超過上限時丟掉最舊的
+    });
   }, []);
+
+  // 以單一計時器清除到期的提示，避免每則各自倒數造成重複訊息提早消失
+  useEffect(() => {
+    if (toasts.length === 0) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setToasts(prev => prev.filter(x => (x.expire ?? 0) > now));
+    }, 500);
+    return () => clearInterval(t);
+  }, [toasts.length]);
 
   const remove = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
@@ -684,7 +704,14 @@ function ToastProvider({ children }) {
             className={`flex items-start gap-2 px-4 py-3 rounded-lg shadow-lg text-white text-sm
                         animate-slideIn ${typeStyle[t.type] ?? typeStyle.info}`}
           >
-            <span className="flex-1">{t.message}</span>
+            <span className="flex-1">
+              {t.message}
+              {t.count > 1 && (
+                <span className="ml-1 px-1.5 py-0.5 rounded-full bg-white/25 text-[11px] font-bold">
+                  ×{t.count}
+                </span>
+              )}
+            </span>
             <button onClick={() => remove(t.id)} className="ml-2 opacity-70 hover:opacity-100 text-lg leading-none">&times;</button>
           </div>
         ))}
