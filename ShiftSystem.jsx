@@ -4135,7 +4135,10 @@ function ScheduleTable() {
     if (c !== '休' && c !== '例') return false;
     const [y, m, d] = dk.split('-').map(Number);
     const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    return !!attendData?.[iso]?.[empId]?.present;
+    const rec = attendData?.[iso]?.[empId];
+    // 已被移出當日點名名單者不算到班：移出時僅標記 _excluded，
+    // present 仍保留在紀錄中，若不一併判斷，藍字會在移除後仍然留著。
+    return !!rec?.present && !rec?._excluded;
   }, [schedule, attendData]);
 
   const visibleEmployees = useMemo(() => {
