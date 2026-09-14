@@ -4057,6 +4057,20 @@ function ScheduleTable() {
     : prev.dir === 1 ? { col, dir: -1 }
     : { col: null, dir: 1 });   // 第三次點回到預設排序
 
+  /**
+   * 休假日卻有到班紀錄 → 提醒日翊確認調休。
+   * 情境：某員 9/9 排休但被叫來上班，日翊在點名表手動把他加進來；
+   * 此時 9/9 的「休」以藍字標示，提醒可能忘了把休假調到 9/10。
+   * 待 9/9 改為 V（或取消該日到班紀錄）後，條件不再成立，自動恢復原樣。
+   */
+  const restButWorked = useCallback((empId, dk) => {
+    const c = schedule[empId]?.[dk];
+    if (c !== '休' && c !== '例') return false;
+    const [y, m, d] = dk.split('-').map(Number);
+    const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return !!attendData?.[iso]?.[empId]?.present;
+  }, [schedule, attendData]);
+
   const visibleEmployees = useMemo(() => {
     // 委外人員只能看自己
     if (currentUser.role === ROLES.WORKER) {
@@ -5125,6 +5139,10 @@ function ScheduleTable() {
           </span>
         ))}
         <span className="text-slate-400">（點擊格子切換班別）</span>
+        <span className="text-blue-600" title="當日排休但點名表有到班紀錄，請確認是否需調整休假日">
+          <span className="underline decoration-dotted underline-offset-2 font-bold">休</span>
+          <span className="text-slate-400 ml-1">＝當日有到班紀錄，請確認調休</span>
+        </span>
         <span className="text-slate-400 ml-2">｜下方廠商列顯示「建議／目前」，建議＝當日需求人數 × 該廠商駐廠比例</span>
       </div>
 
@@ -5264,6 +5282,7 @@ function ScheduleTable() {
                           })()
                         : (SHIFT_CODES[code]?.label || code); // 「國」固定顯示「國」，假日名稱只在 tooltip 呈現
                       const info = SHIFT_CODES[code] ?? SHIFT_CODES[''];
+                      const needAdjust = restButWorked(emp.id, dk);   // 休假日卻有到班紀錄
                       const locked = !isEditable(dk, emp);
                       const weekBand = Math.floor(colIdx / 7) % 2 === 1;
                       return (
@@ -5271,6 +5290,7 @@ function ScheduleTable() {
                           onClick={() => handleCellClick(emp.id, dk)}
                           title={notOpenYet
                             ? '此日期尚未開放排班'
+                            : needAdjust ? '當日排休但點名表有到班紀錄，請確認是否需將休假調至其他日'
                             : holidayLabel ? `國定假日：${holidayLabel}`
                             : displayCode !== code ? `班別代號：${displayCode}` : undefined}
                           className={`text-center py-2 border-r border-slate-100 cursor-pointer
@@ -5286,7 +5306,9 @@ function ScheduleTable() {
                           }}>
                           {notOpenYet && rawCell === undefined
                             ? <span className="text-slate-300">·</span>
-                            : (displayCode || <span className="text-slate-300">·</span>)}
+                            : needAdjust
+                              ? <span className="text-blue-600 underline decoration-dotted underline-offset-2">{displayCode}</span>
+                              : (displayCode || <span className="text-slate-300">·</span>)}
                         </td>
                       );
                     })}
@@ -8041,7 +8063,7 @@ function Attendance({ phoneOnly = false }) {
   const [addModal, setAddModal] = useState(false);
   const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
   const [phoneScope, setPhoneScope] = useState('all');   // all | long | temp
-  const [addForm, setAddForm] = useState({ name: '', vendor: '', group: '', note: '' });
+  const [addForm, setAddForm] = useState({ kind: 'long', empId: '', name: '', vendor: '', group: '', note: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
 
@@ -8225,13 +8247,43 @@ function Attendance({ phoneOnly = false }) {
   };
 
   const handleAddExtra = () => {
+    // 長期人員：本來就在清冊裡，不建立臨時人力，而是直接為他建立當日的到班紀錄。
+    // 這樣他會出現在點名表（scopedEmps 對已有紀錄者不會濾掉），
+    // 班表上那天的「休／例」也會轉為藍色，提醒日翊確認是否要調整休假日。
+    if (addForm.kind === 'long') {
+      const emp = employees.find(e => e.id === addForm.empId);
+      if (!emp) { toast('請先選擇人員', 'error'); return; }
+      setRecord(emp.id, { present: true, lateEarly: defaultStatus, absType: '', note: addForm.note });
+      setAddModal(false);
+      setAddForm({ kind: 'long', empId: '', name: '', vendor: '', group: '', note: '' });
+      toast(`已將 ${emp.name} 加入本日點名`, 'success');
+      return;
+    }
     if (!addForm.name.trim()) { toast('姓名為必填', 'error'); return; }
-    const e = { id: 'extra_' + Date.now(), ...addForm, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
+    const { kind: _k, empId: _e, ...rest } = addForm;
+    const e = { id: 'extra_' + Date.now(), ...rest, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
     setExtras(prev => ({ ...prev, [attendDate]: [...(prev[attendDate] ?? []), e] }));
     setAddModal(false);
-    setAddForm({ name: '', vendor: '', group: '', note: '' });
+    setAddForm({ kind: 'temp', empId: '', name: '', vendor: '', group: '', note: '' });
     toast('已新增：' + addForm.name, 'success');
   };
+
+  // 可加入本日點名的長期人員：套用目前篩選範圍、排除已在點名表上的人
+  const addableLongTerm = useMemo(() => {
+    const [sy, sm, sd] = attendDate.split('-').map(Number);
+    const dk = dateKey(sy, sm, sd);
+    const onList = new Set(scopedEmps.map(e => e.id));
+    let list = currentUser.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea)
+      .filter(e => e.status !== '離職' && !onList.has(e.id));
+    return list
+      .map(e => ({ ...e, todayCode: schedule[e.id]?.[dk] ?? '' }))
+      .sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
+                      (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
+  }, [employees, scopedEmps, currentUser, warehouses, selectedWarehouse, selectedDept,
+      selectedGroup, selectedWorkArea, schedule, attendDate]);
 
   const removeExtra = (id) =>
     setExtras(prev => ({ ...prev, [attendDate]: (prev[attendDate] ?? []).filter(e => e.id !== id) }));
@@ -9142,24 +9194,61 @@ function Attendance({ phoneOnly = false }) {
         <Modal onClose={() => setAddModal(false)}>
           <div className="bg-white rounded-xl shadow w-full max-w-sm p-6">
             <h3 className="font-bold text-lg text-slate-800 mb-4">手動新增人員</h3>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">身分</label>
+              <div className="flex gap-2">
+                {[['long', '長期人員'], ['temp', '臨時人員']].map(([k, label]) => (
+                  <button key={k} onClick={() => setAddForm(p => ({ ...p, kind: k }))}
+                    className={`flex-1 px-3 py-1.5 text-sm rounded-lg border transition-colors
+                      ${addForm.kind === k ? 'bg-slate-700 text-white border-transparent'
+                                           : 'bg-white border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                {addForm.kind === 'long'
+                  ? '從人員清冊挑選。當日班表若為休／例，班表上會轉為藍字提醒確認調休。'
+                  : '不在清冊內的臨時人力，僅記錄於當日點名表。'}
+              </p>
+            </div>
+
+            {addForm.kind === 'long' ? (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">人員 <span className="text-red-400">*</span></label>
+                <select value={addForm.empId} onChange={e => setAddForm(p => ({ ...p, empId: e.target.value }))}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                  <option value="">請選擇（僅列出本日尚未在點名表上的人）</option>
+                  {addableLongTerm.map(e => (
+                    <option key={e.id} value={e.id}>
+                      {e.empId}　{e.name}　{e.vendor}{e.todayCode ? `（班表：${e.todayCode}）` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
             <div className="mb-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">姓名 <span className="text-red-400">*</span></label>
               <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
                 className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="請輸入姓名" />
             </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">廠商</label>
-              <input value={addForm.vendor} onChange={e => setAddForm(p => ({ ...p, vendor: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
-            </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
-              <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
-                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-                <option value="">選填</option>
-                {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
+            )}
+            {addForm.kind === 'temp' && (<>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">廠商</label>
+                <input value={addForm.vendor} onChange={e => setAddForm(p => ({ ...p, vendor: e.target.value }))}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
+                <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                  <option value="">選填</option>
+                  {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+            </>)}
             <div className="mb-5">
               <label className="block text-sm font-medium text-slate-700 mb-1">備註</label>
               <input value={addForm.note} onChange={e => setAddForm(p => ({ ...p, note: e.target.value }))}
