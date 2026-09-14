@@ -5444,7 +5444,7 @@ function fuzzyMatch(headers) {
 function EmployeeRoster() {
   const { employees, setEmployees, currentUser, setSchedule, selectedYear, selectedMonth,
     warehouses, setWarehouses, vendors, setVendors, workAreas,
-    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, saveNow, triggerForceSave, markEmployeeDeleted } = useApp();
+    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, saveNow, triggerForceSave, markEmployeeDeleted } = useApp();
   const toast = useToast();
   const fileRef = useRef();
 
@@ -5467,7 +5467,11 @@ function EmployeeRoster() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    if (filterVendor !== '全部') list = list.filter(e => e.vendor === filterVendor);
+    // 人員清冊原本只看頁面內的廠商下拉，完全忽略上方篩選列的廠商，
+    // 導致在上方選了廠商卻「沒反應」。改為：頁面內有選就以它為準（可再細分），
+    // 否則沿用上方篩選列的選擇。
+    const effVendor = filterVendor !== '全部' ? filterVendor : (selectedVendor || null);
+    if (effVendor) list = list.filter(e => normName(e.vendor) === normName(effVendor));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(e => e.name.toLowerCase().includes(q) || e.empId.toLowerCase().includes(q));
@@ -5486,10 +5490,10 @@ function EmployeeRoster() {
         : String(val(a)).localeCompare(String(val(b)), 'zh-Hant');
       return (c * sort.dir) || byDefault(a, b);
     });
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search, sort]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, filterVendor, search, sort]);
 
   // 篩選條件變動時重置到第1頁
-  useEffect(() => { setPage(1); }, [selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, filterVendor, search]);
+  useEffect(() => { setPage(1); }, [selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, filterVendor, search]);
 
   const totalPages  = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const pagedVisible = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -10365,7 +10369,7 @@ const PRESET_TIMES = Array.from({length: 48}, (_, i) => {
 });
 
 function ShiftSetup() {
-  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, currentUser,
+  const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, currentUser,
           shiftTypesByWh, setShiftTypesByWh } = useApp();
   const toast = useToast();
 
@@ -10530,8 +10534,10 @@ function ShiftSetup() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    // 同人員清冊：頁面內的廠商下拉優先，沒選就沿用上方篩選列的廠商
+    const effVendor = filterVendor || selectedVendor || null;
     const filtered = list.filter(e => {
-      if (filterVendor && e.vendor !== filterVendor) return false;
+      if (effVendor && normName(e.vendor) !== normName(effVendor)) return false;
       if (filterShift  && e.shiftTypeId !== filterShift) return false;
       if (nameSearchSetup.trim()) {
         const q = nameSearchSetup.trim().toLowerCase();
