@@ -8270,17 +8270,6 @@ function Attendance({ phoneOnly = false }) {
     toast('已新增：' + addForm.name, 'success');
   };
 
-  /** 以輸入的員編或姓名比對可加入的長期人員；員編完全相同時優先取該筆 */
-  const matchLongTerm = useCallback((kw) => {
-    const q = String(kw ?? '').trim().toLowerCase();
-    if (!q) return [];
-    const exact = addableLongTerm.filter(e => String(e.empId ?? '').trim().toLowerCase() === q);
-    if (exact.length > 0) return exact;
-    return addableLongTerm.filter(e =>
-      String(e.empId ?? '').toLowerCase().includes(q) ||
-      String(e.name ?? '').toLowerCase().includes(q));
-  }, [addableLongTerm]);
-
   // 可加入本日點名的長期人員：套用目前篩選範圍、排除已在點名表上的人
   const addableLongTerm = useMemo(() => {
     const [sy, sm, sd] = attendDate.split('-').map(Number);
@@ -8297,6 +8286,17 @@ function Attendance({ phoneOnly = false }) {
                       (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
   }, [employees, scopedEmps, currentUser, warehouses, selectedWarehouse, selectedDept,
       selectedGroup, selectedWorkArea, schedule, attendDate]);
+
+  /** 以輸入的員編或姓名比對可加入的長期人員；員編完全相同時優先取該筆 */
+  const matchLongTerm = useCallback((kw) => {
+    const q = String(kw ?? '').trim().toLowerCase();
+    if (!q) return [];
+    const exact = addableLongTerm.filter(e => String(e.empId ?? '').trim().toLowerCase() === q);
+    if (exact.length > 0) return exact;
+    return addableLongTerm.filter(e =>
+      String(e.empId ?? '').toLowerCase().includes(q) ||
+      String(e.name ?? '').toLowerCase().includes(q));
+  }, [addableLongTerm]);
 
   const removeExtra = (id) =>
     setExtras(prev => ({ ...prev, [attendDate]: (prev[attendDate] ?? []).filter(e => e.id !== id) }));
