@@ -1152,7 +1152,16 @@ app.get('/api/audit/schedule', requireAuth, requireManagerOrAdmin, async (req, r
   const where = [];
   const args = [];
   if (empNo)   { args.push(String(empNo).trim()); where.push(`emp_no = $${args.length}`); }
-  if (dk)      { args.push(String(dk).trim());    where.push(`dk = $${args.length}`); }
+  if (dk) {
+    // 內部存的日期不補零（2026-9-24），但使用者常會輸入 2026-09-24。
+    // 兩種格式都接受，避免因格式不符而誤以為「沒有異動紀錄」。
+    const t = String(dk).trim();
+    const parts = t.split('-').map(Number);
+    const alt = parts.length === 3 && parts.every(Number.isFinite)
+      ? `${parts[0]}-${parts[1]}-${parts[2]}` : t;
+    args.push(t); args.push(alt);
+    where.push(`(dk = $${args.length - 1} OR dk = $${args.length})`);
+  }
   if (username){ args.push(String(username).trim()); where.push(`username = $${args.length}`); }
   args.push(Math.min(500, Math.max(1, Number(limit) || 200)));
   try {
