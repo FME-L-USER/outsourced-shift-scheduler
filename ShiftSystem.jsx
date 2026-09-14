@@ -200,6 +200,22 @@ function Modal({ children, onClose }) {
  */
 const isLeaver = e => String(e?.status ?? '').includes('離職');
 
+/** 該員在指定日期是否仍在職。未填離職日者視為整段期間都在職。 */
+const inServiceOn = (e, dk) => {
+  if (!isLeaver(e) || !e?.leaveDate) return true;
+  const [y, m, d] = String(dk).split('-').map(Number);
+  const [ly, lm, ld] = String(e.leaveDate).split('-').map(Number);
+  if (!y || !ly) return true;
+  return new Date(y, m - 1, d).getTime() <= new Date(ly, lm - 1, ld).getTime();
+};
+
+/** 離職日顯示成 M/D；沒填則回傳空字串 */
+const leaveDateLabel = e => {
+  if (!e?.leaveDate) return '';
+  const [, m, d] = String(e.leaveDate).split('-').map(Number);
+  return (m && d) ? `${m}/${d}` : '';
+};
+
 const ROLE_LABEL = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員', temp: '臨時人力' };
 const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker', TEMP: 'temp' };
 // 臨時人力自助簽到僅開放給手機控管實際使用的倉別
@@ -5329,6 +5345,11 @@ function ScheduleTable() {
                         );
                       })()}
                       <div className="text-[13px] text-slate-600 truncate max-w-[130px]">{emp.empId}</div>
+                      {isLeaver(emp) && (
+                        <div className="text-[11px] text-rose-600 font-medium">
+                          已離職{leaveDateLabel(emp) ? ` ${leaveDateLabel(emp)}` : ''}
+                        </div>
+                      )}
                     </td>
                     <td className="hidden sm:table-cell px-2 py-2 text-slate-800 font-semibold border-r border-slate-100 text-center whitespace-nowrap">
                       {emp.vendor}
@@ -5926,6 +5947,19 @@ function EmployeeRoster() {
               <option>在職</option><option>已離職</option><option>臨時人員</option>
             </select>
           </div>
+          {/* 離職日：班表上會直接標示，報表也據此判斷該日是否仍在職，
+              避免離職後殘留的班表被算成應到而拉低到班率 */}
+          {String(form.status ?? '').includes('離職') && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1">離職日</label>
+              <input type="date" value={form.leaveDate ?? ''}
+                onChange={e => setForm(p => ({ ...p, leaveDate: e.target.value }))}
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              <p className="text-[11px] text-slate-400 mt-1">
+                班表會標示「已離職 M/D」；報表只計算離職日（含）以前的出勤。
+              </p>
+            </div>
+          )}
           <div className="flex gap-2 justify-end">
             <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
             <button onClick={() => onSave(form)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
@@ -6263,6 +6297,7 @@ function DailySummary() {
     const map = {};
     const bucket = v => (map[v] ??= { due: 0, act: 0, tempDue: 0, tempAct: 0, absTypes: {}, absNames: [] });
     for (const e of scoped) {
+      if (!inServiceOn(e, dk)) continue;                  // 離職日之後不計入
       if ((schedule[e.id] ?? {})[dk] !== 'V') continue;   // 當日未排班（非 V）不計入應到
       const b = bucket(e.vendor || '未分配');
       b.due++;
@@ -6531,6 +6566,7 @@ function MonthlySummary() {
       const hrs = hoursOf(e);
       let work = 0, off = 0, nat = 0, act = 0, absent = 0, unchecked = 0, any = false;
       for (const dk of dks) {
+        if (!inServiceOn(e, dk)) continue;   // 離職日之後的殘留班表不計入
         const c = row[dk];
         if (c === undefined) continue;
         any = true;
