@@ -8262,6 +8262,9 @@ function Attendance({ phoneOnly = false }) {
       return;
     }
     if (!addForm.name.trim()) { toast('姓名為必填', 'error'); return; }
+    // 作業組別決定這筆臨時人力會被算進哪一組的回報與報表，
+    // 未填會造成「點名表看得到、回報卻算不到」，故改為必填。
+    if (!addForm.group) { toast('請選擇作業組別，否則回報與報表不會計入這位臨時人力', 'error'); return; }
     const { kind: _k, keyword: _q, ...rest } = addForm;
     const e = { id: 'extra_' + Date.now(), ...rest, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
     setExtras(prev => ({ ...prev, [attendDate]: [...(prev[attendDate] ?? []), e] }));
@@ -8385,7 +8388,11 @@ function Attendance({ phoneOnly = false }) {
     const reportDk = dateKey(ry, rm, rd);
     longList = longList.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[reportDk]));
     const longEmps = longList;
-    const tempEmps = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
+    const allTemps = extras[reportDate] ?? [];
+    const tempEmps = allTemps.filter(e => !reportGroup || e.group === reportGroup);
+    // 未指定作業組別者不屬於任何一組，會被回報漏掉。過去這是無聲的，
+    // 現在明確列出，讓日翊知道有人沒被算到、可回點名表補上組別。
+    const ungrouped = reportGroup ? allTemps.filter(e => !e.group) : [];
     const getData = id => attendData[reportDate]?.[id] ?? { present: true };
 
     // 星期對照
@@ -8470,6 +8477,9 @@ function Attendance({ phoneOnly = false }) {
     text += `缺勤人數（長期）：${longAbsent}人\n`;
     text += `${fmtAbsMap(longAbsMap)}\n\n`;
     text += `應到人數（臨時）：${tempEmps.length}人\n`;
+    if (ungrouped.length > 0)
+      text += `※ 另有 ${ungrouped.length} 位臨時人力未指定作業組別，未計入本回報：`
+            + `${ungrouped.map(e => e.name).join('、')}\n`;
     text += `實到人數（臨時）：${tempPresent}人\n`;
     text += `缺勤人數（臨時）：${tempAbsent}人\n`;
     text += `${fmtAbsMap(tempAbsMap)}\n\n`;
@@ -9276,12 +9286,17 @@ function Attendance({ phoneOnly = false }) {
                   className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" placeholder="選填" />
               </div>
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">作業組別</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  作業組別 <span className="text-red-400">*</span>
+                </label>
                 <select value={addForm.group} onChange={e => setAddForm(p => ({ ...p, group: e.target.value }))}
                   className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-                  <option value="">選填</option>
+                  <option value="">請選擇</option>
                   {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  未指定組別的臨時人力不會被計入該組的出勤回報與報表。
+                </p>
               </div>
             </>)}
             <div className="mb-5">
