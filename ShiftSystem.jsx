@@ -4051,6 +4051,7 @@ function ScheduleTable() {
 
   // 表頭排序：col 為 null 時使用預設排序（廠商→班別→姓名），dir 1=遞增 -1=遞減
   const [sort, setSort] = useState({ col: null, dir: 1 });
+  const [showLeavers, setShowLeavers] = useState(false);   // 是否顯示離職人員
   const toggleSort = (col) => setSort(prev =>
     prev.col !== col ? { col, dir: 1 }
     : prev.dir === 1 ? { col, dir: -1 }
@@ -4065,6 +4066,9 @@ function ScheduleTable() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    // 離職人員預設不出現在班表。檢視過去期間時可勾選顯示，
+    // 否則離職前的班表會變成空白，與報表對不起來。
+    if (!showLeavers) list = list.filter(e => e.status !== '離職');
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
@@ -4096,7 +4100,7 @@ function ScheduleTable() {
     if (!sort.col) return [...list].sort(byDefault);
     const cmp = primary[sort.col];
     return [...list].sort((a, b) => (cmp(a, b) * sort.dir) || byDefault(a, b));
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch, shiftTypesByWh, sort]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch, shiftTypesByWh, sort, showLeavers]);
 
   /** 計算當週某代碼出現次數（週一～週日） */
   const getWeeklyCode = useCallback((empId, dk, code) => {
@@ -4999,6 +5003,15 @@ function ScheduleTable() {
           {!isWorker && <input value={nameSearch} onChange={e => setNameSearch(e.target.value)}
             placeholder="搜尋姓名／員工編號…"
             className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm flex-1 sm:w-44 min-w-0" />}
+          {/* 離職者預設不列出；檢視過去期間時可勾選顯示，否則離職前的班表會是空白 */}
+          {(currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.AREA) && (
+            <label className="flex items-center gap-1 text-xs text-slate-500 whitespace-nowrap cursor-pointer"
+                   title="離職人員預設不顯示；查看過去期間時可勾選">
+              <input type="checkbox" checked={showLeavers}
+                onChange={e => setShowLeavers(e.target.checked)} />
+              顯示離職
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {rangeMode ? (
@@ -8116,6 +8129,7 @@ function Attendance({ phoneOnly = false }) {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    list = list.filter(e => e.status !== '離職');   // 離職者不會來上班，不列入點名
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (selectedGroup) list = list.filter(e => e.shiftType === selectedGroup || e.group === selectedGroup);
     // 班表當日排休/例/國 → 不出現在點名名單，
@@ -10549,6 +10563,7 @@ function ShiftSetup() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    list = list.filter(e => e.status !== '離職');   // 離職者不需要指派班別
     // 同人員清冊：頁面內的廠商下拉優先，沒選就沿用上方篩選列的廠商
     const effVendor = filterVendor || selectedVendor || null;
     const filtered = list.filter(e => {
