@@ -5515,6 +5515,17 @@ function EmployeeRoster() {
   };
 
   const handleDelete = (id) => {
+    // 移除會連同班表一起刪掉，該員過去的出勤就不再計入報表。
+    // 離職者應改為「狀態：離職」，資料保留、報表仍算得到歷史出勤。
+    const emp = employees.find(e => e.id === id);
+    const cells = Object.keys(schedule[id] ?? {}).length;
+    const msg = cells > 0
+      ? `「${emp?.name ?? ''}」有 ${cells} 天班表紀錄。\n\n` +
+        `移除會一併刪除這些紀錄，該員過去的出勤將不再計入日報表與月報表。\n` +
+        `若是離職，建議改用「編輯 → 狀態：離職」，資料保留、歷史報表不受影響。\n\n` +
+        `仍要移除嗎？`
+      : `確定移除「${emp?.name ?? ''}」？`;
+    if (!window.confirm(msg)) return;
     markEmployeeDeleted(id);   // 明確告知伺服器這是刪除，而非名單不完整
     setEmployees(prev => prev.filter(e => e.id !== id));
     setSchedule(prev => { const n = { ...prev }; delete n[id]; return n; });
@@ -6046,8 +6057,12 @@ function useReportScope() {
   const baseList = useMemo(() => {
     const wh = warehouses.find(w => w.id === selectedWarehouse);
     const deptNames = wh ? new Set((wh.departments ?? []).map(d => d.name)) : null;
+    // 不可排除離職者：報表是回顧過去期間的統計，離職者在當時確實有出勤。
+    // 若在此濾掉，某人一離職，連同他過去幾個月的出勤人次都會一併消失，
+    // 造成「前月出勤人次」與到班率回溯性變動。
+    // 是否計入某期間，交由下方「該期間有無班表資料」判斷即可。
     return employees.filter(e =>
-      e.status !== '離職' && e.vendor && e.vendor.trim() !== '' &&
+      e.vendor && e.vendor.trim() !== '' &&
       (!deptNames || deptNames.has(e.dept)));
   }, [employees, warehouses, selectedWarehouse]);
 
