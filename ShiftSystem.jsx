@@ -192,6 +192,14 @@ function Modal({ children, onClose }) {
 // CONSTANTS & SEED DATA
 // ─────────────────────────────────────────────
 
+/**
+ * 是否為離職人員。
+ * 人員清冊的狀態選單存的是「已離職」，而各處篩選原本寫死比對「離職」，
+ * 字串不符導致設為離職後仍出現在班表與點名表。統一以包含「離職」判斷，
+ * 兩種寫法與既有資料都相容。
+ */
+const isLeaver = e => String(e?.status ?? '').includes('離職');
+
 const ROLE_LABEL = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員', temp: '臨時人力' };
 const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worker', TEMP: 'temp' };
 // 臨時人力自助簽到僅開放給手機控管實際使用的倉別
@@ -3126,14 +3134,14 @@ function Dashboard() {
 
   const visibleEmployees = useMemo(() => {
     let list = currentUser.role === ROLES.VENDOR
-      ? employees.filter(e => currentUser.vendors.includes(e.vendor) && e.status !== '離職')
-      : employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor) && !isLeaver(e))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '' && !isLeaver(e));
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
   }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea]);
 
   // 儀表板用：不過濾 vendor 角色，讓各廠商長期人員都能算到
   const dashEmployees = useMemo(() => {
-    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && e.status !== '離職');
+    const list = employees.filter(e => e.vendor && e.vendor.trim() !== '' && !isLeaver(e));
     return filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
   }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea]);
 
@@ -4152,7 +4160,7 @@ function ScheduleTable() {
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
     // 離職人員預設不出現在班表。檢視過去期間時可勾選顯示，
     // 否則離職前的班表會變成空白，與報表對不起來。
-    if (!showLeavers) list = list.filter(e => e.status !== '離職');
+    if (!showLeavers) list = list.filter(e => !isLeaver(e));
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
@@ -8221,7 +8229,7 @@ function Attendance({ phoneOnly = false }) {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    list = list.filter(e => e.status !== '離職');   // 離職者不會來上班，不列入點名
+    list = list.filter(e => !isLeaver(e));   // 離職者不會來上班，不列入點名
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (selectedGroup) list = list.filter(e => e.shiftType === selectedGroup || e.group === selectedGroup);
     // 班表當日排休/例/國 → 不出現在點名名單，
@@ -8352,7 +8360,7 @@ function Attendance({ phoneOnly = false }) {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea)
-      .filter(e => e.status !== '離職' && !onList.has(e.id));
+      .filter(e => !isLeaver(e) && !onList.has(e.id));
     return list
       .map(e => ({ ...e, todayCode: schedule[e.id]?.[dk] ?? '' }))
       .sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
@@ -8841,7 +8849,7 @@ function Attendance({ phoneOnly = false }) {
     const dadu = warehouses.find(w => w.name === '大肚倉');
     const deptNames = new Set((dadu?.departments ?? []).map(d => d.name));
     const targets = employees.filter(e =>
-      e.status !== '離職' && deptNames.has(e.dept) && LOCKER_GROUP_CABINET[e.group]);
+      !isLeaver(e) && deptNames.has(e.dept) && LOCKER_GROUP_CABINET[e.group]);
     if (targets.length === 0) { toast('大肚倉查無可分配櫃號的人員', 'warn'); return; }
 
     const result = assignLockers(targets, lockerAssign);
@@ -10772,7 +10780,7 @@ function ShiftSetup() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    list = list.filter(e => e.status !== '離職');   // 離職者不需要指派班別
+    list = list.filter(e => !isLeaver(e));   // 離職者不需要指派班別
     // 同人員清冊：頁面內的廠商下拉優先，沒選就沿用上方篩選列的廠商
     const effVendor = filterVendor || selectedVendor || null;
     const filtered = list.filter(e => {
@@ -11883,7 +11891,7 @@ function AccountManagement() {
 
   // 委外人員 tab：從員工清冊取得，依上方條件篩選，標示是否已升級為幹部帳號
   const workerEmpListAll = filterByScope(
-    employees.filter(e => e.status !== '離職' && e.vendor),
+    employees.filter(e => !isLeaver(e) && e.vendor),
     warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea
   );
   const workerEmpList = workerEmpListAll.filter(e =>
