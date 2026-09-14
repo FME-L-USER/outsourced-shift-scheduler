@@ -1,0 +1,502 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>委外人力排班作業平台｜排班操作指引｜2026/10/5～11/1</title>
+<style>
+  :root{
+    --brand:#2563eb; --brand-dark:#1e40af; --brand-soft:#eff6ff;
+    --ink:#1e293b; --ink-2:#475569; --ink-3:#94a3b8;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+    --warn:#ea580c; --warn-bg:#fff7ed;
+    --tip:#059669;  --tip-bg:#ecfdf5;
+    /* 以下為系統實際使用的色票，示意圖沿用以求一致 */
+    --sms-sidebar:#1a2f5e; --sms-sidebar-active:#2563eb;
+    --sms-surface-2:#F5F2EC; --sms-border:#DDD9D0;
+    --nav-w:270px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",-apple-system,sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  a{color:var(--brand); text-decoration:none}
+
+  header.top{
+    position:sticky; top:0; z-index:50;
+    background:var(--brand-dark); color:#fff;
+    padding:14px 24px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    box-shadow:0 1px 8px rgba(0,0,0,.15);
+  }
+  header.top .co{font-size:13px; opacity:.75; letter-spacing:.5px}
+  header.top h1{font-size:17px; margin:0; font-weight:700}
+  header.top .ver{margin-left:auto; font-size:12px; opacity:.8}
+  #navToggle{display:none; background:rgba(255,255,255,.15); border:0; color:#fff;
+    font-size:18px; width:36px; height:36px; border-radius:8px; cursor:pointer}
+
+  .wrap{display:flex; align-items:flex-start}
+  nav.toc{
+    width:var(--nav-w); flex-shrink:0; position:sticky; top:60px;
+    height:calc(100vh - 60px); overflow-y:auto;
+    background:var(--card); border-right:1px solid var(--line); padding:18px 0 40px;
+  }
+  nav.toc .toc-title{font-size:11px; font-weight:700; color:var(--ink-3);
+    letter-spacing:1.5px; padding:0 20px 10px}
+  nav.toc a{display:block; padding:7px 20px; font-size:14px; color:var(--ink-2);
+    border-left:3px solid transparent}
+  nav.toc a:hover{background:var(--brand-soft); color:var(--brand)}
+  nav.toc a.sub{padding-left:36px; font-size:13px; color:var(--ink-3)}
+  nav.toc a.active{background:var(--brand-soft); color:var(--brand);
+    border-left-color:var(--brand); font-weight:600}
+
+  main{flex:1; min-width:0; padding:32px 40px 80px; max-width:1000px}
+
+  h2{font-size:22px; margin:44px 0 16px; padding-bottom:10px;
+    border-bottom:2px solid var(--brand); color:var(--brand-dark); scroll-margin-top:76px}
+  h2:first-of-type{margin-top:8px}
+  h3{font-size:17px; margin:28px 0 12px; color:var(--ink); scroll-margin-top:76px}
+  p{margin:10px 0}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0; background:var(--card);
+    font-size:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); border-radius:8px; overflow:hidden}
+  th{background:var(--brand); color:#fff; text-align:left; font-weight:600; padding:10px 14px}
+  td{padding:10px 14px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  .tbl-wrap{overflow-x:auto}
+
+  .callout{border-left:4px solid; border-radius:0 8px 8px 0; padding:12px 16px; margin:16px 0; font-size:14px}
+  .callout p{margin:4px 0}
+  .callout>strong{display:block; margin-bottom:2px}
+  .c-info{border-color:var(--brand); background:var(--brand-soft); color:#1e3a8a}
+  .c-warn{border-color:var(--warn); background:var(--warn-bg); color:#7c2d12}
+  .c-tip {border-color:var(--tip);  background:var(--tip-bg);  color:#065f46}
+
+  ol.steps{counter-reset:s; list-style:none; padding:0; margin:16px 0}
+  ol.steps>li{counter-increment:s; position:relative; padding:12px 16px 12px 52px;
+    background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px}
+  ol.steps>li::before{content:counter(s); position:absolute; left:14px; top:12px;
+    width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff;
+    font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center}
+
+  code{background:#f1f5f9; padding:2px 7px; border-radius:5px;
+    font-family:"Consolas","Monaco",monospace; font-size:13px; color:#be123c}
+
+  /* ── 畫面示意圖容器 ── */
+  figure.shot{
+    margin:20px 0 24px; background:#eef1f5; border:1px solid var(--line);
+    border-radius:12px; padding:16px; overflow-x:auto;
+  }
+  figure.shot figcaption{
+    font-size:12px; color:var(--ink-3); margin-bottom:12px;
+    display:flex; align-items:center; gap:8px;
+  }
+  figure.shot figcaption .tag{
+    background:#64748b; color:#fff; border-radius:999px;
+    padding:2px 9px; font-size:11px; font-weight:700; letter-spacing:.5px;
+  }
+  .ui{
+    background:#fff; border-radius:10px; overflow:hidden;
+    box-shadow:0 4px 16px rgba(15,23,42,.12); font-size:13px;
+    min-width:520px;
+  }
+  /* 標註圓點 */
+  .pin{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:20px; height:20px; border-radius:50%; background:#dc2626; color:#fff;
+    font-size:11px; font-weight:700; flex-shrink:0; vertical-align:middle;
+  }
+  .pin-abs{position:absolute; z-index:5; box-shadow:0 0 0 2px #fff}
+  .legend{list-style:none; padding:0; margin:10px 0 0; font-size:13.5px}
+  .legend li{display:flex; gap:9px; align-items:flex-start; margin:7px 0; color:var(--ink-2)}
+
+  /* ── 系統 UI 重繪元件（配色取自系統實際色票）── */
+  .ui-login{padding:26px 22px; text-align:center; background:#fff}
+  .ui-login .logo{width:42px;height:42px;border-radius:12px;background:#eff6ff;
+    display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:8px}
+  .ui-login h4{margin:4px 0 2px; font-size:16px; color:#1e293b}
+  .ui-login .sub{font-size:11.5px;color:#94a3b8;margin-bottom:16px}
+  .fld{text-align:left; margin-bottom:11px; position:relative}
+  .fld label{display:block;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:4px}
+  .box{border:1px solid var(--sms-border); border-radius:9px; padding:8px 11px;
+    background:#fff; color:#334155; font-size:13px; display:flex; align-items:center; gap:7px}
+  .box.ph{color:#a8b0bd}
+  .btn-primary{width:100%; background:var(--sms-sidebar); color:#fff; border-radius:9px;
+    padding:10px; font-weight:700; font-size:13.5px; text-align:center; margin-top:4px}
+  .hint{background:#eff6ff;border:1px solid #dbeafe;color:#1d4ed8;border-radius:7px;
+    padding:7px 10px;font-size:11.5px;text-align:left;margin-bottom:12px}
+  .rule{background:#f1f5f9;color:#64748b;border-radius:7px;padding:7px 10px;
+    font-size:11px;text-align:left;margin:10px 0}
+
+  /* 班表畫面 */
+  .ui-app{display:flex; min-height:250px}
+  .ui-side{width:120px; background:var(--sms-sidebar); color:#fff; padding:12px 8px; flex-shrink:0}
+  .ui-side .brand{font-size:11.5px;font-weight:700;padding:0 6px 12px;line-height:1.4}
+  .ui-side .brand span{display:block;font-size:9.5px;opacity:.55;font-weight:400}
+  .ui-side .item{display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:999px;
+    font-size:11.5px;color:rgba(255,255,255,.8);margin-bottom:3px}
+  .ui-side .item.on{background:#fff;color:var(--sms-sidebar);font-weight:700}
+  .ui-main{flex:1; background:#fff; padding:12px 14px; min-width:0}
+
+  .banner{border:1px solid; border-radius:9px; padding:8px 11px; font-size:12px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+  .banner.ok{background:#ecfdf5;border-color:#6ee7b7;color:#065f46}
+  .banner.no{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+  .banner b{font-size:12.5px}
+
+  table.sched{width:100%;border-collapse:collapse;font-size:11.5px;
+    box-shadow:none;border-radius:8px;overflow:hidden;margin:0}
+  table.sched th{background:var(--sms-sidebar);color:#fff;padding:5px 4px;text-align:center;
+    font-weight:600;font-size:11px;line-height:1.35}
+  table.sched th.nm{text-align:left;padding-left:10px;width:112px}
+  table.sched td{border-top:1px solid #eef2f7;padding:0;text-align:center;height:40px}
+  table.sched td.nm{text-align:left;padding:5px 10px;background:#fff;line-height:1.35}
+  table.sched td.nm b{display:block;font-size:12px;color:#1e293b}
+  table.sched td.nm span{font-size:10px;color:#94a3b8;font-family:Consolas,monospace}
+  .cd{display:block;width:100%;height:100%;line-height:40px;font-weight:700;font-size:12.5px}
+  .cd-v{background:#dcfce7;color:#14532d}
+  .cd-r{background:#ffedd5;color:#7c2d12}
+  .cd-e{background:#fef9c3;color:#713f12}
+  .cd-n{background:#dbeafe;color:#1e3a8a}
+  .cd-hl{outline:2px solid #dc2626; outline-offset:-2px; position:relative}
+
+  .cell{display:inline-flex;align-items:center;justify-content:center;min-width:34px;
+    padding:3px 9px;border-radius:6px;font-weight:700;font-size:14px;margin:0 2px}
+  .cell-v{background:#dcfce7;color:#166534}
+  .cell-r{background:#ffedd5;color:#9a3412}
+  .cell-e{background:#fef9c3;color:#854d0e}
+  .cell-n{background:#dbeafe;color:#1e40af}
+
+  .toast{border-radius:9px;padding:9px 13px;font-size:12.5px;font-weight:600;
+    display:inline-flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(15,23,42,.14)}
+  .toast-err{background:#dc2626;color:#fff}
+  .toast-warn{background:#f59e0b;color:#fff}
+
+  .beforeafter{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:center}
+  .ba-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;text-align:center}
+  .ba-box .lbl{font-size:11px;color:#94a3b8;margin-bottom:7px}
+  .ba-arrow{font-size:22px;color:#94a3b8}
+
+  .flow{background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 18px; margin:16px 0; font-family:"Consolas",monospace;
+    font-size:13px; color:var(--ink-2); white-space:pre; overflow-x:auto; line-height:1.9}
+  .faq-q{font-weight:700; color:var(--brand-dark); margin:22px 0 4px}
+  .faq-q::before{content:"Q"; display:inline-block; background:var(--brand); color:#fff;
+    width:20px;height:20px;border-radius:50%;text-align:center;line-height:20px;
+    font-size:12px;margin-right:8px}
+  .faq-a{margin:0 0 6px 28px; color:var(--ink-2)}
+
+  footer{border-top:1px solid var(--line); margin-top:56px; padding:20px 40px 40px;
+    font-size:12px; color:var(--ink-3); text-align:center}
+
+  @media (max-width:900px){
+    #navToggle{display:block}
+    nav.toc{position:fixed; top:60px; left:0; z-index:40; height:calc(100vh - 60px);
+      transform:translateX(-100%); transition:transform .25s; box-shadow:4px 0 16px rgba(0,0,0,.12)}
+    nav.toc.open{transform:translateX(0)}
+    main{padding:22px 16px 60px}
+    header.top h1{font-size:15px}
+    header.top .ver{width:100%; margin-left:0}
+  }
+  @media print{
+    nav.toc,#navToggle{display:none}
+    header.top{position:static}
+    main{max-width:none}
+    figure.shot{break-inside:avoid}
+  }
+</style>
+
+<header class="top">
+  <button id="navToggle" aria-label="開啟目錄">☰</button>
+  <div>
+    <div class="co">日翊文化行銷股份有限公司　|　物流本部</div>
+    <h1>委外人力排班作業平台　排班操作指引｜2026/10/5～11/1</h1>
+  </div>
+  <div class="ver">v1.0　|　2026/09/14</div>
+</header>
+
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="toc-title">目錄</div>
+  <a href="#s0">開始之前</a>
+  <a href="#s1">步驟 1　確認每期日期區間</a>
+  <a href="#s2">步驟 2　開放該課別的排班區間</a>
+  <a href="#s3">步驟 3　勾選本期國定假日</a>
+  <a href="#s4">步驟 4　切到 10/5～11/1</a>
+  <a href="#s5">步驟 5　填寫需求人數</a>
+  <a href="#s6">步驟 6　開始排班</a>
+  <a href="#s7">步驟 7　批次工具</a>
+  <a href="#s8">步驟 8　檢查統計列</a>
+  <a href="#s9">步驟 9　匯出與列印</a>
+  <a href="#s10">常見狀況</a>
+</nav>
+
+<main>
+<style>
+  .fbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#fff;
+    border-bottom:1px solid var(--sms-border);padding:8px 10px;font-size:11.5px;color:#475569}
+  .fbar .lb{color:#64748b;font-weight:600;white-space:nowrap}
+  .sel{border:1px solid var(--sms-border);border-radius:8px;padding:4px 8px;background:#fff;
+    color:#1e293b;font-size:11.5px;display:inline-flex;align-items:center;gap:14px;white-space:nowrap}
+  .sel::after{content:"▾";color:#94a3b8;font-size:10px}
+  .sel.on{border-color:#2563eb;background:#eff6ff;color:#1d4ed8;font-weight:700}
+  .chip{border:1px solid var(--sms-border);border-radius:8px;padding:3px 9px;font-size:11px;color:#64748b;background:#fff}
+  .btn{border-radius:8px;padding:4px 10px;font-size:11px;color:#fff;display:inline-block}
+  .b-slate{background:#475569}.b-blue{background:#2563eb}.b-amber{background:#d97706}
+  .b-green{background:#059669}.b-teal{background:#0d9488}.b-purple{background:#7c3aed}
+  .b-sky{background:#0284c7}.b-rose{background:#e11d48}
+
+  table.grid{width:100%;border-collapse:collapse;font-size:11.5px;margin:0;box-shadow:none;border-radius:8px;overflow:hidden}
+  table.grid th{background:#1e293b;color:#fff;font-size:10.5px;font-weight:700;padding:5px 6px;text-align:center;white-space:nowrap}
+  table.grid th.nm{text-align:left;padding-left:10px}
+  table.grid td{border-top:1px solid #eef2f7;padding:5px 6px;color:#334155;text-align:center;font-weight:700}
+  table.grid td.nm{text-align:left;font-weight:400;padding-left:10px;white-space:nowrap}
+  .c-v{background:#dcfce7}.c-x{background:#fef3c7}.c-r{background:#ffedd5}.c-g{background:#dbeafe}
+  .c-warn{background:#fbcfe8}
+  .sum td{background:#f8fafc;font-weight:700;font-size:11px}
+  .sum .lbl{text-align:left;padding-left:10px;color:#475569;font-weight:600}
+  .blue-rest{color:#2563eb;text-decoration:underline dotted;text-underline-offset:2px}
+
+  .sec{border:1px solid var(--sms-border);border-radius:11px;padding:10px 13px;margin-bottom:7px;background:#fff}
+  .sec .st{font-size:12.5px;font-weight:700;color:#1e293b}
+  .sec .sd{font-size:10.5px;color:#94a3b8;margin-top:2px}
+  .seg{background:#f8fafc;border:1px solid var(--sms-border);border-radius:8px;
+       padding:8px 11px;font-size:11.5px;line-height:1.9;font-family:Consolas,monospace}
+  .flow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0}
+  .flow .st{background:#1e293b;color:#fff;border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:700}
+  .flow .ar{color:#94a3b8;font-weight:700}
+</style>
+
+
+
+<div class="callout c-info">
+  <strong>這份指引寫給誰</strong>
+  <p>供<strong>日翊員工</strong>排定 <strong>2026/10/5 ～ 11/1</strong> 這一期班表使用，依實際操作順序編寫。</p>
+  <p>畫面均為示意圖，以系統實際版面與配色重繪，人名與數字為範例。</p>
+</div>
+
+<h2 id="s0">開始之前</h2>
+<div class="flow">
+  <span class="st">1 期別區間</span><span class="ar">→</span>
+  <span class="st">2 開放排班</span><span class="ar">→</span>
+  <span class="st">3 國定假日</span><span class="ar">→</span>
+  <span class="st">4 切到本期</span><span class="ar">→</span>
+  <span class="st">5 需求人數</span><span class="ar">→</span>
+  <span class="st">6 排班</span><span class="ar">→</span>
+  <span class="st">7 批次修正</span><span class="ar">→</span>
+  <span class="st">8 檢查</span><span class="ar">→</span>
+  <span class="st">9 匯出</span>
+</div>
+<p>步驟 1～3 是<strong>設定</strong>，同一期只需做一次；步驟 4 起才是每天的排班作業。</p>
+
+<h2 id="s1">步驟 1　確認每期日期區間</h2>
+<p>位置：<strong>系統設定 → 每期日期區間</strong></p>
+<p>這裡決定班表「一期」涵蓋哪些日子，也決定班表上方橫幅顯示的「本期」。請確認起日為 <strong>2026-10-05</strong>、迄日為 <strong>2026-11-01</strong>（共 28 天）。</p>
+<div class="callout c-warn">
+  <strong>這是全公司共用的設定</strong>
+  <p>改動會影響所有倉別的班表分頁方式，不是只有您這一課。若只是要開放某課排班，請直接看步驟 2。</p>
+</div>
+
+<h2 id="s2">步驟 2　開放該課別的排班區間</h2>
+<p>位置：<strong>系統設定 → 各課別鎖定與開放區間</strong>（畫面以倉別收合，點倉別名稱展開）</p>
+
+<figure class="shot">
+  <figcaption><span class="tag">示意</span>同一課別可設定多段區間</figcaption>
+  <div class="seg">大肚理貨課
+ ├─ 2026-09-07 ～ 2026-10-04　部分鎖定　適用：日班-出貨組
+ └─ 2026-10-05 ～ 2026-11-01　解除鎖定　適用：日班-出貨組</div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span>舊的一期可設為<strong>部分鎖定</strong>（僅日翊可改），避免委外再去動已定案的班表。</span></li>
+    <li><span class="pin">2</span><span>新的一期設為<strong>解除鎖定</strong>，委外幹部與委外人員才排得進來。</span></li>
+    <li><span class="pin">3</span><span>兩段可以<strong>同時存在</strong>，不必等舊的一期結束才開新的。</span></li>
+  </ul>
+</figure>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:120px">鎖定模式</th><th>誰能編輯</th></tr>
+  <tr><td>不鎖定／解除鎖定</td><td>日翊、委外幹部、委外人員（依各自權限）</td></tr>
+  <tr><td>部分鎖定</td><td>僅日翊；委外端點擊無效</td></tr>
+  <tr><td>完全鎖定</td><td>皆不可編輯，僅供查看</td></tr>
+</table>
+</div>
+
+<div class="callout c-info">
+  <strong>鎖定由伺服器最終認定</strong>
+  <p>已登入的委外人員即使沒登出，也無法存入被鎖定或區間外的班別；他會看到「該課別已鎖定或不在開放排班區間，剛才的異動未儲存」並自動更新畫面。</p>
+</div>
+
+<h2 id="s3">步驟 3　勾選本期國定假日</h2>
+<p>位置：<strong>系統設定 → 開放排班國定假日</strong></p>
+<p>勾選落在 10/5～11/1 之間的國定假日。勾選的<strong>天數</strong>會成為每個人可排「國」的<strong>上限</strong>。</p>
+
+<div class="callout c-tip">
+  <strong>「國」可以排在本期任何一天</strong>
+  <p>國定假日當天照常出勤、把假挪到其他日是常態。系統只管<strong>總數不超過已勾選的天數</strong>，不限定要排在哪一天。</p>
+  <p>若某人的「國」已排滿，再點該格時系統會<strong>自動略過「國」</strong>繼續往下（例 → 休），並顯示「本期國定假日已排滿 N 天，已略過『國』」。</p>
+</div>
+
+<h2 id="s4">步驟 4　切到 10/5～11/1</h2>
+<p>位置：<strong>班表管理</strong></p>
+
+<figure class="shot">
+  <figcaption><span class="tag">示意</span>上方橫幅與期別切換</figcaption>
+  <div class="ui" style="padding:12px">
+    <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:9px;padding:8px 11px;
+                font-size:11.5px;color:#065f46;margin-bottom:10px">
+      <b>📕 本期：2026-10-5 ～ 2026-11-1</b>（+2 期）　|　大肚理貨課 開放排班：2026-10-05 ～ 2026-11-01　（可編輯班表）
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class="chip">◀</span>
+      <span class="sel on">📅 2026-10-5 ～ 2026-11-1（+2 期）</span>
+      <span class="chip">▶</span>
+      <span class="chip">回目前</span>
+      <span class="btn b-slate">✨ 功能 ▲</span>
+      <span class="chip">🔢 顯示記號</span>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span>用 <strong>◀ ▶</strong> 切換期別，中間的日期膠囊會顯示目前停在哪一期。</span></li>
+    <li><span class="pin">2</span><span>橫幅右側若顯示<strong>「可編輯班表」</strong>才排得下去；顯示「僅供查看，不可編輯」表示步驟 2 尚未開放。</span></li>
+    <li><span class="pin">3</span><span>排完要回到當期，按<strong>「回目前」</strong>。</span></li>
+  </ul>
+</figure>
+
+<div class="callout c-warn">
+  <strong>先確認停在正確的期別再動手</strong>
+  <p>批次功能（修正一週一例、一鍵轉換國、重置）<strong>只作用於畫面上顯示的這一期</strong>。停在 9/7～10/4 按下去不會影響 10/5～11/1，反之亦然。</p>
+</div>
+
+<h2 id="s5">步驟 5　填寫需求人數</h2>
+<p>位置：班表下方統計列的<strong>「需求人數」</strong>那一列，直接點格子輸入。</p>
+<ul>
+  <li>按 <kbd>Enter</kbd> 自動跳到下一格，<kbd>Shift</kbd>＋<kbd>Enter</kbd> 回上一格，可以一路輸入整期。</li>
+  <li><strong>需求人數是各組別分開記錄的</strong>，必須先選定課別與組別才能編輯。</li>
+  <li>未選組別時，這一列顯示的是該範圍內各組別需求的<strong>加總</strong>，僅供檢視。</li>
+</ul>
+
+<h2 id="s6">步驟 6　開始排班</h2>
+<p><strong>點擊格子切換班別</strong>，日翊端的循環順序是：</p>
+<div class="flow">
+  <span class="st" style="background:#dcfce7;color:#166534">V 上班</span><span class="ar">→</span>
+  <span class="st" style="background:#dbeafe;color:#1d4ed8">國 國定假日</span><span class="ar">→</span>
+  <span class="st" style="background:#fef3c7;color:#92400e">例 例休</span><span class="ar">→</span>
+  <span class="st" style="background:#ffedd5;color:#9a3412">休 休假</span><span class="ar">→</span>
+  <span class="st" style="background:#dcfce7;color:#166534">V</span>
+</div>
+
+<figure class="shot">
+  <figcaption><span class="tag">示意</span>班表畫面與各種標示</figcaption>
+  <div class="ui">
+    <div class="tbl-wrap" style="margin:0">
+    <table class="grid">
+      <tr><th class="nm">人員姓名</th><th>10/5<br>一</th><th>10/6<br>二</th><th>10/7<br>三</th><th>10/8<br>四</th>
+          <th>10/9<br>五</th><th>10/10<br>六</th><th>10/11<br>日</th><th>10/12<br>一</th></tr>
+      <tr><td class="nm">王小明<br><span style="font-size:10px;color:#94a3b8">WY11200001</span></td>
+          <td class="c-v">V</td><td class="c-v">V</td><td class="c-v">V</td><td class="c-v">V</td>
+          <td class="c-v">V</td><td class="c-r">休</td><td class="c-x">例</td><td class="c-v">V</td></tr>
+      <tr><td class="nm">陳大華<br><span style="font-size:10px;color:#94a3b8">WY11200002</span></td>
+          <td class="c-v">V</td><td class="c-g">國</td><td class="c-v">V</td><td class="c-v">V</td>
+          <td class="c-v">V</td><td class="c-v">V</td><td class="c-x">例</td><td class="c-r"><span class="blue-rest">休</span></td></tr>
+      <tr><td class="nm">林美玲<br><span style="font-size:10px;color:#94a3b8">WY11200003</span></td>
+          <td class="c-warn">V</td><td class="c-warn">V</td><td class="c-warn">V</td><td class="c-warn">V</td>
+          <td class="c-warn">V</td><td class="c-warn">V</td><td class="c-x">例</td><td class="c-v">V</td></tr>
+      <tr class="sum"><td class="lbl">總人數</td><td>3</td><td>3</td><td>3</td><td>3</td><td>3</td><td>3</td><td>3</td><td>3</td></tr>
+      <tr class="sum"><td class="lbl" style="color:#1d4ed8">需求人數</td><td>3</td><td>3</td><td>3</td><td>3</td><td>3</td><td>2</td><td>1</td><td>3</td></tr>
+      <tr class="sum"><td class="lbl" style="color:#15803d">出勤人數</td><td>3</td><td>2</td><td>3</td><td>3</td><td>3</td><td>2</td><td>0</td><td>2</td></tr>
+      <tr class="sum"><td class="lbl" style="color:#b45309">差異數</td><td>0</td><td style="color:#dc2626">-1</td><td>0</td><td>0</td><td>0</td><td>0</td><td style="color:#dc2626">-1</td><td style="color:#dc2626">-1</td></tr>
+    </table>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><span class="pin">1</span><span><strong>粉紅底</strong>：連續上班第 6 天起的警示；連續 7 天（含）以上姓名會轉為<strong>紅字</strong>。</span></li>
+    <li><span class="pin">2</span><span><strong>藍色虛線底線的「休」</strong>：當日排休但點名表有到班紀錄，提醒確認是否忘了調休。改成 V 或移出點名名單後自動消失。</span></li>
+    <li><span class="pin">3</span><span><strong>差異數</strong>＝出勤人數 − 需求人數，負數代表缺工。</span></li>
+  </ul>
+</figure>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">規則</th><th>系統行為</th></tr>
+  <tr><td>一週一例</td><td>同一週排第二個「例」時，系統自動改為「休」並提示</td></tr>
+  <tr><td>國定假日上限</td><td>超過已勾選的天數時，點擊會自動略過「國」</td></tr>
+  <tr><td>連續上班</td><td>第 6 天起粉紅底，第 7 天起姓名紅字</td></tr>
+  <tr><td>委外可排範圍</td><td>委外端只能在 V ↔ 休 之間切換，不能排「例」</td></tr>
+</table>
+</div>
+
+<h2 id="s7">步驟 7　批次工具</h2>
+<p>位置：<strong>班表管理 → 功能 ▲</strong></p>
+<div class="sec"><div class="st">🔧 修正一週一例</div>
+  <div class="sd">一週超過一個「例」→ 保留第一個、其餘改「休」；一週沒有「例」但有「休」→ 最後一個「休」改為「例」。執行前會確認並顯示影響的起訖日，<b>只作用於目前顯示的這一期</b>。</div></div>
+<div class="sec"><div class="st">🎌 一鍵轉換國</div>
+  <div class="sd">把本期已勾選的國定假日整批帶入，同樣只作用於目前顯示的區間。</div></div>
+<div class="sec"><div class="st">📥 匯入班表 ／ 📄 下載匯入範本</div>
+  <div class="sd">先下載範本、填好後匯入。匯入只覆蓋檔案中有值的格子。</div></div>
+<div class="sec"><div class="st">🔄 重置</div>
+  <div class="sd">勾選人員後把整段區間刷成 V。<b>會覆蓋已排的休假</b>，執行前會明確告知影響人數與日期範圍。</div></div>
+
+<h2 id="s8">步驟 8　檢查統計列</h2>
+<p>統計列下方的「<strong>▶ 各廠商（建議／目前）</strong>」可點開，逐家檢視：</p>
+<ul>
+  <li><strong>建議人數</strong>＝當日總需求 × 該廠商駐廠人數 ÷ 全區總駐廠人數（四捨五入）</li>
+  <li><strong>目前人數</strong>比建議<span style="color:#b91c1c;font-weight:700">少為紅字</span>、<span style="color:#1d4ed8;font-weight:700">多為藍字</span>、<span style="color:#15803d;font-weight:700">剛好為綠字</span></li>
+  <li>廠商順序固定：萬宜 › 承奕 › 華煬通 › 三彥 › 信邦</li>
+</ul>
+<p>排完請把整期橫向捲一遍，確認：<strong>沒有紅字姓名</strong>（連上 7 天）、<strong>差異數沒有大量負值</strong>、<strong>每人每週都有一個「例」</strong>。</p>
+
+<h2 id="s9">步驟 9　匯出與列印</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:150px">功能</th><th>用途</th></tr>
+  <tr><td>🖨 列印報表</td><td>產出可列印的班表，張貼或紙本簽核</td></tr>
+  <tr><td>🔢 代碼轉換匯出</td><td>轉為人資系統班別代碼後匯出 Excel</td></tr>
+  <tr><td>顯示記號</td><td>畫面上直接切換為班別代號檢視，先確認代碼是否正確再匯出</td></tr>
+</table>
+</div>
+
+<h2 id="s10">常見狀況</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:190px">狀況</th><th>原因與處理</th></tr>
+  <tr><td>橫幅顯示「僅供查看，不可編輯」</td><td>該課別尚未開放此區間 → 回步驟 2 設定，或按 <strong>🔓 快速解鎖</strong>臨時開啟（5 或 10 分鐘，僅影響自己這台）</td></tr>
+  <tr><td>點格子沒反應</td><td>日期在開放區間外（格子呈灰底），或該課已鎖定</td></tr>
+  <tr><td>點了只跳「國定假日已排滿」</td><td>正常。系統會自動略過「國」往下一個代碼，再點一下即可到「例／休」</td></tr>
+  <tr><td>畫面跳出橘色橫幅「目前無法儲存」</td><td>網路中斷，<strong>此期間排的內容不會保留</strong>，請先恢復連線</td></tr>
+  <tr><td>畫面跳出紅色橫幅「頁面版本過舊」</td><td>按「立即重新整理」後再排，否則異動不會儲存</td></tr>
+  <tr><td>某人的休不見了</td><td>開 <strong>📜 異動軌跡</strong>，輸入員工編號查詢，可看到是誰、幾點、從什麼改成什麼</td></tr>
+  <tr><td>離職人員仍出現在班表</td><td>人員清冊 → 編輯 → 狀態改「已離職」並填<strong>離職日</strong></td></tr>
+</table>
+</div>
+
+<div class="callout c-tip">
+  <strong>排班期間的自動保護</strong>
+  <p>系統每 2 秒自動存檔，不需要手動按存檔鍵；每天 23:00 另外保存一份當日快照（畫面右上角可看到「🟢 資料快照備份」的時間）。每一格的異動都會留下紀錄，保留 90 天。</p>
+</div>
+
+</main>
+</div>
+
+<footer>
+  日翊文化行銷股份有限公司　物流本部　|　委外人力排班作業平台（VSP）　排班操作指引｜2026/10/5～11/1　v1.0<br>
+  本手冊之畫面均為示意圖，人名與員工編號為虛構範例。
+</footer>
+<script>
+(function(){
+  var toggle = document.getElementById('navToggle');
+  var toc = document.getElementById('toc');
+  toggle.addEventListener('click', function(){ toc.classList.toggle('open'); });
+  toc.addEventListener('click', function(e){
+    if (e.target.tagName === 'A' && window.innerWidth <= 900) toc.classList.remove('open');
+  });
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a'));
+  var targets = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function sync(){
+    var pos = window.scrollY + 100, current = 0;
+    for (var i = 0; i < targets.length; i++){
+      if (targets[i] && targets[i].offsetTop <= pos) current = i;
+    }
+    links.forEach(function(a, i){ a.classList.toggle('active', i === current); });
+  }
+  window.addEventListener('scroll', sync, { passive:true });
+  sync();
+})();
+</script>

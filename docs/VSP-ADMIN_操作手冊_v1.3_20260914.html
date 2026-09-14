@@ -210,7 +210,7 @@
     <div class="co">日翊文化行銷股份有限公司　|　物流本部</div>
     <h1>委外人力排班作業平台　日翊／管理員操作手冊</h1>
   </div>
-  <div class="ver">v1.2　|　2026/09/14</div>
+  <div class="ver">v1.3　|　2026/09/14</div>
 </header>
 
 <div class="wrap">
@@ -496,15 +496,59 @@
 </figure>
 
 <h3 id="s5-2">5.2 編輯班別</h3>
+
+<p><strong>班別代碼對照</strong></p>
+<div class="tbl-wrap">
+<table>
+  <tr><th style="width:90px">格子顯示</th><th style="width:90px">意思</th><th>說明</th></tr>
+  <tr>
+    <td style="text-align:center"><span style="display:inline-block;min-width:30px;padding:3px 8px;border-radius:6px;
+        background:#dcfce7;color:#166534;font-weight:700">V</span></td>
+    <td>上班</td>
+    <td>當天需要出勤。未填任何內容的格子在畫面上也視為 V。</td>
+  </tr>
+  <tr>
+    <td style="text-align:center"><span style="display:inline-block;min-width:30px;padding:3px 8px;border-radius:6px;
+        background:#ffedd5;color:#9a3412;font-weight:700">休</span></td>
+    <td>休假</td>
+    <td>當天休假。<strong>委外人員與委外幹部可自行選擇</strong>（受每週或每期天數上限限制）。</td>
+  </tr>
+  <tr>
+    <td style="text-align:center"><span style="display:inline-block;min-width:30px;padding:3px 8px;border-radius:6px;
+        background:#fef3c7;color:#92400e;font-weight:700">例</span></td>
+    <td>例假</td>
+    <td>法定例假，<strong>僅日翊與管理員可排</strong>，委外端的切換循環不會出現此代碼。每人每週以一天為限，超過時系統自動改為「休」。</td>
+  </tr>
+  <tr>
+    <td style="text-align:center"><span style="display:inline-block;min-width:30px;padding:3px 8px;border-radius:6px;
+        background:#dbeafe;color:#1d4ed8;font-weight:700">國</span></td>
+    <td>國定假日</td>
+    <td><strong>僅日翊與管理員可排</strong>；除非於系統設定開啟「委外幹部假日排班權限 → 開放國定假日排班」，委外幹部才可選用。可排在本期任一天，但總數不得超過已勾選的國定假日天數。</td>
+  </tr>
+</table>
+</div>
+
+<div class="callout c-info">
+  <strong>顏色與特殊標示</strong>
+  <p><strong>粉紅底</strong>：連續上班第 6 天起的警示；連續 <strong>7 天（含）</strong>以上，該員姓名會轉為<strong>紅字</strong>。</p>
+  <p><strong>灰底</strong>：該日期不在開放排班區間內，不可編輯。</p>
+  <p><strong>藍色虛線底線的「休」</strong>：當日排休但點名表有到班紀錄，提醒確認是否需將休假調至其他日（見 6.4）。</p>
+</div>
+
+<p><strong>操作步驟</strong></p>
 <ol class="steps">
   <li>上方篩選列選好<strong>倉別 → 課別 →（組別）</strong>。</li>
   <li>確認橫幅顯示的開放區間<strong>涵蓋要修改的日期</strong>，且該課未被鎖定。</li>
-  <li><strong>直接點格子</strong>即可循環切換：V → 例 → 休 → 國 → 空白 → V。</li>
-  <li>改完不必按儲存，系統約 <strong>2 秒自動存檔</strong>；右上角會出現存檔提示。</li>
+  <li><strong>直接點格子</strong>循環切換：<strong>V → 國 → 例 → 休 → V</strong>。</li>
+  <li>改完不必按儲存，系統約 <strong>2 秒自動存檔</strong>。</li>
 </ol>
+<div class="callout c-tip">
+  <strong>切換時會自動跳過不能選的代碼</strong>
+  <p>本期國定假日已排滿時，點擊會<strong>自動略過「國」</strong>直接到「例」，並顯示「本期國定假日已排滿 N 天，已略過『國』」；同一週已有「例」時，再排的「例」會自動改為「休」。不會卡住不動。</p>
+</div>
 <div class="callout c-info">
   <strong>批次操作</strong>
-  <p>勾選人員左側的核取方塊後，可使用「功能」選單內的批次工具；「一鍵轉換國」會把設定過的國定假日整批帶入班表。</p>
+  <p>勾選人員左側的核取方塊後，可使用「功能」選單內的批次工具；「一鍵轉換國」會把設定過的國定假日整批帶入班表。<strong>所有批次工具都只作用於畫面上顯示的那一期</strong>。</p>
 </div>
 
 <h3 id="s5-3">5.3 匯入班表</h3>
@@ -1154,6 +1198,7 @@
 <table>
   <tr><th style="width:90px">版本</th><th style="width:110px">日期</th><th>異動內容</th></tr>
   <tr><td>v1.0</td><td>2026/09/07</td><td>首版發行。涵蓋儀表板、班表管理、點名表、手機控管、人員清冊與作業區、人員班別設定、報表匯出、系統設定、帳號與權限管理。</td></tr>
+  <tr><td>v1.3</td><td>2026/09/14</td><td>5.2 新增班別代碼對照表與顏色標示說明；更正點擊切換順序為 V → 國 → 例 → 休（原記載有誤），並補充額度已滿時會自動略過的行為。</td></tr>
   <tr><td>v1.2</td><td>2026/09/14</td><td>新增 6.4 手動新增人員（長期／臨時）與休假日出勤的藍字提醒、8.1 人員離職的處理（含離職日）、11.7 異動與登入紀錄查詢；補充臨時人力未指定組別會被回報漏算的提示。</td></tr>
   <tr><td>v1.1</td><td>2026/09/12</td><td>新增 5.6 底部統計列與需求人數、5.7 快速解鎖、10.1 月報表、10.2 日報表、11.5 快速解鎖密碼、11.6 資料保存與異動軌跡；11.2 補充多段排班區間與以倉別收合；委外人員改為帳號密碼皆為員工編號。</td></tr>
 </table>
@@ -1169,7 +1214,7 @@
 </div>
 
 <footer>
-  日翊文化行銷股份有限公司　物流本部　|　委外人力排班作業平台（VSP）　日翊／管理員操作手冊　v1.2<br>
+  日翊文化行銷股份有限公司　物流本部　|　委外人力排班作業平台（VSP）　日翊／管理員操作手冊　v1.3<br>
   本手冊之畫面均為示意圖，人名與員工編號為虛構範例。
 </footer>
 <script>
