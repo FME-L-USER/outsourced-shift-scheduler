@@ -111,6 +111,73 @@ import * as XLSX from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
 
 /** Modal wrapper：用 portal 掛到 body，避免被捲動容器裁切 */
+/**
+ * 系統自己的確認對話框。
+ *
+ * 不能用 window.confirm：瀏覽器在同一頁跳過幾次後會提供「不要再顯示此類
+ * 對話方塊」，使用者一旦勾選，之後所有 confirm 一律直接回傳 false，
+ * 於是每個需要確認的操作都變成「按了完全沒反應」，而且毫無提示。
+ *
+ * 用法：const ok = await askConfirm('訊息'); if (!ok) return;
+ */
+let _confirmResolver = null;
+const askConfirm = (message, opts = {}) => new Promise(resolve => {
+  _confirmResolver = resolve;
+  window.dispatchEvent(new CustomEvent('vsp-confirm', { detail: { message, ...opts } }));
+});
+
+function ConfirmHost() {
+  const [state, setState] = useState(null);
+
+  useEffect(() => {
+    const h = e => setState(e.detail);
+    window.addEventListener('vsp-confirm', h);
+    return () => window.removeEventListener('vsp-confirm', h);
+  }, []);
+
+  const close = (ok) => {
+    setState(null);
+    const r = _confirmResolver; _confirmResolver = null;
+    if (r) r(ok);
+  };
+
+  useEffect(() => {
+    if (!state) return;
+    const onKey = e => {
+      if (e.key === 'Escape') close(false);
+      if (e.key === 'Enter')  close(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [state]);
+
+  if (!state) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4"
+         onClick={e => { if (e.target === e.currentTarget) close(false); }}>
+      <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] w-full max-w-md p-5">
+        <h3 className="font-bold text-slate-800 mb-2">{state.title ?? '請確認'}</h3>
+        <p className="text-sm text-slate-600 whitespace-pre-line leading-relaxed mb-5">
+          {state.message}
+        </p>
+        <div className="flex gap-2 justify-end">
+          <button onClick={() => close(false)}
+            className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+            取消
+          </button>
+          <button onClick={() => close(true)} autoFocus
+            className={`px-4 py-2 rounded-lg text-sm text-white
+              ${state.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            {state.okLabel ?? '確定'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function Modal({ children, onClose }) {
   return createPortal(
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
@@ -2168,7 +2235,7 @@ function RestoreDrawer() {
     const cells = chosen.reduce((a, r) => a + r.count, 0);
     const names = chosen.slice(0, 8).map(r => `${r.empNo} ${r.name ?? ''}`.trim()).join('、')
                 + (chosen.length > 8 ? ` 等 ${chosen.length} 位` : '');
-    if (!window.confirm(
+    if (!await askConfirm(
       '將以備份的內容覆蓋以下人員的班表：\n' + names + '\n\n' +
       '． 影響 ' + cells + ' 格\n' +
       '． 這些格子目前的值會被備份當時的值取代\n\n' +
@@ -2415,7 +2482,7 @@ function HealthDrawer() {
     const dropCount = chosen.reduce((a, d) => a + d.drops.length, 0);
     const restore   = chosen.reduce((a, d) => a + d.restoreCount, 0);
     const names     = chosen.map(d => `${d.empNo} ${d.name ?? ''}`.trim()).join('、');
-    if (!window.confirm(
+    if (!await askConfirm(
       '將合併以下 ' + chosen.length + ' 位人員的重複記錄：\n' + names + '\n\n' +
       '． 救回 ' + restore + ' 格被洗掉的休／例／國\n' +
       '． 移除 ' + dropCount + ' 筆重複的清冊記錄\n\n' +
@@ -2442,7 +2509,7 @@ function HealthDrawer() {
     if (chosenOrphans.length === 0) return;
     const restore = chosenOrphans.reduce((a, o) => a + o.restore, 0);
     const names = chosenOrphans.map(o => `${o.empNo} ${o.name ?? ''}`.trim()).join('、');
-    if (!window.confirm(
+    if (!await askConfirm(
       '將把以下 ' + chosenOrphans.length + ' 列失聯的班表資料歸戶：\n' + names + '\n\n' +
       '． 救回 ' + restore + ' 格被洗掉的休／例／國\n\n' +
       '執行前會自動備份，且不會覆蓋現有的排班。確定執行？')) return;
@@ -3761,7 +3828,7 @@ function ScheduleTable() {
     deptLocks, deptRanges, deptSegments, dailyDemand, setDailyDemand, unlockPwd,
     periodRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen,
     warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea,
-    selectedVendor,
+    selectedVendor, attendData,
   } = useApp();
   const toast = useToast();
 
@@ -4028,12 +4095,12 @@ function ScheduleTable() {
     setCheckedEmpIds(allChecked ? new Set() : new Set(allIds));
   };
 
-  const resetChecked = () => {
+  const resetChecked = async () => {
     if (checkedEmpIds.size === 0) return;
     // 這是系統中唯一會一次覆蓋整段區間的操作，誤按等同抹掉這些人的排休，
     // 故明確告知影響範圍後才執行。
     const first = dayHeaders[0]?.dk, last = dayHeaders[dayHeaders.length - 1]?.dk;
-    if (!window.confirm(
+    if (!await askConfirm(
       `將把 ${checkedEmpIds.size} 位人員在 ${first} ～ ${last} 的班表全部重設為「V（上班）」，\n` +
       `已排的休假、例假、國定假日都會被覆蓋。確定執行？`)) return;
     setSchedule(prev => {
@@ -5549,7 +5616,7 @@ function EmployeeRoster() {
     setNewEmp({ empId: '', name: '', vendor: '', group: '', status: '在職' });
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     // 移除會連同班表一起刪掉，該員過去的出勤就不再計入報表。
     // 離職者應改為「狀態：離職」，資料保留、報表仍算得到歷史出勤。
     const emp = employees.find(e => e.id === id);
@@ -5560,7 +5627,7 @@ function EmployeeRoster() {
         `若是離職，建議改用「編輯 → 狀態：離職」，資料保留、歷史報表不受影響。\n\n` +
         `仍要移除嗎？`
       : `確定移除「${emp?.name ?? ''}」？`;
-    if (!window.confirm(msg)) return;
+    if (!await askConfirm(msg)) return;
     markEmployeeDeleted(id);   // 明確告知伺服器這是刪除，而非名單不完整
     setEmployees(prev => prev.filter(e => e.id !== id));
     setSchedule(prev => { const n = { ...prev }; delete n[id]; return n; });
@@ -8650,8 +8717,8 @@ function Attendance({ phoneOnly = false }) {
                                 )}
                                 {/* 僅將此人移出「當日」名單；班表與人員清冊不受影響，可隨時還原 */}
                                 <button
-                                  onClick={() => {
-                                    if (!window.confirm(`將「${emp.name}」移出 ${attendDate} 的點名名單？
+                                  onClick={async () => {
+                                    if (!await askConfirm(`將「${emp.name}」移出 ${attendDate} 的點名名單？
 
 班表與人員清冊不會變動，可在名單上方還原。`)) return;
                                     setRecord(emp.id, { _excluded: true });
@@ -9413,9 +9480,9 @@ function Settings() {
     setAreaInput('');
     toast(`已新增作業區：${v}`, 'success');
   };
-  const removeArea = (a, used) => {
+  const removeArea = async (a, used) => {
     // 仍有人員指派時需確認，刪除後那些人會變成「未設定」
-    if (used > 0 && !window.confirm(`目前有 ${used} 位人員指派為「${a}」。
+    if (used > 0 && !await askConfirm(`目前有 ${used} 位人員指派為「${a}」。
 刪除後這些人的作業區會變成「未設定」，確定刪除？`)) return;
     setWorkAreas(workAreas.filter(x => x !== a));
     if (used > 0) setEmployees(prev => prev.map(e => e.workArea === a ? { ...e, workArea: '' } : e));
@@ -9824,8 +9891,8 @@ function Settings() {
           </button>
           {unlockPwd && (
             <button
-              onClick={() => {
-                if (!window.confirm('清除後，班表將不再提供快速解鎖功能。確定清除？')) return;
+              onClick={async () => {
+                if (!await askConfirm('清除後，班表將不再提供快速解鎖功能。確定清除？')) return;
                 setUnlockPwd('');
                 toast('已清除解鎖密碼', 'warn');
               }}
@@ -13544,6 +13611,7 @@ export default function App() {
               </div>
             )}
 
+            <ConfirmHost />
             {/* 資料健檢面板（右側滑出，僅管理員）：由篩選列或系統設定叫出 */}
             <HealthDrawer />
             <RestoreDrawer />
