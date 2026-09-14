@@ -8063,7 +8063,7 @@ function Attendance({ phoneOnly = false }) {
   const [addModal, setAddModal] = useState(false);
   const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
   const [phoneScope, setPhoneScope] = useState('all');   // all | long | temp
-  const [addForm, setAddForm] = useState({ kind: 'long', empId: '', name: '', vendor: '', group: '', note: '' });
+  const [addForm, setAddForm] = useState({ kind: 'long', keyword: '', name: '', vendor: '', group: '', note: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
 
@@ -8251,22 +8251,35 @@ function Attendance({ phoneOnly = false }) {
     // 這樣他會出現在點名表（scopedEmps 對已有紀錄者不會濾掉），
     // 班表上那天的「休／例」也會轉為藍色，提醒日翊確認是否要調整休假日。
     if (addForm.kind === 'long') {
-      const emp = employees.find(e => e.id === addForm.empId);
-      if (!emp) { toast('請先選擇人員', 'error'); return; }
+      const hit = matchLongTerm(addForm.keyword);
+      if (hit.length === 0) { toast('查無此人，請確認員工編號或姓名', 'error'); return; }
+      if (hit.length > 1)   { toast('符合多人，請輸入完整員工編號', 'error'); return; }
+      const emp = hit[0];
       setRecord(emp.id, { present: true, lateEarly: defaultStatus, absType: '', note: addForm.note });
       setAddModal(false);
-      setAddForm({ kind: 'long', empId: '', name: '', vendor: '', group: '', note: '' });
+      setAddForm({ kind: 'long', keyword: '', name: '', vendor: '', group: '', note: '' });
       toast(`已將 ${emp.name} 加入本日點名`, 'success');
       return;
     }
     if (!addForm.name.trim()) { toast('姓名為必填', 'error'); return; }
-    const { kind: _k, empId: _e, ...rest } = addForm;
+    const { kind: _k, keyword: _q, ...rest } = addForm;
     const e = { id: 'extra_' + Date.now(), ...rest, present: true, lateEarly: defaultStatus, timeNote: '', absType: '' };
     setExtras(prev => ({ ...prev, [attendDate]: [...(prev[attendDate] ?? []), e] }));
     setAddModal(false);
     setAddForm({ kind: 'temp', empId: '', name: '', vendor: '', group: '', note: '' });
     toast('已新增：' + addForm.name, 'success');
   };
+
+  /** 以輸入的員編或姓名比對可加入的長期人員；員編完全相同時優先取該筆 */
+  const matchLongTerm = useCallback((kw) => {
+    const q = String(kw ?? '').trim().toLowerCase();
+    if (!q) return [];
+    const exact = addableLongTerm.filter(e => String(e.empId ?? '').trim().toLowerCase() === q);
+    if (exact.length > 0) return exact;
+    return addableLongTerm.filter(e =>
+      String(e.empId ?? '').toLowerCase().includes(q) ||
+      String(e.name ?? '').toLowerCase().includes(q));
+  }, [addableLongTerm]);
 
   // 可加入本日點名的長期人員：套用目前篩選範圍、排除已在點名表上的人
   const addableLongTerm = useMemo(() => {
@@ -9216,16 +9229,38 @@ function Attendance({ phoneOnly = false }) {
 
             {addForm.kind === 'long' ? (
               <div className="mb-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">人員 <span className="text-red-400">*</span></label>
-                <select value={addForm.empId} onChange={e => setAddForm(p => ({ ...p, empId: e.target.value }))}
-                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
-                  <option value="">請選擇（僅列出本日尚未在點名表上的人）</option>
+                <label className="block text-sm font-medium text-slate-700 mb-1">員工編號或姓名 <span className="text-red-400">*</span></label>
+                <input value={addForm.keyword} list="attend-long-list" autoFocus
+                  onChange={e => setAddForm(p => ({ ...p, keyword: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddExtra(); }}
+                  placeholder="輸入員編或姓名，例：WY11201621"
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+                <datalist id="attend-long-list">
                   {addableLongTerm.map(e => (
-                    <option key={e.id} value={e.id}>
-                      {e.empId}　{e.name}　{e.vendor}{e.todayCode ? `（班表：${e.todayCode}）` : ''}
+                    <option key={e.id} value={e.empId}>
+                      {e.name}　{e.vendor}{e.todayCode ? `（班表：${e.todayCode}）` : ''}
                     </option>
                   ))}
-                </select>
+                </datalist>
+                {(() => {
+                  const hit = matchLongTerm(addForm.keyword);
+                  if (!addForm.keyword.trim()) return (
+                    <p className="text-[11px] text-slate-400 mt-1">可直接輸入，或點輸入框看建議清單（僅列出本日尚未在點名表上的人）。</p>
+                  );
+                  if (hit.length === 1) {
+                    const e = hit[0];
+                    return <p className="text-[11px] text-teal-700 mt-1">
+                      ✓ {e.empId}　{e.name}　{e.vendor}{e.todayCode ? `　當日班表：${e.todayCode}` : ''}
+                    </p>;
+                  }
+                  if (hit.length === 0) return (
+                    <p className="text-[11px] text-red-600 mt-1">查無此人（或他已在本日點名表上、已離職）。</p>
+                  );
+                  return <p className="text-[11px] text-amber-600 mt-1">
+                    符合 {hit.length} 人：{hit.slice(0, 5).map(e => `${e.empId} ${e.name}`).join('、')}
+                    {hit.length > 5 ? ' …' : ''}，請輸入員工編號以確定對象。
+                  </p>;
+                })()}
               </div>
             ) : (
             <div className="mb-3">
