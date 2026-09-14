@@ -4290,8 +4290,11 @@ function ScheduleTable() {
         // 正在點的這一格不計入（它現在還不是「國」）
         const used = periodDks.filter(k => k !== dk && row[k] === '國').length;
         if (used >= quota) {
-          toast(`國定假日天數已達上限（本期 ${quota} 天），請先取消其他「國」再排。`, 'error');
-          return;
+          // 不可停在原地：使用者是在循環中經過「國」要前往「例／休」，
+          // 直接 return 會讓他永遠走不到下一個代碼（點了沒反應、只跳錯誤）。
+          // 與額度為 0 時的處理一致，改為自動跳過「國」繼續往下。
+          toast(`本期國定假日已排滿 ${quota} 天，已略過「國」。`, 'info');
+          next = isOutsourced ? 'V' : SHIFT_CYCLE[(SHIFT_CYCLE.indexOf('國') + 1) % SHIFT_CYCLE.length];
         }
       }
     }
