@@ -5422,8 +5422,10 @@ function ScheduleTable() {
               })}
               {/* ── 底部統計列 ── */}
               {visibleEmployees.length > 0 && (() => {
+                // 離職日之後的殘留班表不算人頭，與日／月報表的計算一致
+                const onDuty = (dk) => visibleEmployees.filter(e => inServiceOn(e, dk));
                 const isWork = (e, dk) => (schedule[e.id]?.[dk] ?? 'V') === 'V';
-                const workCount = (dk) => visibleEmployees.filter(e => isWork(e, dk)).length;
+                const workCount = (dk) => onDuty(dk).filter(e => isWork(e, dk)).length;
                 // 差異數＝出勤人數 − 需求人數；未填需求時不顯示
                 const diffOf = (dk) => {
                   const d = demandOf(dk);
@@ -5431,20 +5433,21 @@ function ScheduleTable() {
                   return workCount(dk) - Number(d);
                 };
                 // 各廠商駐廠人數（A）與全區總駐廠人數（B），用於分攤當日需求
-                const headcountOf = (v) => visibleEmployees.filter(e => e.vendor === v).length;
-                const totalHead = visibleEmployees.length;
+                const headcountOf = (v, dk) => onDuty(dk).filter(e => e.vendor === v).length;
+                const totalHeadOf = (dk) => onDuty(dk).length;
                 // 建議排班人數＝當日需求（C）× 該廠商駐廠比例（A ÷ B）
                 const suggestOf = (v, dk) => {
                   const d = demandOf(dk);
-                  if (d === '' || totalHead === 0) return null;
-                  return Math.round(Number(d) * headcountOf(v) / totalHead);
+                  const total = totalHeadOf(dk);
+                  if (d === '' || total === 0) return null;
+                  return Math.round(Number(d) * headcountOf(v, dk) / total);
                 };
-                const assignedOf = (v, dk) => visibleEmployees.filter(e => e.vendor === v && isWork(e, dk)).length;
+                const assignedOf = (v, dk) => onDuty(dk).filter(e => e.vendor === v && isWork(e, dk)).length;
                 // 目前檢視範圍內實際出現的廠商，依現場慣用順序排列
                 const vendorsInView = sortVendorNames([...new Set(visibleEmployees.map(e => e.vendor).filter(Boolean))]);
                 const summaryRows = [
                   { key: '總人數', label: '總人數', bgRow: 'bg-slate-100', bgLabel: 'bg-slate-100', color: 'text-slate-700',
-                    fn: () => visibleEmployees.length },
+                    fn: (dk) => onDuty(dk).length },
                   { key: '需求人數', label: '需求人數', bgRow: 'bg-blue-50', bgLabel: 'bg-blue-50', color: 'text-blue-700',
                     editable: true },
                   { key: '出勤人數', label: '出勤人數', bgRow: 'bg-green-50', bgLabel: 'bg-green-50', color: 'text-green-700',
@@ -5498,7 +5501,7 @@ function ScheduleTable() {
                               // 目前人數：低於建議＝紅字（出工不足）、高於＝藍字（超派）、剛好＝綠字
                               const tone = asg < sug ? 'text-red-600' : asg > sug ? 'text-blue-600' : 'text-green-600';
                               return (
-                                <span title={`${vendor}：建議 ${sug} 人，目前已排 ${asg} 人（當日需求 × 駐廠比例 ${headcountOf(vendor)}/${totalHead}）`}>
+                                <span title={`${vendor}：建議 ${sug} 人，目前已排 ${asg} 人（當日需求 × 駐廠比例 ${headcountOf(vendor, dk)}/${totalHeadOf(dk)}）`}>
                                   <span className="text-slate-400">{sug}</span>
                                   <span className="text-slate-300">/</span>
                                   <span className={`font-bold ${tone}`}>{asg}</span>
