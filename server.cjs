@@ -120,6 +120,23 @@ async function initDB() {
   // 每次容器啟動（＝每次部署）先把當下的 app_state 原封不動另存一份快照。
   // 部署是資料最容易出事的時間點，有了時間戳快照就能指定時間點還原，
   // 不必再靠匯出的 Excel 回補。只保留最近 30 份，避免無限成長。
+  // 登入紀錄：每次登入成功寫一筆。
+  // 原本只在 users 表累加 login_count，但委外人員本來就不在帳號表，
+  // 是靠 upsert 臨時建列，失敗時被吞掉，畫面就永遠顯示 0。
+  // 改為獨立紀錄，次數由實際筆數算出，不依賴帳號表是否建得起來。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS login_audit (
+      id       BIGSERIAL   PRIMARY KEY,
+      at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username TEXT        NOT NULL,
+      role     TEXT,
+      name     TEXT,
+      ip       TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS login_audit_user_idx ON login_audit (username, at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS login_audit_at_idx   ON login_audit (at DESC)`);
+
   // 單格異動軌跡：誰、什麼時候、把哪一位員工的哪一天、從什麼改成什麼。
   // 排班爭議只靠推論永遠說不清楚，這張表就是唯一的事實來源。
   await pool.query(`
@@ -220,6 +237,19 @@ async function normalizeEmpIds() {
 
 const clientIp = req =>
   (req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket?.remoteAddress ?? '').trim() || null;
+
+/** 記錄一次成功登入。寫入失敗不可影響登入本身，但要留下明確的錯誤訊息。 */
+async function recordLogin(username, role, name, req) {
+  try {
+    await pool.query(
+      'INSERT INTO login_audit (username, role, name, ip) VALUES ($1,$2,$3,$4)',
+      [String(username ?? '').trim(), role ?? null, name ?? null, clientIp(req)]
+    );
+    await pool.query("DELETE FROM login_audit WHERE at < NOW() - INTERVAL '180 days'");
+  } catch (e) {
+    console.error('登入紀錄寫入失敗:', e.message);
+  }
+}
 
 // ── 備份 ──────────────────────────────────────────────────────────
 // 保留策略分開計算：啟動備份（每次部署）留 10 份，每日備份留 60 天。
@@ -1005,6 +1035,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     await pool.query('UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE id=$1', [user.id]);
     const { rows: fresh } = await pool.query('SELECT * FROM users WHERE id=$1', [user.id]);
+    await recordLogin(user.username, user.role, user.display_name, req);
     return res.json({ token: issueToken(user), user: safeUser(fresh[0] ?? user) });
   }
 
@@ -1593,6 +1624,39 @@ app.post('/api/maintenance/restore', requireAuth, requireAdmin, async (req, res)
   }
 });
 
+// 登入紀錄彙總：帳號 → 次數與最後登入時間。供帳號與權限頁顯示。
+app.get('/api/audit/login/summary', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT username, COUNT(*)::int AS count, MAX(at) AS last_at
+         FROM login_audit GROUP BY username`);
+    const map = {};
+    for (const r of rows) map[r.username] = { count: r.count, last_at: r.last_at };
+    res.json({ ok: true, summary: map });
+  } catch (e) {
+    console.error('login summary error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 登入紀錄明細：可依帳號過濾。
+app.get('/api/audit/login', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { username, limit } = req.query ?? {};
+  const args = [];
+  let where = '';
+  if (username) { args.push(String(username).trim()); where = `WHERE username = $${args.length}`; }
+  args.push(Math.min(500, Math.max(1, Number(limit) || 200)));
+  try {
+    const { rows } = await pool.query(
+      `SELECT at, username, role, name, ip FROM login_audit
+        ${where} ORDER BY at DESC LIMIT $${args.length}`, args);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    console.error('login audit error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 app.get('/api/state', requireAuth, requireManagerOrAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
@@ -2040,6 +2104,7 @@ app.post('/api/auth/vendor-login', async (req, res) => {
     } else {
       await pool.query('UPDATE users SET last_login=NOW(), login_count=login_count+1 WHERE id=$1', [user.id]);
     }
+    await recordLogin(user.username, user.role, user.display_name, req);
     return res.json({ token: issueToken(user), user: safeUser(user), mustChangePassword: firstLogin });
   } catch (e) {
     console.error('vendor-login error:', e.message);
@@ -2218,6 +2283,7 @@ app.post('/api/auth/worker-login', async (req, res) => {
              display_name = COALESCE(NULLIF(users.display_name, ''), EXCLUDED.display_name)`,
       ['worker_' + String(emp.id).slice(0, 53), String(emp.empId).trim(), String(emp.name ?? '').slice(0, 50)]
     ).catch(e => console.warn('worker 登入計數失敗:', e.message));
+    await recordLogin(pwdKey, 'worker', emp.name, req);
     const token = issueToken({
       id: 'worker_' + emp.id,
       username: pwdKey,   // 後續設定密碼會以此為索引，必須與查密碼時同一把鑰匙

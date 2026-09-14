@@ -1865,6 +1865,7 @@ const openAuditDrawer = () => window.dispatchEvent(new CustomEvent('vsp-open-aud
 function AuditDrawer() {
   const { currentUser } = useApp();
   const [open, setOpen] = useState(false);
+  const [tab, setTab]   = useState('schedule');   // schedule | login
   const [empNo, setEmpNo] = useState('');
   const [dk, setDk]       = useState('');
   const [rows, setRows]   = useState(null);
@@ -1892,9 +1893,10 @@ function AuditDrawer() {
     setBusy(true); setErr(''); setRows(null);
     try {
       const q = new URLSearchParams();
-      if (empNo.trim()) q.set('empNo', empNo.trim());
-      if (dk.trim())    q.set('dk', dk.trim());
-      const r = await fetch('/api/audit/schedule?' + q.toString(),
+      const path = tab === 'login' ? '/api/audit/login' : '/api/audit/schedule';
+      if (empNo.trim()) q.set(tab === 'login' ? 'username' : 'empNo', empNo.trim());
+      if (tab === 'schedule' && dk.trim()) q.set('dk', dk.trim());
+      const r = await fetch(path + '?' + q.toString(),
         { headers: { Authorization: `Bearer ${token}` } });
       const ct = r.headers.get('content-type') ?? '';
       if (!ct.includes('application/json')) {
@@ -1924,17 +1926,29 @@ function AuditDrawer() {
       <aside className="relative bg-white h-full w-full max-w-[720px] shadow-2xl flex flex-col border-l border-[#DDD9D0]">
         <header className="flex items-center justify-between px-5 py-3 border-b border-[#DDD9D0] shrink-0">
           <div>
-            <h3 className="font-bold text-slate-800">📜 班表異動軌跡</h3>
-            <p className="text-xs text-slate-500 mt-0.5">查每一格是誰、什麼時候、從什麼改成什麼</p>
+            <h3 className="font-bold text-slate-800">📜 異動與登入紀錄</h3>
+            <p className="text-xs text-slate-500 mt-0.5">查每一格是誰改的，以及誰在什麼時候登入過</p>
           </div>
           <button onClick={() => setOpen(false)}
             className="text-slate-400 hover:text-slate-600 text-xl leading-none px-2">✕</button>
         </header>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 text-sm">
+          <div className="flex gap-1 mb-3 border-b border-[#DDD9D0]">
+            {[['schedule', '班表異動'], ['login', '登入紀錄']].map(([k, label]) => (
+              <button key={k} onClick={() => { setTab(k); setRows(null); setErr(''); }}
+                className={`px-3 py-1.5 text-sm rounded-t-lg border border-b-0 -mb-px
+                  ${tab === k ? 'bg-white border-[#DDD9D0] text-blue-700 font-semibold'
+                              : 'border-transparent text-slate-500 hover:bg-[#F5F2EC]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-            自 2026/09/12 起，任何人更動任何一格班別都會留下紀錄（保留 90 天）。
-            此處<strong>僅供查閱，不會異動任何資料</strong>。
+            {tab === 'schedule'
+              ? '自 2026/09/12 起，任何人更動任何一格班別都會留下紀錄（保留 90 天）。'
+              : '每次登入成功都會留下紀錄（保留 180 天）。留空查全部，或輸入帳號／員工編號查單一人。'}
+            　此處<strong>僅供查閱，不會異動任何資料</strong>。
           </p>
 
           {err && (
@@ -1945,13 +1959,15 @@ function AuditDrawer() {
 
           <div className="flex flex-wrap items-end gap-2 mb-4">
             <label className="block">
-              <span className="block text-xs font-medium text-slate-600 mb-1">員工編號</span>
+              <span className="block text-xs font-medium text-slate-600 mb-1">
+                {tab === 'login' ? '帳號／員工編號' : '員工編號'}
+              </span>
               <input value={empNo} onChange={e => setEmpNo(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') query(); }}
                 placeholder="例：CY11202052"
                 className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
             </label>
-            <label className="block">
+            <label className={`block ${tab === 'login' ? 'hidden' : ''}`}>
               <span className="block text-xs font-medium text-slate-600 mb-1">班表日期（選填）</span>
               <input value={dk} onChange={e => setDk(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') query(); }}
@@ -1969,14 +1985,53 @@ function AuditDrawer() {
 
           {rows && rows.length === 0 && (
             <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs leading-relaxed">
-              <strong>查無任何異動紀錄。</strong>
-              （若有填「班表日期」，請先清空再查一次——該欄位指的是班表上的日期，例如 2026-10-11。）
-              代表這些格子從來沒有存進伺服器（例如當時網路中斷、或存檔被擋下），
-              而不是存進去之後被別人改掉。
+              {tab === 'login' ? (
+                <>
+                  <strong>查無登入紀錄。</strong>
+                  登入紀錄自 2026/09/14 起才開始記錄，在那之前的登入不會出現在這裡。
+                </>
+              ) : (
+                <>
+                  <strong>查無任何異動紀錄。</strong>
+                  （若有填「班表日期」，請先清空再查一次——該欄位指的是班表上的日期，例如 2026-10-11。）
+                  代表這些格子從來沒有存進伺服器（例如當時網路中斷、或存檔被擋下），
+                  而不是存進去之後被別人改掉。
+                </>
+              )}
             </div>
           )}
 
-          {rows && rows.length > 0 && (
+          {rows && rows.length > 0 && tab === 'login' && (
+            <>
+              <p className="text-xs text-slate-500 mb-2">共 {rows.length} 筆，由新到舊。</p>
+              <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-[#F5F2EC] text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">時間</th>
+                      <th className="px-2 py-1.5 text-left">帳號</th>
+                      <th className="px-2 py-1.5 text-left">身分</th>
+                      <th className="px-2 py-1.5 text-left">姓名</th>
+                      <th className="px-2 py-1.5 text-left">IP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className="border-t border-[#EFEBE3]">
+                        <td className="px-2 py-1.5 whitespace-nowrap">{fmt(r.at)}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap font-mono">{r.username}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{ROLE_LABEL[r.role] ?? r.role}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{r.name}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-400">{r.ip}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {rows && rows.length > 0 && tab === 'schedule' && (
             <>
               <p className="text-xs text-slate-500 mb-2">共 {rows.length} 筆，由新到舊。</p>
               <div className="border border-[#DDD9D0] rounded-lg overflow-x-auto">
@@ -11497,6 +11552,18 @@ function AccountManagement() {
       : [...(p.allowedWarehouses ?? []), whId],
   }));
 
+  // 登入次數改由 login_audit 實際筆數計算：委外人員本來就不在帳號表，
+  // 舊作法靠 upsert 臨時建列，失敗時無聲無息，畫面永遠顯示 0。
+  const [loginSummary, setLoginSummary] = useState({});
+  useEffect(() => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    fetch('/api/audit/login/summary', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.summary) setLoginSummary(d.summary); })
+      .catch(() => {});
+  }, []);
+
   // 登入次數／最後登入由伺服器在每次登入時累計，本機 users 不會更新，
   // 故一律以 apiUsers（資料庫）為準，查無對應帳號才退回本機值。
   const dbUserOf = u => apiUsers.find(a => a.id === u.id || a.username === u.username);
@@ -11730,14 +11797,19 @@ function AccountManagement() {
                   <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
                   <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
                   {(() => {
-                    // 委外人員的登入次數由伺服器以員編為 key 累計於 users 表
-                    const db = apiUsers.find(a => a.username === emp.empId);
-                    const t = db?.last_login ? new Date(db.last_login) : null;
+                    // 以登入紀錄的實際筆數為準；沒有紀錄時才退回帳號表的累計值
+                    const key = String(emp.empId ?? '').trim();
+                    const la = loginSummary[key];
+                    const db = apiUsers.find(a => a.username === key);
+                    const count = la?.count ?? db?.loginCount ?? 0;
+                    const ts = la?.last_at ?? db?.last_login ?? null;
+                    const t = ts ? new Date(ts) : null;
                     return (
                       <span>
-                        <span className="text-teal-700 font-bold text-sm">{db?.loginCount ?? 0}</span>
+                        <span className={`font-bold text-sm ${count > 0 ? 'text-teal-700' : 'text-slate-300'}`}>{count}</span>
                         {t && <span className="block text-[10px] text-slate-400 leading-tight">
-                          {t.getFullYear()}/{String(t.getMonth()+1).padStart(2,'0')}/{String(t.getDate()).padStart(2,'0')}</span>}
+                          {t.getFullYear()}/{String(t.getMonth()+1).padStart(2,'0')}/{String(t.getDate()).padStart(2,'0')}
+                          {' '}{String(t.getHours()).padStart(2,'0')}:{String(t.getMinutes()).padStart(2,'0')}</span>}
                       </span>
                     );
                   })()}
