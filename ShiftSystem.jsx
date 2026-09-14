@@ -4687,15 +4687,31 @@ function ScheduleTable() {
   };
 
   // 一週一例修正：掃描現有班表，每週超過一天「例」的降格為「休」
-  const handleFixWeeklyEx = useCallback(() => {
+  const handleFixWeeklyEx = useCallback(async () => {
+    // 只處理目前畫面顯示的這一期。原本掃的是該員整份班表，
+    // 停留在 9/7～10/4 按下去會連 10/5～11/1 一併改掉。
+    const periodDks = new Set(dayHeadersRef.current.map(h => h.dk));
+    if (periodDks.size === 0) { toast('目前沒有可修正的日期範圍', 'warn'); return; }
+    const first = dayHeadersRef.current[0]?.dk;
+    const last  = dayHeadersRef.current[dayHeadersRef.current.length - 1]?.dk;
+    if (!await askConfirm(
+      `將修正 ${first} ～ ${last} 這一期的每週例假：
+` +
+      `． 一週超過一個「例」→ 保留第一個，其餘改為「休」
+` +
+      `． 一週沒有「例」但有「休」→ 最後一個「休」改為「例」
+
+` +
+      `僅影響這一期，其他期間不會變動。確定執行？`)) return;
+
     let fixedCount = 0;
     const updates = {};
     visibleEmployees.forEach(emp => {
       const empSchedule = schedule[emp.id];
       if (!empSchedule) return;
-      // 收集所有例/休日，依日期排序
+      // 收集本期內的例/休日，依日期排序
       const offDays = Object.entries(empSchedule)
-        .filter(([, code]) => code === '例' || code === '休')
+        .filter(([dk, code]) => periodDks.has(dk) && (code === '例' || code === '休'))
         .map(([dk, code]) => {
           const [y, m, d] = dk.split('-').map(Number);
           return { dk, code, ts: new Date(y, m - 1, d).getTime() };
@@ -4734,7 +4750,7 @@ function ScheduleTable() {
       Object.entries(updates).forEach(([id, days]) => { next[id] = days; });
       return next;
     });
-    toast(`已修正 ${fixedCount} 個格位：每週指定一天例假，其餘休息改為休假。`, 'success');
+    toast(`已修正 ${fixedCount} 個格位（${first} ～ ${last}）：每週指定一天例假，其餘休息改為休假。`, 'success');
   }, [visibleEmployees, schedule, setSchedule, toast]);
 
   // 一鍵轉換「國」：校正排班週期內的國定假日標記
