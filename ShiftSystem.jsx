@@ -12737,7 +12737,30 @@ export default function App() {
   // 多段區間（每段自帶鎖定模式與適用組別）；空值時沿用上面的單一區間
   const [deptSegments, setDeptSegments] = useState(() => LS.get('sms_dept_segments', {}));
   // 每日需求人數：key 為「課別|組別|日期」，各課各組分別記錄
-  const [dailyDemand, setDailyDemand] = useState(() => LS.get('sms_daily_demand', {}));
+  const [dailyDemand, setDailyDemandRaw] = useState(() => LS.get('sms_daily_demand', {}));
+  // 需求人數與班表一樣會被 30 秒的背景同步整份取代。若不保護，正在輸入
+  // （或剛輸入完、存檔尚未完成）的數字會被伺服器的舊值蓋回去。
+  // 作法與班表相同：記住本機改過的鍵，套用遠端資料時把它們疊回去。
+  const dirtyDemandRef = useRef(new Set());
+  const setDailyDemand = useCallback((arg) => {
+    setDailyDemandRaw(prev => {
+      const next = typeof arg === 'function' ? arg(prev) : arg;
+      for (const k of new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]))
+        if (prev?.[k] !== next?.[k]) dirtyDemandRef.current.add(k);
+      return next;
+    });
+  }, []);
+  const applyRemoteDemand = useCallback((remote) => {
+    if (!remote) return;
+    setDailyDemandRaw(prev => {
+      const merged = { ...remote };
+      for (const k of dirtyDemandRef.current) {
+        if (prev?.[k] === undefined) delete merged[k];
+        else merged[k] = prev[k];
+      }
+      return merged;
+    });
+  }, []);
   // 快速解鎖密碼（雜湊後儲存）；供日翊在課別鎖定或區間外時臨時開啟編輯
   const [unlockPwd, setUnlockPwd] = useState(() => LS.get('sms_unlock_pwd', ''));
   // 手機控管櫃號 { 員工id: {cab,slot} }：固定綁定人員，不隨每日出勤變動
@@ -13023,7 +13046,7 @@ export default function App() {
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
-          if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+          if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13058,7 +13081,7 @@ export default function App() {
           if (s.deptLocks)               setDeptLocks(s.deptLocks);
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
-          if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+          if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13096,7 +13119,7 @@ export default function App() {
         if (state?.deptLocks)              setDeptLocks(state.deptLocks);
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
         if (state?.deptSegments)           setDeptSegments(state.deptSegments);
-        if (state?.dailyDemand)            setDailyDemand(state.dailyDemand);
+        if (state?.dailyDemand)            applyRemoteDemand(state.dailyDemand);
         if (state?.unlockPwd !== undefined) setUnlockPwd(state.unlockPwd);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
@@ -13171,7 +13194,7 @@ export default function App() {
       if (s.deptLocks)               setDeptLocks(s.deptLocks);
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
       if (s.deptSegments) setDeptSegments(s.deptSegments);
-      if (s.dailyDemand) setDailyDemand(s.dailyDemand);
+      if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
       if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13365,7 +13388,9 @@ export default function App() {
     // 沒有異動時不帶 schedule（送 {} 會被伺服器的 jsonb 合併當成「清空整份班表」）
     const dirtySchedule = buildDirtySchedule(sentCells, scheduleRef.current);
     const sentDeletes = [...deletedEmpsRef.current];
+    const sentDemand = [...dirtyDemandRef.current];
     const clearSent = () => {
+      sentDemand.forEach(k => dirtyDemandRef.current.delete(k));
       sentCells.forEach(k => dirtyCellsRef.current.delete(k));
       persistDirty();
       if (sentDeletes.length > 0) {
