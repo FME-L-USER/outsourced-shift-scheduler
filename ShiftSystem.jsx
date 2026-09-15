@@ -8414,12 +8414,35 @@ function Attendance({ phoneOnly = false }) {
   const absentCount = totalCount - presentCount;
   const attendRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
+  /**
+   * 指定日期的點名名單（長期人員）。
+   *
+   * 點名分頁、回報文字、統計 Excel 三處原本各有一套篩選條件，人數因此對不起來
+   *（例如回報未排除已離職與「移出本日名單」者，統計選了組別時連倉別／課別都沒套用）。
+   * 一律改用這個函式，條件只有一份。
+   */
+  const rollCallList = useCallback((dateStr, group) => {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    const dk = dateKey(y, m, d);
+    const recs = attendData[dateStr] ?? {};
+    let list = currentUser.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
+    if (group) list = list.filter(e => e.shiftType === group || e.group === group);
+    return list.filter(e =>
+      !isLeaver(e) && inServiceOn(e, dk) &&
+      !recs[e.id]?._excluded &&
+      // 排休／例／國者不列入，但若當日已有到班或簽到紀錄仍須列出
+      (!ABSENT_CODES.has(schedule[e.id]?.[dk]) || hasAttendActivity(recs[e.id])));
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup,
+      selectedWorkArea, selectedVendor, schedule, attendData]);
+
   // ── 統計 Excel
   const exportStats = (reportDate, reportGroup) => {
     try {
-      let emps = reportGroup
-        ? employees.filter(e => e.shiftType === reportGroup || e.group === reportGroup)
-        : scopedEmps;
+      const emps = rollCallList(reportDate, reportGroup);
       const exExtras = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
       const getData = id => attendData[reportDate]?.[id] ?? { present: true };
 
@@ -8478,15 +8501,7 @@ function Attendance({ phoneOnly = false }) {
   const generateReport = (reportDate, reportGroup) => {
     // 長期 = 清冊人員；臨時 = 手動新增
     // 統一用 vendor/scope 過濾，再依報告日期排班過濾排休/例/國
-    let longList = currentUser.role === ROLES.VENDOR
-      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
-      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    longList = filterByScope(longList, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    if (reportGroup) longList = longList.filter(e => e.shiftType === reportGroup || e.group === reportGroup);
-    const [ry, rm, rd] = reportDate.split('-').map(Number);
-    const reportDk = dateKey(ry, rm, rd);
-    longList = longList.filter(e => !ABSENT_CODES.has(schedule[e.id]?.[reportDk]));
-    const longEmps = longList;
+    const longEmps = rollCallList(reportDate, reportGroup);
     const allTemps = extras[reportDate] ?? [];
     const tempEmps = allTemps.filter(e => !reportGroup || e.group === reportGroup);
     // 未指定作業組別者不屬於任何一組，會被回報漏掉。過去這是無聲的，
