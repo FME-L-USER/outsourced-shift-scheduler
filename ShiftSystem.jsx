@@ -1818,7 +1818,10 @@ function lockAllowsEdit(lockValue, role) {
  */
 const STATION_LAYOUTS = {
   '團預購': {
+    // 綁定條件：長期人員取「組別 ＋ 作業區」皆符合者；
+    // 臨時人力只依組別區分（不分作業區），故同組別的臨時人力在該組各作業區都會出現。
     group: '日班-出貨組',
+    workArea: '團預購',
     title: '團 預 購 作 業',
     sections: [
       {
@@ -1862,6 +1865,409 @@ const STATION_LAYOUTS = {
           { cols: 2, blocks: [
             { key: 'supUnit',  label: '支援單位', slots: 1, freeText: true },
             { key: 'supPeople',label: '支援人員', slots: 2 },
+          ]},
+        ],
+      },
+    ],
+  },
+  '理貨': {
+    group: '日班-理貨組',
+    title: '理 貨 作 業',
+    sections: [
+      {
+        title: 'D3 線',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'd3feed', label: 'D3 投料', slots: 4 },
+            { key: 'd3out',  label: '外露件', slots: 1 },
+            { key: 'd3err',  label: '異常件', slots: 1 },
+            { key: 'd3none', label: '無資料', slots: 1 },
+            { key: 'd3pack', label: '裝箱', slots: 2 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'wa', label: 'WA 2-4', slots: 1 },
+            { key: 'wb', label: 'WB 5-7', slots: 1 },
+            { key: 'wc', label: 'WC 8-10', slots: 1 },
+            { key: 'wd', label: 'WD 11-13', slots: 1 },
+            { key: 'we', label: 'WE 17-18', slots: 1 },
+            { key: 'wf', label: 'WF 19-20', slots: 1 },
+            { key: 'wg', label: 'WG 25-27', slots: 1 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'wh', label: 'WH 28-29', slots: 1 },
+            { key: 'wi', label: 'WI 31-32', slots: 1 },
+            { key: 'wx', label: 'WX 34-36', slots: 1 },
+            { key: 'wy', label: 'WY 38-39', slots: 1 },
+            { key: 'wz', label: 'WZ 41-42', slots: 1 },
+            { key: 'yi', label: 'YI 45-46', slots: 1 },
+            { key: 'yj', label: 'YJ 47-48', slots: 1 },
+          ]},
+          { cols: 6, blocks: [
+            { key: 'wj', label: 'WJ 52-54', slots: 1 },
+            { key: 'wk', label: 'WK 55-57', slots: 1 },
+            { key: 'wl', label: 'WL 58-60', slots: 1 },
+            { key: 'wm', label: 'WM 61-63', slots: 1 },
+            { key: 'wn', label: 'WN 65-66', slots: 1 },
+            { key: 'wo', label: 'WO 67-69', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'wp', label: 'WP 70-72', slots: 1 },
+            { key: 'wq', label: 'WQ 73-75', slots: 1 },
+            { key: 'wr', label: 'WR 76-78', slots: 1 },
+            { key: 'ws', label: 'WS 79-81', slots: 1 },
+            { key: 'wt', label: 'WT 82-83', slots: 1 },
+            { key: 'wu', label: 'WU 84-86', slots: 1 },
+            { key: 'wv', label: 'WV 87-89', slots: 1 },
+            { key: 'ww', label: 'WW 90-95', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: 'D4 線',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'd4feed', label: 'D4 投料', slots: 4 },
+            { key: 'd4out',  label: '外露件', slots: 1 },
+            { key: 'd4err',  label: '異常件', slots: 1 },
+            { key: 'd4none', label: '無資料', slots: 1 },
+            { key: 'd4pack', label: '裝箱', slots: 2 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'xa', label: 'XA 5-6', slots: 1 },
+            { key: 'xb', label: 'XB 8-9', slots: 1 },
+            { key: 'xc', label: 'XC 11-12', slots: 1 },
+            { key: 'xd', label: 'XD 14-15', slots: 1 },
+            { key: 'xe', label: 'XE 17-18', slots: 1 },
+            { key: 'xf', label: 'XF 19-20', slots: 1 },
+            { key: 'xg', label: 'XG 22-23', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'xh', label: 'XH 25-26', slots: 1 },
+            { key: 'xi', label: 'XI 28-29', slots: 1 },
+            { key: 'xj', label: 'XJ 31-32', slots: 1 },
+            { key: 'xk', label: 'XK 35-36', slots: 1 },
+            { key: 'xl', label: 'XL 37-38', slots: 1 },
+            { key: 'xm', label: 'XM 40-41', slots: 1 },
+            { key: 'xn', label: 'XN 43-44', slots: 1 },
+            { key: 'xo', label: 'XO 46-47', slots: 1 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'xp', label: 'XP 49-50', slots: 1 },
+            { key: 'xq', label: 'XQ 52-53', slots: 1 },
+            { key: 'xr', label: 'XR 55-56', slots: 1 },
+            { key: 'xs', label: 'XS 58-59', slots: 1 },
+            { key: 'xt', label: 'XT 61-62', slots: 1 },
+            { key: 'xu', label: 'XU 64-65', slots: 1 },
+            { key: 'xv', label: 'XV 66-67', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'xw', label: 'XW 69-70', slots: 1 },
+            { key: 'xx', label: 'XX 72-73', slots: 1 },
+            { key: 'xy', label: 'XY 75-76', slots: 1 },
+            { key: 'xz', label: 'XZ 78-79', slots: 1 },
+            { key: 'ya', label: 'YA 82', slots: 1 },
+            { key: 'yb', label: 'YB 83', slots: 1 },
+            { key: 'yc', label: 'YC 84', slots: 1 },
+            { key: 'yd', label: 'YD 86', slots: 1 },
+          ]},
+          { cols: 4, blocks: [
+            { key: 'ye', label: 'YE 87', slots: 1 },
+            { key: 'yf', label: 'YF 89', slots: 1 },
+            { key: 'yg', label: 'YG 91', slots: 1 },
+            { key: 'yh', label: 'YH 93', slots: 1 },
+          ]},
+        ],
+      },
+    ],
+  },
+  '驗收': {
+    group: '日班-理貨組',
+    title: '驗 收 作 業',
+    sections: [
+      {
+        title: '碼頭',
+        rows: [
+          { cols: 6, blocks: [
+            { key: 'n02',  label: '北 0、2',  slots: 1 },
+            { key: 'n13',  label: '北 1、3',  slots: 1 },
+            { key: 'n8',   label: '北 #、8',  slots: 1 },
+            { key: 'nodata', label: '無資料', slots: 1 },
+            { key: 'hrisk', label: '高風險件', slots: 1 },
+            { key: 's5',   label: '南 5',     slots: 1 },
+          ]},
+          { cols: 4, blocks: [
+            { key: 's6',   label: '南 6',     slots: 1 },
+            { key: 'm7',   label: '7 中',     slots: 1 },
+            { key: 'mk',   label: 'K 中',     slots: 1 },
+            { key: 'dockMove', label: '移動',  slots: 2 },
+          ]},
+        ],
+      },
+      {
+        title: '補料 / 投料',
+        rows: [
+          { cols: 2, blocks: [
+            { key: 'feedIn',  label: '補料', slots: 4 },
+            { key: 'feedOut', label: '投料', slots: 4 },
+          ]},
+          { cols: 2, blocks: [
+            { key: 'basketSend', label: '空籃補送', slots: 4 },
+            { key: 'insMove',    label: '移動',     slots: 4 },
+          ]},
+        ],
+      },
+      {
+        title: '特殊件',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'unread',  label: '未讀取',      slots: 1 },
+            { key: 'ecB2C',   label: 'EC退 B2C',    slots: 1 },
+            { key: 'ecC2C',   label: 'EC退 C2C',    slots: 1 },
+            { key: 'retPass', label: '退貨通',      slots: 1 },
+            { key: 'shoes',   label: '救命鞋',      slots: 1 },
+          ]},
+          { cols: 5, blocks: [
+            { key: 'vip',     label: '特殊VIP',     slots: 1 },
+            { key: 'tN',      label: '時效件（北）', slots: 1 },
+            { key: 't6',      label: '時效件（6）',  slots: 1 },
+            { key: 't58',     label: '時效件（5.8）', slots: 1 },
+            { key: 'spiral',  label: '螺旋輸送',    slots: 2 },
+          ]},
+        ],
+      },
+      {
+        title: '外圍作業',
+        rows: [
+          { cols: 4, blocks: [
+            { key: 'iHelper', label: '小幫手',   slots: 3 },
+            { key: 'iField',  label: '外場人員', slots: 3 },
+            { key: 'iSpecial',label: '特殊件',   slots: 3 },
+            { key: 'iReturn', label: '返廠移動', slots: 3 },
+          ]},
+        ],
+      },
+    ],
+  },
+  '中班理貨': {
+    group: '中班-理貨組',
+    title: '中 班 理 貨 作 業',
+    sections: [
+      {
+        title: 'D3 線',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'd3feed', label: 'D3 投料', slots: 4 },
+            { key: 'd3out',  label: '外露件', slots: 1 },
+            { key: 'd3err',  label: '異常件', slots: 1 },
+            { key: 'd3none', label: '無資料', slots: 1 },
+            { key: 'd3pack', label: '裝箱', slots: 2 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'wa', label: 'WA 2-4', slots: 1 },
+            { key: 'wb', label: 'WB 5-7', slots: 1 },
+            { key: 'wc', label: 'WC 8-10', slots: 1 },
+            { key: 'wd', label: 'WD 11-13', slots: 1 },
+            { key: 'we', label: 'WE 17-18', slots: 1 },
+            { key: 'wf', label: 'WF 19-20', slots: 1 },
+            { key: 'wg', label: 'WG 25-27', slots: 1 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'wh', label: 'WH 28-29', slots: 1 },
+            { key: 'wi', label: 'WI 31-32', slots: 1 },
+            { key: 'wx', label: 'WX 34-36', slots: 1 },
+            { key: 'wy', label: 'WY 38-39', slots: 1 },
+            { key: 'wz', label: 'WZ 41-42', slots: 1 },
+            { key: 'yi', label: 'YI 45-46', slots: 1 },
+            { key: 'yj', label: 'YJ 47-48', slots: 1 },
+          ]},
+          { cols: 6, blocks: [
+            { key: 'wj', label: 'WJ 52-54', slots: 1 },
+            { key: 'wk', label: 'WK 55-57', slots: 1 },
+            { key: 'wl', label: 'WL 58-60', slots: 1 },
+            { key: 'wm', label: 'WM 61-63', slots: 1 },
+            { key: 'wn', label: 'WN 65-66', slots: 1 },
+            { key: 'wo', label: 'WO 67-69', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'wp', label: 'WP 70-72', slots: 1 },
+            { key: 'wq', label: 'WQ 73-75', slots: 1 },
+            { key: 'wr', label: 'WR 76-78', slots: 1 },
+            { key: 'ws', label: 'WS 79-81', slots: 1 },
+            { key: 'wt', label: 'WT 82-83', slots: 1 },
+            { key: 'wu', label: 'WU 84-86', slots: 1 },
+            { key: 'wv', label: 'WV 87-89', slots: 1 },
+            { key: 'ww', label: 'WW 90-95', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: 'D4 線',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'd4feed', label: 'D4 投料', slots: 4 },
+            { key: 'd4out',  label: '外露件', slots: 1 },
+            { key: 'd4err',  label: '異常件', slots: 1 },
+            { key: 'd4none', label: '無資料', slots: 1 },
+            { key: 'd4pack', label: '裝箱', slots: 2 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'xa', label: 'XA 5-6', slots: 1 },
+            { key: 'xb', label: 'XB 8-9', slots: 1 },
+            { key: 'xc', label: 'XC 11-12', slots: 1 },
+            { key: 'xd', label: 'XD 14-15', slots: 1 },
+            { key: 'xe', label: 'XE 17-18', slots: 1 },
+            { key: 'xf', label: 'XF 19-20', slots: 1 },
+            { key: 'xg', label: 'XG 22-23', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'xh', label: 'XH 25-26', slots: 1 },
+            { key: 'xi', label: 'XI 28-29', slots: 1 },
+            { key: 'xj', label: 'XJ 31-32', slots: 1 },
+            { key: 'xk', label: 'XK 35-36', slots: 1 },
+            { key: 'xl', label: 'XL 37-38', slots: 1 },
+            { key: 'xm', label: 'XM 40-41', slots: 1 },
+            { key: 'xn', label: 'XN 43-44', slots: 1 },
+            { key: 'xo', label: 'XO 46-47', slots: 1 },
+          ]},
+          { cols: 7, blocks: [
+            { key: 'xp', label: 'XP 49-50', slots: 1 },
+            { key: 'xq', label: 'XQ 52-53', slots: 1 },
+            { key: 'xr', label: 'XR 55-56', slots: 1 },
+            { key: 'xs', label: 'XS 58-59', slots: 1 },
+            { key: 'xt', label: 'XT 61-62', slots: 1 },
+            { key: 'xu', label: 'XU 64-65', slots: 1 },
+            { key: 'xv', label: 'XV 66-67', slots: 1 },
+          ]},
+          { cols: 8, blocks: [
+            { key: 'xw', label: 'XW 69-70', slots: 1 },
+            { key: 'xx', label: 'XX 72-73', slots: 1 },
+            { key: 'xy', label: 'XY 75-76', slots: 1 },
+            { key: 'xz', label: 'XZ 78-79', slots: 1 },
+            { key: 'ya', label: 'YA 82', slots: 1 },
+            { key: 'yb', label: 'YB 83', slots: 1 },
+            { key: 'yc', label: 'YC 84', slots: 1 },
+            { key: 'yd', label: 'YD 86', slots: 1 },
+          ]},
+          { cols: 4, blocks: [
+            { key: 'ye', label: 'YE 87', slots: 1 },
+            { key: 'yf', label: 'YF 89', slots: 1 },
+            { key: 'yg', label: 'YG 91', slots: 1 },
+            { key: 'yh', label: 'YH 93', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '外圍作業',
+        rows: [
+          { cols: 6, blocks: [
+            { key: 'oHelper',  label: '小幫手',     slots: 4 },
+            { key: 'oForklift',label: '推高機人員', slots: 4 },
+            { key: 'oField',   label: '外場人員',   slots: 4 },
+            { key: 'oReturn',  label: '返廠驗收',   slots: 4 },
+            { key: 'oBasket',  label: '空籃補送',   slots: 4 },
+            { key: 'oSupport', label: '運務支援',   slots: 4 },
+          ]},
+          { cols: 6, blocks: [
+            { key: 'oSeal',    label: '封箱',       slots: 4 },
+            { key: 'oShare',   label: '共配',       slots: 4 },
+            { key: 'oScan',    label: '外露件過刷', slots: 4 },
+            { key: 'oSort',    label: '外露件分類', slots: 4 },
+            { key: 'oPackSup', label: '裝箱支援',   slots: 4 },
+            { key: 'o3f',      label: '3F 移動',    slots: 4 },
+          ]},
+          { cols: 2, blocks: [
+            { key: 'd3Err',    label: 'D3 異常',    slots: 4 },
+            { key: 'd4Err',    label: 'D4 異常',    slots: 4 },
+          ]},
+        ],
+      },
+    ],
+  },
+  'O2O': {
+    group: '日班-出貨組',
+    workArea: 'O2O',
+    title: 'O 2 O 作 業',
+    sections: [
+      {
+        title: '包裝 / QC',
+        rows: [
+          { cols: 4, blocks: [
+            { key: 'pkE01', label: '包裝 E01-E02', slots: 2 },
+            { key: 'pkE03', label: '包裝 E03-E04', slots: 2 },
+            { key: 'pkE05', label: '包裝 E05-E06', slots: 2 },
+            { key: 'pkE07', label: '包裝 E07-E08', slots: 2 },
+          ]},
+          { cols: 5, blocks: [
+            { key: 'qcD01', label: 'QC D01', slots: 1 },
+            { key: 'qcD02', label: 'QC D02', slots: 1 },
+            { key: 'qcD03', label: 'QC D03', slots: 1 },
+            { key: 'qcD04', label: 'QC D04', slots: 1 },
+            { key: 'qcD05', label: 'QC D05', slots: 1 },
+          ]},
+          { cols: 5, blocks: [
+            { key: 'qcD06', label: 'QC D06', slots: 1 },
+            { key: 'qcD07', label: 'QC D07', slots: 1 },
+            { key: 'qcD08', label: 'QC D08', slots: 1 },
+            { key: 'pkD09', label: 'A類包裝 D09', slots: 1 },
+            { key: 'qcD10', label: 'A類QC D10', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '訂單播種站',
+        rows: [
+          { cols: 4, blocks: [
+            { key: 'c01', label: 'C01', slots: 1 },
+            { key: 'c02', label: 'C02', slots: 1 },
+            { key: 'c03', label: 'C03', slots: 1 },
+            { key: 'c04', label: 'C04', slots: 1 },
+          ]},
+          { cols: 4, blocks: [
+            { key: 'c05', label: 'C05', slots: 1 },
+            { key: 'c06', label: 'C06', slots: 1 },
+            { key: 'c07', label: 'C07', slots: 1 },
+            { key: 'c08', label: 'C08', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '中分站 / A 類 / 箱式立庫',
+        rows: [
+          { cols: 4, blocks: [
+            { key: 'b01', label: '中分站 B01', slots: 1 },
+            { key: 'b02', label: '中分站 B02', slots: 1 },
+            { key: 'b03', label: '中分站 B03', slots: 1 },
+            { key: 'b04', label: 'A類 B04', slots: 1 },
+          ]},
+          { cols: 5, blocks: [
+            { key: 'a91', label: 'A91', slots: 1 },
+            { key: 'a92', label: 'A92', slots: 1 },
+            { key: 'a93', label: 'A93', slots: 1 },
+            { key: 'a94', label: 'A94', slots: 1 },
+            { key: 'a95', label: 'A95', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '其他作業',
+        rows: [
+          { cols: 5, blocks: [
+            { key: 'split',   label: '分貨',        slots: 2 },
+            { key: 'north',   label: '北',          slots: 1 },
+            { key: 'south',   label: '南',          slots: 1 },
+            { key: 'ng',      label: 'NG',          slots: 1 },
+            { key: 'move',    label: '移動',        slots: 2 },
+          ]},
+          { cols: 5, blocks: [
+            { key: 'refill',  label: '補貨站/一般', slots: 1 },
+            { key: 'refillC', label: '補貨站/截單', slots: 1 },
+            { key: 'opener',  label: '開箱機',      slots: 1 },
+            { key: 'store',   label: '儲調',        slots: 1 },
+            { key: 'count',   label: '盤點',        slots: 1 },
+          ]},
+          { cols: 2, blocks: [
+            { key: 'intern',  label: '收發實習',    slots: 1 },
+            { key: 'inbound', label: '入庫上架',    slots: 1 },
           ]},
         ],
       },
@@ -10822,8 +11228,7 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
  * 版面由 STATION_LAYOUTS 描述，站區調整只需改設定、不動畫面程式。
  */
 function StationBoard() {
-  const { employees, warehouses, schedule, attendData, currentUser,
-          selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor,
+  const { employees, warehouses, schedule, attendData, extras, currentUser,
           stationBoard, setStationBoard } = useApp();
   const toast = useToast();
 
@@ -10839,30 +11244,48 @@ function StationBoard() {
   const perms = currentUser?.permissions ?? getDefaultPermissions(currentUser?.role);
   const canEdit = perms?.station?.editStation !== false;
 
-  // ── 當日實際到班人員（點名表 present，且未被移出名單）──
+  /**
+   * 當日可指派的人員 ＝ 長期人員（點名表實到）＋ 臨時人力（當日手動新增／匯入）。
+   *
+   * 綁定規則：
+   *   長期人員 → 人員清冊的「組別」符合，且版面若指定作業區，「作業區」也要符合
+   *   臨時人力 → 只看「組別」，不分作業區；故同組別的臨時人力會在該組各作業區都出現
+   */
   const presentEmps = useMemo(() => {
     const [y, m, d] = date.split('-').map(Number);
     const dk = dateKey(y, m, d);
     const recs = attendData[date] ?? {};
+
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
-    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
-    // 版面設定了組別時，只取該組別的人
-    if (layout?.group) list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
-    return list
+    if (layout?.group)    list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
+    if (layout?.workArea) list = list.filter(e => normName(e.workArea) === normName(layout.workArea));
+    const longs = list
       .filter(e => !isLeaver(e) && inServiceOn(e, dk) && !recs[e.id]?._excluded && recs[e.id]?.present)
-      .sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
-                      (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
-  }, [employees, warehouses, currentUser, selectedWarehouse, selectedDept, selectedGroup,
-      selectedWorkArea, selectedVendor, attendData, date, layout]);
+      .map(e => ({ id: e.id, name: e.name, empId: e.empId, vendor: e.vendor, temp: false }));
+
+    // 臨時人力：僅依組別區分，不分作業區
+    const temps = (extras[date] ?? [])
+      .filter(x => x.present !== false && (!layout?.group || x.group === layout.group))
+      .map(x => ({ id: x.id, name: x.name, empId: '', vendor: x.vendor, temp: true }));
+
+    return [...longs, ...temps].sort((a, b) =>
+      Number(a.temp) - Number(b.temp) ||
+      vendorRank(a.vendor) - vendorRank(b.vendor) ||
+      (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
+  }, [employees, currentUser, attendData, extras, date, layout]);
 
   const board = stationBoard?.[date]?.[areaKey] ?? {};
   const nameOf = (v) => {
     if (!v) return '';
+    const hit = presentEmps.find(x => x.id === v);
+    if (hit) return hit.name + (hit.temp ? '（臨）' : '');
     const e = employees.find(x => x.id === v);
-    return e ? e.name : String(v);          // 找不到就是自由文字（例如支援單位）
+    if (e) return e.name;
+    const t = (extras[date] ?? []).find(x => x.id === v);
+    if (t) return t.name + '（臨）';
+    return String(v);                       // 其餘視為自由文字（例如支援單位）
   };
 
   // 已被指派的人員 id
@@ -10988,8 +11411,11 @@ function StationBoard() {
       {presentEmps.length === 0 && (
         <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm leading-relaxed">
           <strong>{date} 沒有實到人員。</strong>
-          站區表的人員來自<strong>點名表的實際到班紀錄</strong>，請先到點名表完成該日點名；
-          也請確認上方篩選列的倉別／課別已選到「{layout?.group ?? ''}」所屬的範圍。
+          站區表的人員來自<strong>點名表的實際到班紀錄</strong>，請先完成該日點名。
+          本作業區取的是<strong>組別「{layout?.group}」</strong>
+          {layout?.workArea ? <>、且<strong>作業區為「{layout.workArea}」</strong></> : null}
+          的人員；臨時人力只依組別區分，不分作業區。
+          若有人沒出現，請至人員清冊確認該員的組別與作業區是否已維護。
         </div>
       )}
 
