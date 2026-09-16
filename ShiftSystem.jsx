@@ -395,6 +395,9 @@ const PAGE_PERMISSIONS = [
     { key: 'editAttendance',   label: '編輯點名' },
     { key: 'exportAttendance', label: '匯出點名' },
   ]},
+  { key: 'station', label: '站區表', features: [
+    { key: 'editStation', label: '指派站區' },
+  ]},
   { key: 'phoneControl', label: '手機控管', features: [
     { key: 'assignLocker', label: '分配櫃號' },
   ]},
@@ -1806,11 +1809,72 @@ function lockAllowsEdit(lockValue, role) {
   return true;
 }
 
+/**
+ * 站區表版面設定。
+ *
+ * 每個作業區一份，描述現場實際的站位配置；站區數量與名稱日後可在此調整，
+ * 不需改動畫面程式。cols 為該列切成幾欄，每個 block 佔 span 欄。
+ * slots 是預設顯示的空位數，實際可再加減。
+ */
+const STATION_LAYOUTS = {
+  '團預購': {
+    group: '日班-出貨組',
+    title: '團 預 購 作 業',
+    sections: [
+      {
+        rows: [
+          { cols: 6, blocks: [
+            { key: 'helper',   label: '小幫手',       slots: 2 },
+            { key: 'label',    label: '貼標',         slots: 1 },
+            { key: 'labelRt',  label: '貼標路線',     slots: 1 },
+            { key: 'pda',      label: 'PDA 揀貨',     slots: 4 },
+            { key: 'qc',       label: 'QC',           slots: 2 },
+            { key: 'basket',   label: '空籃',         slots: 1 },
+          ]},
+          { cols: 6, blocks: [
+            { key: 'shelfChk', label: '理貨上架核對', slots: 1 },
+            { key: 'dailyIn',  label: '每日進貨上架', slots: 1 },
+            { key: 'stack',    label: '疊板定位',     slots: 1 },
+            { key: 'unloadUp', label: '下貨 · 樓上',  slots: 2 },
+            { key: 'unloadDn', label: '下貨 · 樓下',  slots: 2 },
+            { key: 'elevator', label: '電梯',         slots: 1 },
+          ]},
+          { cols: 6, blocks: [
+            { key: 'duty',     label: '值日生',       slots: 1 },
+            { key: 'moveIn',   label: '進貨移動拉貨', slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '咖啡豆作業',
+        rows: [
+          { cols: 4, blocks: [
+            { key: 'cbBatch',  label: '批量人員',     slots: 1 },
+            { key: 'cbQc',     label: 'QC & 貼標',    slots: 1 },
+            { key: 'cbMove',   label: '理貨移動',     slots: 1 },
+            { key: 'cbPrep',   label: '咖啡豆備貨',   slots: 1 },
+          ]},
+        ],
+      },
+      {
+        title: '支援作業',
+        rows: [
+          { cols: 2, blocks: [
+            { key: 'supUnit',  label: '支援單位', slots: 1, freeText: true },
+            { key: 'supPeople',label: '支援人員', slots: 2 },
+          ]},
+        ],
+      },
+    ],
+  },
+};
+
 const NAV_ITEMS = [
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -10750,6 +10814,271 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
   );
 }
 
+/**
+ * 站區表：把當日「實際到班」的人員指派到各站區。
+ *
+ * 人員來源是點名表的實到紀錄（不是班表的 V）——有人臨時請假就不會出現在
+ * 待指派清單裡，站區表才會反映現場真實人力。
+ * 版面由 STATION_LAYOUTS 描述，站區調整只需改設定、不動畫面程式。
+ */
+function StationBoard() {
+  const { employees, warehouses, schedule, attendData, currentUser,
+          selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor,
+          stationBoard, setStationBoard } = useApp();
+  const toast = useToast();
+
+  const [areaKey, setAreaKey] = useState(Object.keys(STATION_LAYOUTS)[0]);
+  const [date, setDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [picking, setPicking] = useState(null);   // { blockKey, idx }
+  const [search, setSearch] = useState('');
+
+  const layout = STATION_LAYOUTS[areaKey];
+  const perms = currentUser?.permissions ?? getDefaultPermissions(currentUser?.role);
+  const canEdit = perms?.station?.editStation !== false;
+
+  // ── 當日實際到班人員（點名表 present，且未被移出名單）──
+  const presentEmps = useMemo(() => {
+    const [y, m, d] = date.split('-').map(Number);
+    const dk = dateKey(y, m, d);
+    const recs = attendData[date] ?? {};
+    let list = currentUser?.role === ROLES.VENDOR
+      ? employees.filter(e => currentUser.vendors.includes(e.vendor))
+      : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
+    // 版面設定了組別時，只取該組別的人
+    if (layout?.group) list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
+    return list
+      .filter(e => !isLeaver(e) && inServiceOn(e, dk) && !recs[e.id]?._excluded && recs[e.id]?.present)
+      .sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
+                      (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
+  }, [employees, warehouses, currentUser, selectedWarehouse, selectedDept, selectedGroup,
+      selectedWorkArea, selectedVendor, attendData, date, layout]);
+
+  const board = stationBoard?.[date]?.[areaKey] ?? {};
+  const nameOf = (v) => {
+    if (!v) return '';
+    const e = employees.find(x => x.id === v);
+    return e ? e.name : String(v);          // 找不到就是自由文字（例如支援單位）
+  };
+
+  // 已被指派的人員 id
+  const assignedIds = useMemo(() => {
+    const set = new Set();
+    for (const arr of Object.values(board)) (arr ?? []).forEach(v => v && set.add(v));
+    return set;
+  }, [board]);
+
+  const unassigned = presentEmps.filter(e => !assignedIds.has(e.id));
+
+  const setSlot = (blockKey, idx, value) => {
+    setStationBoard(prev => {
+      const day = { ...(prev[date] ?? {}) };
+      const area = { ...(day[areaKey] ?? {}) };
+      const arr = [...(area[blockKey] ?? [])];
+      while (arr.length <= idx) arr.push('');
+      arr[idx] = value;
+      area[blockKey] = arr;
+      day[areaKey] = area;
+      return { ...prev, [date]: day };
+    });
+  };
+
+  const addSlot = (blockKey) => {
+    setStationBoard(prev => {
+      const day = { ...(prev[date] ?? {}) };
+      const area = { ...(day[areaKey] ?? {}) };
+      area[blockKey] = [...(area[blockKey] ?? []), ''];
+      day[areaKey] = area;
+      return { ...prev, [date]: day };
+    });
+  };
+
+  const clearAll = async () => {
+    if (!await askConfirm(`清空 ${date} 的「${areaKey}」站區表？\n所有指派都會移除，當日點名紀錄不受影響。`)) return;
+    setStationBoard(prev => {
+      const day = { ...(prev[date] ?? {}) };
+      delete day[areaKey];
+      return { ...prev, [date]: day };
+    });
+    toast('已清空', 'info');
+  };
+
+  const pickList = unassigned.filter(e => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (e.name ?? '').toLowerCase().includes(q) || (e.empId ?? '').toLowerCase().includes(q);
+  });
+
+  const Block = ({ b }) => {
+    const arr = board[b.key] ?? [];
+    const count = Math.max(b.slots ?? 1, arr.length);
+    return (
+      <div className="border border-[#DDD9D0] rounded-lg bg-white overflow-hidden flex flex-col">
+        <div className="bg-slate-700 text-white text-xs font-bold px-2 py-1.5 text-center leading-tight">
+          {b.label}
+        </div>
+        <div className="p-1.5 flex-1 flex flex-col gap-1">
+          {Array.from({ length: count }).map((_, i) => {
+            const v = arr[i] ?? '';
+            return v ? (
+              <button key={i} disabled={!canEdit}
+                onClick={() => setSlot(b.key, i, '')}
+                title={canEdit ? '點一下移除' : undefined}
+                className="text-sm font-medium text-slate-800 bg-teal-50 border border-teal-200
+                           rounded px-2 py-1 hover:bg-rose-50 hover:border-rose-200 disabled:hover:bg-teal-50">
+                {nameOf(v)}
+              </button>
+            ) : (
+              <button key={i} disabled={!canEdit}
+                onClick={() => { setPicking({ blockKey: b.key, idx: i, freeText: b.freeText }); setSearch(''); }}
+                className="text-xs text-slate-300 border border-dashed border-[#DDD9D0] rounded
+                           px-2 py-1 hover:border-blue-400 hover:text-blue-500 disabled:hover:border-[#DDD9D0]">
+                ＋
+              </button>
+            );
+          })}
+          {canEdit && (
+            <button onClick={() => addSlot(b.key)}
+              className="text-[11px] text-slate-400 hover:text-slate-600 self-center">＋ 加一位</button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-4 sm:p-6 space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <h2 className="text-xl font-bold text-slate-800">站區表</h2>
+        <label className="block">
+          <span className="block text-xs font-medium text-slate-600 mb-1">日期</span>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm" />
+        </label>
+        <label className="block">
+          <span className="block text-xs font-medium text-slate-600 mb-1">作業區</span>
+          <select value={areaKey} onChange={e => setAreaKey(e.target.value)}
+            className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
+            {Object.keys(STATION_LAYOUTS).map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </label>
+        <span className="text-xs text-slate-500 pb-2">
+          實到 <b className="text-teal-700">{presentEmps.length}</b> 人．
+          已指派 <b>{assignedIds.size}</b>．
+          未指派 <b className={unassigned.length ? 'text-amber-600' : 'text-teal-700'}>{unassigned.length}</b>
+        </span>
+        <div className="ml-auto flex gap-2 pb-1">
+          <button onClick={() => window.print()}
+            className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+            🖨 列印
+          </button>
+          {canEdit && (
+            <button onClick={clearAll}
+              className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-500 hover:bg-[#F5F2EC]">
+              清空
+            </button>
+          )}
+        </div>
+      </div>
+
+      {presentEmps.length === 0 && (
+        <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm leading-relaxed">
+          <strong>{date} 沒有實到人員。</strong>
+          站區表的人員來自<strong>點名表的實際到班紀錄</strong>，請先到點名表完成該日點名；
+          也請確認上方篩選列的倉別／課別已選到「{layout?.group ?? ''}」所屬的範圍。
+        </div>
+      )}
+
+      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
+        <div className="text-center">
+          <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
+          <div className="text-xs text-slate-500 mt-0.5">{layout?.title}　|　{date}</div>
+        </div>
+
+        {layout?.sections.map((sec, si) => (
+          <div key={si} className="space-y-2">
+            {sec.title && (
+              <div className="bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-1.5
+                              text-sm font-bold text-slate-700">{sec.title}</div>
+            )}
+            {sec.rows.map((row, ri) => (
+              <div key={ri} className="grid gap-2"
+                   style={{ gridTemplateColumns: `repeat(${row.cols}, minmax(0, 1fr))` }}>
+                {row.blocks.map(b => <Block key={b.key} b={b} />)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {unassigned.length > 0 && (
+        <div className="bg-white border border-[#DDD9D0] rounded-xl p-3">
+          <div className="text-sm font-bold text-slate-700 mb-2">
+            尚未指派（{unassigned.length} 位）
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {unassigned.map(e => (
+              <span key={e.id} className="text-xs bg-amber-50 border border-amber-200 text-amber-800
+                                          rounded-full px-2.5 py-1">
+                {e.name}<span className="text-amber-400 ml-1">{e.vendor}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {picking && (
+        <Modal onClose={() => setPicking(null)}>
+          <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[340px]">
+            <h3 className="font-bold text-slate-800 mb-1">指派人員</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              只列出<strong>當日實到且尚未指派</strong>的人員。
+            </p>
+            {picking.freeText && (
+              <div className="mb-3">
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && search.trim()) {
+                    setSlot(picking.blockKey, picking.idx, search.trim()); setPicking(null); } }}
+                  placeholder="直接輸入文字後按 Enter（例：廠退）"
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              </div>
+            )}
+            {!picking.freeText && (
+              <input value={search} onChange={e => setSearch(e.target.value)} autoFocus
+                placeholder="搜尋姓名或員編…"
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm mb-2" />
+            )}
+            <div className="max-h-64 overflow-y-auto border border-[#DDD9D0] rounded-lg divide-y divide-[#EFEBE3]">
+              {pickList.length === 0 && (
+                <div className="px-3 py-3 text-xs text-slate-400">沒有可指派的人員</div>
+              )}
+              {pickList.map(e => (
+                <button key={e.id}
+                  onClick={() => { setSlot(picking.blockKey, picking.idx, e.id); setPicking(null); }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[#F5F2EC] flex items-center gap-2">
+                  <span className="font-medium text-slate-700">{e.name}</span>
+                  <span className="text-xs text-slate-400 font-mono">{e.empId}</span>
+                  <span className="text-xs text-slate-400 ml-auto">{e.vendor}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end mt-3">
+              <button onClick={() => setPicking(null)}
+                className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+                取消
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function ShiftSetup() {
   const { employees, setEmployees, vendors, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, currentUser,
           shiftTypesByWh, setShiftTypesByWh } = useApp();
@@ -12780,6 +13109,10 @@ export default function App() {
   // 多段區間（每段自帶鎖定模式與適用組別）；空值時沿用上面的單一區間
   const [deptSegments, setDeptSegments] = useState(() => LS.get('sms_dept_segments', {}));
   // 每日需求人數：key 為「課別|組別|日期」，各課各組分別記錄
+  // 站區表：stationBoard[日期][作業區][站區key] = [人員 id 或自由文字, ...]
+  const [stationBoard, setStationBoard] = useState(() => LS.get('sms_station_board', {}));
+  useEffect(() => { LS.set('sms_station_board', stationBoard, storageWarn); }, [stationBoard]);
+
   const [dailyDemand, setDailyDemandRaw] = useState(() => LS.get('sms_daily_demand', {}));
   // 需求人數與班表一樣會被 30 秒的背景同步整份取代。若不保護，正在輸入
   // （或剛輸入完、存檔尚未完成）的數字會被伺服器的舊值蓋回去。
@@ -13090,6 +13423,7 @@ export default function App() {
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
+      if (s.stationBoard) setStationBoard(s.stationBoard);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13125,6 +13459,7 @@ export default function App() {
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
+      if (s.stationBoard) setStationBoard(s.stationBoard);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13163,6 +13498,7 @@ export default function App() {
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
         if (state?.deptSegments)           setDeptSegments(state.deptSegments);
         if (state?.dailyDemand)            applyRemoteDemand(state.dailyDemand);
+        if (state?.stationBoard)           setStationBoard(state.stationBoard);
         if (state?.unlockPwd !== undefined) setUnlockPwd(state.unlockPwd);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
@@ -13238,6 +13574,7 @@ export default function App() {
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
       if (s.deptSegments) setDeptSegments(s.deptSegments);
       if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
+      if (s.stationBoard) setStationBoard(s.stationBoard);
       if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13384,6 +13721,7 @@ export default function App() {
     employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
+    stationBoard,
     users, workerPwds,
   };
 
@@ -13445,6 +13783,7 @@ export default function App() {
       employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
+      stationBoard,
       users, workerPwds,
       ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
       ...(deletedEmpsRef.current.size > 0 ? { deletedEmployees: [...deletedEmpsRef.current] } : {}),
@@ -13481,7 +13820,7 @@ export default function App() {
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames, attendData, extras,
-      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, users, workerPwds]);
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, stationBoard, users, workerPwds]);
 
   // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor/worker 皆適用）──
   const vendorAttendDebRef = useRef(null);
@@ -13614,6 +13953,7 @@ export default function App() {
     workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
     schedule, setSchedule: setScheduleTracked, applyRemoteSchedule, saveIssue, markEmployeeDeleted,
+    stationBoard, setStationBoard,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,
@@ -13654,6 +13994,7 @@ export default function App() {
     accounts:   <AccountManagement />,
     attendance: <Attendance />,
     phoneControl: <Attendance phoneOnly />,
+    station:    <StationBoard />,
     selfCheck:  <WorkerSelfCheck />,
   };
 

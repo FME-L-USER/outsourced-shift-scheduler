@@ -1698,6 +1698,8 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     deptRanges:   data.deptRanges ?? {},
     deptSegments: data.deptSegments ?? {},
     dailyDemand:  data.dailyDemand ?? {},
+    // 委外幹部若獲授權查看站區表，也需要這份資料
+    stationBoard: data.stationBoard ?? {},
     // 每期日期區間：委外幹部／人員的班表也要依同一週期分頁，
     // 未回傳時他們會退回「以月份檢視」，看到的期間與日翊端對不上。
     periodRange:  data.periodRange ?? null,
@@ -1846,7 +1848,8 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
       (Array.isArray(rest.employees) && rest.employees.length > 0) ||
       (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
       rest.deptLocks || rest.deptRanges || rest.deptSegments ||
-      rest.attendData || rest.extras || rest.dailyDemand || rest.shiftTypesByWh) {
+      rest.attendData || rest.extras || rest.dailyDemand || rest.shiftTypesByWh ||
+      rest.stationBoard) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1966,6 +1969,17 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
         for (const [date, list] of Object.entries(rest.extras))
           if (Array.isArray(list)) merged[date] = list;
         rest.extras = merged;
+      }
+
+      // 站區表：日期 → 作業區，兩層合併。不同人同時編排不同日期／作業區不會互蓋。
+      if (rest.stationBoard && typeof rest.stationBoard === 'object') {
+        const curSB = cur.stationBoard ?? {};
+        const merged = { ...curSB };
+        for (const [d, areas] of Object.entries(rest.stationBoard)) {
+          if (areas && typeof areas === 'object')
+            merged[d] = { ...(curSB[d] ?? {}), ...areas };
+        }
+        rest.stationBoard = merged;
       }
 
       // 需求人數：鍵為「課別|組別|日期」，逐鍵合併，各組別互不影響
