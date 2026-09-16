@@ -11245,7 +11245,10 @@ function StationBoard() {
   const canEdit = perms?.station?.editStation !== false;
 
   /**
-   * 當日可指派的人員 ＝ 長期人員（點名表實到）＋ 臨時人力（當日手動新增／匯入）。
+   * 當日可指派的人員 ＝ 班表排定出勤者（當日為 V）＋ 臨時人力。
+   *
+   * 來源是「班表管理」而非點名表：站區表是事前排定的工作分配，
+   * 排班當下點名還沒發生。點名結果只用來標示「已排進站區卻沒到班」。
    *
    * 綁定規則：
    *   長期人員 → 人員清冊的「組別」符合，且版面若指定作業區，「作業區」也要符合
@@ -11254,7 +11257,6 @@ function StationBoard() {
   const presentEmps = useMemo(() => {
     const [y, m, d] = date.split('-').map(Number);
     const dk = dateKey(y, m, d);
-    const recs = attendData[date] ?? {};
 
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
@@ -11262,19 +11264,33 @@ function StationBoard() {
     if (layout?.group)    list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
     if (layout?.workArea) list = list.filter(e => normName(e.workArea) === normName(layout.workArea));
     const longs = list
-      .filter(e => !isLeaver(e) && inServiceOn(e, dk) && !recs[e.id]?._excluded && recs[e.id]?.present)
+      .filter(e => !isLeaver(e) && inServiceOn(e, dk) && (schedule[e.id]?.[dk] ?? 'V') === 'V')
       .map(e => ({ id: e.id, name: e.name, empId: e.empId, vendor: e.vendor, temp: false }));
 
     // 臨時人力：僅依組別區分，不分作業區
     const temps = (extras[date] ?? [])
-      .filter(x => x.present !== false && (!layout?.group || x.group === layout.group))
+      .filter(x => !layout?.group || x.group === layout.group)
       .map(x => ({ id: x.id, name: x.name, empId: '', vendor: x.vendor, temp: true }));
 
     return [...longs, ...temps].sort((a, b) =>
       Number(a.temp) - Number(b.temp) ||
       vendorRank(a.vendor) - vendorRank(b.vendor) ||
       (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
-  }, [employees, currentUser, attendData, extras, date, layout]);
+  }, [employees, currentUser, schedule, extras, date, layout]);
+
+  /**
+   * 已排進站區、但當日點名為未到班者 → 格子以紅底標示，提醒現場人力有缺口。
+   * 尚未點名者不算（狀態未知），避免整張表在點名前就一片紅。
+   */
+  const absentIds = useMemo(() => {
+    const recs = attendData[date] ?? {};
+    const set = new Set();
+    for (const [id, r] of Object.entries(recs))
+      if (r && (r.present === false || r._excluded)) set.add(id);
+    for (const x of (extras[date] ?? []))
+      if (x.present === false) set.add(x.id);
+    return set;
+  }, [attendData, extras, date]);
 
   const board = stationBoard?.[date]?.[areaKey] ?? {};
   const nameOf = (v) => {
@@ -11296,6 +11312,7 @@ function StationBoard() {
   }, [board]);
 
   const unassigned = presentEmps.filter(e => !assignedIds.has(e.id));
+  const absentAssigned = [...assignedIds].filter(id => absentIds.has(id)).length;
 
   const setSlot = (blockKey, idx, value) => {
     setStationBoard(prev => {
@@ -11347,13 +11364,15 @@ function StationBoard() {
         <div className="p-1.5 flex-1 flex flex-col gap-1">
           {Array.from({ length: count }).map((_, i) => {
             const v = arr[i] ?? '';
+            const absent = absentIds.has(v);
             return v ? (
               <button key={i} disabled={!canEdit}
                 onClick={() => setSlot(b.key, i, '')}
-                title={canEdit ? '點一下移除' : undefined}
-                className="text-sm font-medium text-slate-800 bg-teal-50 border border-teal-200
-                           rounded px-2 py-1 hover:bg-rose-50 hover:border-rose-200 disabled:hover:bg-teal-50">
-                {nameOf(v)}
+                title={absent ? '此人當日點名為未到班' : (canEdit ? '點一下移除' : undefined)}
+                className={`text-sm font-medium rounded px-2 py-1 border
+                  ${absent ? 'bg-red-100 border-red-300 text-red-800'
+                           : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                {nameOf(v)}{absent && ' ⚠'}
               </button>
             ) : (
               <button key={i} disabled={!canEdit}
@@ -11390,9 +11409,10 @@ function StationBoard() {
           </select>
         </label>
         <span className="text-xs text-slate-500 pb-2">
-          實到 <b className="text-teal-700">{presentEmps.length}</b> 人．
+          排定出勤 <b className="text-teal-700">{presentEmps.length}</b> 人．
           已指派 <b>{assignedIds.size}</b>．
           未指派 <b className={unassigned.length ? 'text-amber-600' : 'text-teal-700'}>{unassigned.length}</b>
+          {absentAssigned > 0 && <>．<b className="text-red-600">未到班 {absentAssigned}</b></>}
         </span>
         <div className="ml-auto flex gap-2 pb-1">
           <button onClick={() => window.print()}
@@ -11410,8 +11430,8 @@ function StationBoard() {
 
       {presentEmps.length === 0 && (
         <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm leading-relaxed">
-          <strong>{date} 沒有實到人員。</strong>
-          站區表的人員來自<strong>點名表的實際到班紀錄</strong>，請先完成該日點名。
+          <strong>{date} 沒有排定出勤的人員。</strong>
+          站區表的人員來自<strong>班表管理當日排定為「V」的人</strong>，請先確認該日班表已排定。
           本作業區取的是<strong>組別「{layout?.group}」</strong>
           {layout?.workArea ? <>、且<strong>作業區為「{layout.workArea}」</strong></> : null}
           的人員；臨時人力只依組別區分，不分作業區。
@@ -11423,6 +11443,11 @@ function StationBoard() {
         <div className="text-center">
           <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
           <div className="text-xs text-slate-500 mt-0.5">{layout?.title}　|　{date}</div>
+          <div className="text-[11px] text-slate-400 mt-1">
+            人員來自班表當日排定出勤者；
+            <span className="inline-block align-middle mx-1 px-1.5 py-0.5 rounded bg-red-100 border border-red-300 text-red-800">紅底</span>
+            表示已排進站區但點名為未到班
+          </div>
         </div>
 
         {layout?.sections.map((sec, si) => (
