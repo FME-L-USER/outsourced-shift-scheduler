@@ -11624,9 +11624,14 @@ function StationBoard() {
           y: Math.min(Math.max(0, o.y + dy), 100 - it.h) };
       }));
     } else {
+      // 拖曳縮放時以 0.1 公分為單位貼齊，尺寸才會是好讀的數字（0.7、1.2…）
+      const snapCm = (pct, axis) => {
+        const cmPerPct = (axis === 'w' ? A4_W_CM : A4_H_CM) / 100;
+        return Math.round(pct * cmPerPct * 10) / 10 / cmPerPct;
+      };
       setItemsNoRecord(list => list.map(it => it.id !== d.id ? it : { ...it,
-        w: snap(Math.min(Math.max(2, d.sw + (p.x - d.sx)), 100 - it.x)),
-        h: snap(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y)) }));
+        w: snapCm(Math.min(Math.max(2, d.sw + (p.x - d.sx)), 100 - it.x), 'w'),
+        h: snapCm(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y), 'h') }));
     }
     setGuides(nextGuides);
   };
@@ -11665,7 +11670,10 @@ function StationBoard() {
   const patchItem = (id, patch) => setItems(list => list.map(it => it.id === id ? { ...it, ...patch } : it));
 
   // 百分比 ↔ 公分：以「列印寬度」為基準，高度再依畫布長寬比換算
-  const cmOf = (pct, axis) => (((pct / 100) * (axis === 'w' ? A4_W_CM : A4_H_CM))).toFixed(1);
+  // 顯示到小數第 2 位（去掉多餘的 0）：只顯示 1 位時，0.65 與 0.74 都會寫成 0.7，
+  // 看起來一樣大卻不一樣寬，會讓人以為是程式出錯。
+  const cmOf = (pct, axis) =>
+    String(Math.round((pct / 100) * (axis === 'w' ? A4_W_CM : A4_H_CM) * 100) / 100);
   const setCm = (it, axis, cmStr) => {
     const cm = Number(cmStr);
     if (!Number.isFinite(cm) || cm <= 0) return;
