@@ -11476,9 +11476,11 @@ function StationBoard() {
     const el = fullRef.current;
     try {
       const p = el?.requestFullscreen?.();
-      if (p?.catch) p.catch(() => setCoverFull(true));      // 被擋下就退回放大檢視
-      else if (!p) setCoverFull(true);
-    } catch { setCoverFull(true); }
+      if (p?.catch) p.catch(() => {});
+    } catch { /* 不同瀏覽器的失敗方式不一，統一用下面的檢查判斷 */ }
+    // 有些環境會直接拒絕、有些則是毫無反應；一律在短暫等待後確認結果，
+    // 沒真的進入全螢幕就改用覆蓋整個視窗的放大檢視，確保按了一定有效果。
+    setTimeout(() => { if (document.fullscreenElement !== el) setCoverFull(true); }, 250);
   };
   const [picking, setPicking] = useState(null);   // { blockKey, idx }
   const [search, setSearch] = useState('');
