@@ -11387,6 +11387,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
         const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
         const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
         const arr = cells?.[it.id] ?? [];
+        // 人數可設為 0（只當標示用）；已指派的人仍會顯示，不會被藏起來
         const count = it.kind === 'station' ? Math.max(it.slots ?? 1, arr.length) : 0;
         return (
           <div key={it.id}
@@ -12187,10 +12188,10 @@ function StationBoard() {
                   <label className="block">
                     <span className="block text-[11px] font-medium text-slate-500 mb-0.5">人數</span>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => patchItem(it.id, { slots: Math.max(1, (it.slots ?? 1) - 1) })}
+                      <button onClick={() => patchSel({ slots: Math.max(0, (it.slots ?? 1) - 1) })}
                         className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">−</button>
                       <span className="w-6 text-center font-bold">{it.slots ?? 1}</span>
-                      <button onClick={() => patchItem(it.id, { slots: (it.slots ?? 1) + 1 })}
+                      <button onClick={() => patchSel({ slots: (it.slots ?? 1) + 1 })}
                         className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">＋</button>
                     </div>
                   </label>
