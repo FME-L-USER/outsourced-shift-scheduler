@@ -1840,6 +1840,18 @@ const CANVAS_COLORS = {
   pink:   { name: '粉',     fill: '#fce7f3',      text: '#be185d' },
 };
 /** 可選字型：只用系統一定有的中文字型，避免在現場電腦變成別的樣子 */
+/** 元件內文字的對齊方式 */
+const ALIGN_H = {
+  left:   { name: '靠左', icon: '⬅', css: 'left' },
+  center: { name: '置中', icon: '↔', css: 'center' },
+  right:  { name: '靠右', icon: '➡', css: 'right' },
+};
+const ALIGN_V = {
+  top:    { name: '靠上', icon: '⬆', css: 'flex-start' },
+  middle: { name: '置中', icon: '↕', css: 'center' },
+  bottom: { name: '靠下', icon: '⬇', css: 'flex-end' },
+};
+
 const CANVAS_FONTS = {
   default: { name: '預設',   css: 'inherit' },
   hei:     { name: '黑體',   css: '"Microsoft JhengHei", "PingFang TC", sans-serif' },
@@ -11920,6 +11932,28 @@ function StationBoard() {
                       className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
                   </div>
                 </label>
+                <div className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">文字對齊</span>
+                  <div className="flex gap-1">
+                    {Object.entries(ALIGN_H).map(([k, v]) => (
+                      <button key={k} title={`水平${v.name}`} onClick={() => patchSel({ align: k })}
+                        className={`px-2 py-1 border rounded text-sm
+                          ${(it.align ?? 'center') === k ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                         : 'border-[#DDD9D0] text-slate-600'}`}>
+                        {v.icon}
+                      </button>
+                    ))}
+                    <span className="w-1" />
+                    {Object.entries(ALIGN_V).map(([k, v]) => (
+                      <button key={k} title={`垂直${v.name}`} onClick={() => patchSel({ valign: k })}
+                        className={`px-2 py-1 border rounded text-sm
+                          ${(it.valign ?? 'middle') === k ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                          : 'border-[#DDD9D0] text-slate-600'}`}>
+                        {v.icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
                   <input type="checkbox" checked={it.bold !== false}
                     onChange={e => patchSel({ bold: e.target.checked })} />
@@ -12041,14 +12075,15 @@ function StationBoard() {
             return (
               <div key={it.id}
                    onPointerDown={e => editMode && startDrag(e, it.id)}
-                   className={`absolute rounded-md flex flex-col items-center justify-center
-                               text-center overflow-hidden select-none
+                   className={`absolute rounded-md flex flex-col overflow-hidden select-none
                                ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}`}
                    style={{
                      left: `${it.x}%`, top: `${it.y}%`, width: `${it.w}%`, height: `${it.h}%`,
                      background: it.fillHex ?? col.fill,
                      color: it.textHex ?? (it.fillHex ? '#334155' : col.text),
                      border: `${it.dashed ? '2px dashed' : '2px solid'} ${it.strokeHex ?? stroke.color}`,
+                     alignItems: 'stretch',
+                     justifyContent: (ALIGN_V[it.valign] ?? ALIGN_V.middle).css,
                    }}>
                 {editMode && selectedId === it.id ? (
                   /* 選取後直接在元件上改字；Enter 換行，Esc 結束編輯 */
@@ -12056,9 +12091,10 @@ function StationBoard() {
                     onPointerDown={e => e.stopPropagation()}
                     onChange={e => patchItem(it.id, { label: e.target.value })}
                     onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
-                    className="w-[92%] h-[80%] resize-none text-center bg-transparent border border-blue-400
+                    className="w-full h-[80%] resize-none bg-transparent border border-blue-400
                                rounded px-1 py-0.5 outline-none leading-tight"
-                    style={{ fontSize: `${it.fontSize ?? 11}px`,
+                    style={{ textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
+                             fontSize: `${it.fontSize ?? 11}px`,
                              fontWeight: it.bold === false ? 500 : 700,
                              fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
                              color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
@@ -12068,6 +12104,7 @@ function StationBoard() {
                          fontSize: `${it.fontSize ?? 11}px`,
                          fontWeight: it.bold === false ? 500 : 700,
                          fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
+                         textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
                        }}>
                     {it.icon ? it.icon + ' ' : ''}{it.label}
                   </div>
