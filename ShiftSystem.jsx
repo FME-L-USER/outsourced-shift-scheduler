@@ -12065,9 +12065,9 @@ function StationBoard() {
                              : { ...x, h: Math.min((cm / A4_H_CM) * 100, 100 - x.y) }));
           };
           return (
-            <div className="bg-white border border-blue-300 rounded-xl p-3 space-y-3">
+            <div className="bg-white border border-blue-300 rounded-xl px-2.5 py-2 space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-700">
+                <span className="text-xs font-bold text-slate-700">
                   元件設定{multi ? `（已選 ${sels.length} 個，設定會一起套用）` : ''}
                 </span>
                 {!multi && (
@@ -12086,58 +12086,58 @@ function StationBoard() {
                   className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
               </div>
 
-              <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-wrap items-end gap-x-2 gap-y-1">
                 {!multi && (
                   <label className="block">
-                    <span className="block text-xs font-medium text-slate-600 mb-1">名稱（Enter 可換行）</span>
+                    <span className="block text-[11px] font-medium text-slate-500 mb-0.5">名稱（Enter 可換行）</span>
                     <textarea value={it.label} rows={2}
                       onChange={e => patchItem(it.id, { label: e.target.value })}
-                      className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44 resize-y" />
+                      className="border border-[#DDD9D0] rounded px-1.5 py-1 text-xs w-36 resize-y" />
                   </label>
                 )}
                 <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">圖示</span>
                   <input value={it.icon ?? ''} onChange={e => patchSel({ icon: e.target.value })}
                     placeholder="例 📦 🚪 🖥"
-                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24" />
+                    className="border border-[#DDD9D0] rounded px-1.5 py-1 text-xs w-20" />
                 </label>
                 {!multi && it.kind === 'station' && (
                   <label className="block">
-                    <span className="block text-xs font-medium text-slate-600 mb-1">人數</span>
+                    <span className="block text-[11px] font-medium text-slate-500 mb-0.5">人數</span>
                     <div className="flex items-center gap-1">
                       <button onClick={() => patchItem(it.id, { slots: Math.max(1, (it.slots ?? 1) - 1) })}
-                        className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
-                      <span className="w-7 text-center font-bold">{it.slots ?? 1}</span>
+                        className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">−</button>
+                      <span className="w-6 text-center font-bold">{it.slots ?? 1}</span>
                       <button onClick={() => patchItem(it.id, { slots: (it.slots ?? 1) + 1 })}
-                        className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
+                        className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">＋</button>
                     </div>
                   </label>
                 )}
                   <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">字型</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">字型</span>
                   <select value={it.font ?? 'default'}
                     onChange={e => patchSel({ font: e.target.value })}
-                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24">
+                    className="border border-[#DDD9D0] rounded px-1.5 py-1 text-xs w-20">
                     {Object.entries(CANVAS_FONTS).map(([k, v]) =>
                       <option key={k} value={k}>{v.name}</option>)}
                   </select>
                 </label>
                 <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">字級</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">字級</span>
                   <div className="flex items-center gap-1">
                     <button onClick={() => patchSel({ fontSize: Math.max(6, (it.fontSize ?? 11) - 1) })}
-                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
-                    <span className="w-7 text-center font-bold">{it.fontSize ?? 11}</span>
+                      className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">−</button>
+                    <span className="w-6 text-center font-bold">{it.fontSize ?? 11}</span>
                     <button onClick={() => patchSel({ fontSize: Math.min(48, (it.fontSize ?? 11) + 1) })}
-                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
+                      className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">＋</button>
                   </div>
                 </label>
                 <div className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">文字對齊</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">文字對齊</span>
                   <div className="flex gap-1">
                     {Object.entries(ALIGN_H).map(([k, v]) => (
                       <button key={k} title={`水平${v.name}`} onClick={() => patchSel({ align: k })}
-                        className={`px-2 py-1 border rounded text-sm
+                        className={`px-1.5 py-0.5 border rounded text-xs
                           ${(it.align ?? 'center') === k ? 'border-blue-500 bg-blue-50 text-blue-700'
                                                          : 'border-[#DDD9D0] text-slate-600'}`}>
                         {v.icon}
@@ -12146,7 +12146,7 @@ function StationBoard() {
                     <span className="w-1" />
                     {Object.entries(ALIGN_V).map(([k, v]) => (
                       <button key={k} title={`垂直${v.name}`} onClick={() => patchSel({ valign: k })}
-                        className={`px-2 py-1 border rounded text-sm
+                        className={`px-1.5 py-0.5 border rounded text-xs
                           ${(it.valign ?? 'middle') === k ? 'border-blue-500 bg-blue-50 text-blue-700'
                                                           : 'border-[#DDD9D0] text-slate-600'}`}>
                         {v.icon}
@@ -12154,12 +12154,12 @@ function StationBoard() {
                     ))}
                   </div>
                 </div>
-                <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
+                <label className="flex items-center gap-1 text-[11px] text-slate-600 pb-1">
                   <input type="checkbox" checked={it.bold !== false}
                     onChange={e => patchSel({ bold: e.target.checked })} />
                   粗體
                 </label>
-                <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
+                <label className="flex items-center gap-1 text-[11px] text-slate-600 pb-1">
                   <input type="checkbox" checked={!!it.dashed}
                     onChange={e => patchSel({ dashed: e.target.checked })} />
                   虛線框
@@ -12169,19 +12169,19 @@ function StationBoard() {
                     setItems(list => list.filter(x => !selectedIds.includes(x.id)));
                     setSelectedIds([]);
                   }}
-                  className="ml-auto px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
+                  className="ml-auto px-2 py-1 border border-rose-300 text-rose-700 rounded text-xs hover:bg-rose-50">
                   刪除
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
                 <div>
-                  <span className="block text-xs font-medium text-slate-600 mb-1">底色</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">底色</span>
                   <div className="flex gap-1 flex-wrap">
                     {Object.entries(CANVAS_COLORS).map(([k, v]) => (
                       <button key={k} title={v.name} onClick={() => patchSel({ fill: k, fillHex: undefined })}
                         style={{ background: v.fill === 'transparent' ? '#fff' : v.fill }}
-                        className={`w-7 h-7 rounded border border-slate-300
+                        className={`w-5 h-5 rounded border border-slate-300
                           ${it.fill === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
                         {v.fill === 'transparent' ? <span className="text-[10px] text-slate-400">／</span> : null}
                       </button>
@@ -12189,21 +12189,21 @@ function StationBoard() {
                     <input type="color" value={it.fillHex ?? '#ffffff'}
                       onChange={e => patchSel({ fillHex: e.target.value })}
                       title="自訂底色"
-                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
                     <input type="color" value={it.textHex ?? '#334155'}
                       onChange={e => patchSel({ textHex: e.target.value })}
                       title="自訂文字顏色"
-                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
                   </div>
                 </div>
                 <div>
-                  <span className="block text-xs font-medium text-slate-600 mb-1">框線</span>
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">框線</span>
                   <div className="flex gap-1 flex-wrap">
                     {Object.entries(CANVAS_STROKES).map(([k, v]) => (
                       <button key={k} title={v.name} onClick={() => patchSel({ stroke: k, strokeHex: undefined })}
                         style={{ borderColor: v.color === 'transparent' ? '#cbd5e1' : v.color,
                                  borderStyle: v.color === 'transparent' ? 'dashed' : 'solid' }}
-                        className={`w-7 h-7 rounded border-[3px] bg-white text-[10px] text-slate-400
+                        className={`w-5 h-5 rounded border-[3px] bg-white text-[10px] text-slate-400
                           ${it.stroke === k && !it.strokeHex ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
                         {v.color === 'transparent' ? '／' : null}
                       </button>
@@ -12211,11 +12211,11 @@ function StationBoard() {
                     <input type="color" value={it.strokeHex ?? '#94a3b8'}
                       onChange={e => patchSel({ strokeHex: e.target.value })}
                       title="自訂框線顏色"
-                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
                   </div>
                 </div>
                 <div>
-                    <span className="block text-xs font-medium text-slate-600 mb-1">
+                    <span className="block text-[11px] font-medium text-slate-500 mb-0.5">
                     大小（公分）{multi ? '：一起設定' : ''}
                   </span>
                   <div className="flex items-center gap-1 mb-2">
@@ -12224,18 +12224,18 @@ function StationBoard() {
                       onChange={e => setCmDraft(d => ({ ...d, w: e.target.value }))}
                       onBlur={e => { setCmSel('w', e.target.value); setCmDraft(d => ({ ...d, w: undefined })); }}
                       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                      className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
+                      className="w-14 border border-[#DDD9D0] rounded px-1 py-0.5 text-xs" />
                     <span className="text-xs text-slate-400">寬 ×</span>
                     <input type="number" step="0.1" min="0.3"
                       value={cmDraft.h ?? cmOf(it.h, 'h')}
                       onChange={e => setCmDraft(d => ({ ...d, h: e.target.value }))}
                       onBlur={e => { setCmSel('h', e.target.value); setCmDraft(d => ({ ...d, h: undefined })); }}
                       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                      className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
+                      className="w-14 border border-[#DDD9D0] rounded px-1 py-0.5 text-xs" />
                     <span className="text-xs text-slate-400">高 cm</span>
                     <span className="text-[11px] text-slate-400 ml-1">輸入後按 Enter</span>
                   </div>
-                  <span className="block text-xs font-medium text-slate-600 mb-1">
+                  <span className="block text-[11px] font-medium text-slate-500 mb-0.5">
                     {multi ? `位置微調（${sels.length} 個一起移動）` : `位置 ${it.x.toFixed(1)}%, ${it.y.toFixed(1)}%`}
                   </span>
                   <div className="flex gap-1">
@@ -12244,7 +12244,7 @@ function StationBoard() {
                           !selectedIds.includes(x.id) ? x : { ...x,
                             x: Math.min(Math.max(0, x.x + dx), 100 - x.w),
                             y: Math.min(Math.max(0, x.y + dy), 100 - x.h) }))}
-                        className="px-2.5 py-1 border border-[#DDD9D0] rounded text-sm">{t}</button>
+                        className="px-2 py-0.5 border border-[#DDD9D0] rounded text-xs">{t}</button>
                     ))}
                   </div>
                 </div>
