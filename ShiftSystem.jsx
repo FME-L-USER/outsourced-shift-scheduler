@@ -11406,15 +11406,15 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
               {it.icon ? it.icon + ' ' : ''}{it.label}
             </div>
             {it.kind === 'station' && (
-              <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
+              <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full min-h-0 overflow-hidden">
                 {Array.from({ length: count }).map((_, i) => {
                   const v = arr[i] ?? '';
                   if (!v) return null;
                   const absent = absentIds?.has(v) || (rollCallStarted && !attendedIds?.has(v));
                   return (
-                    <span key={i}
-                      style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
-                      className={`font-bold rounded px-1.5 border-2 leading-tight
+                    <span key={i} title={nameOf(v)}
+                      style={{ fontSize: `${Math.max(10, (it.fontSize ?? 11))}px` }}
+                      className={`font-bold rounded px-1 border-2 leading-tight max-w-full truncate
                                   ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                       {nameOf(v)}{absent && ' ⚠'}
                     </span>
@@ -12292,7 +12292,7 @@ function StationBoard() {
                 )}
 
                 {it.kind === 'station' && !editMode && (
-                  <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
+                  <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full min-h-0 overflow-hidden">
                     {Array.from({ length: count }).map((_, i) => {
                       const v = arr[i] ?? '';
                       const absent = absentIds.has(v) || (rollCallStarted && !attendedIds.has(v));
@@ -12303,8 +12303,8 @@ function StationBoard() {
                                  : absentIds.has(v) ? '此人當日點名為未到班'
                                  : rollCallStarted ? '當日已在點名，但此人尚無點名紀錄（視同未到）'
                                  : '點一下移除'}
-                          style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
-                          className={`font-bold rounded px-1.5 border-2 leading-tight
+                          style={{ fontSize: `${Math.max(10, (it.fontSize ?? 11))}px` }}
+                          className={`font-bold rounded px-1 border-2 leading-tight max-w-full truncate
                                       ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                           {nameOf(v)}{absent && ' ⚠'}
                         </button>
