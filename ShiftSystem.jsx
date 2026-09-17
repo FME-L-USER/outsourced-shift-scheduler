@@ -11359,10 +11359,22 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
  * 版面由 STATION_LAYOUTS 描述，站區調整只需改設定、不動畫面程式。
  */
 /**
+ * 站區表人名的底色規則：
+ *   白底灰框　＝ 班表排定出勤，尚未點名
+ *   白底藍框　＝ 點名確認有出勤
+ *   粉紅底紅框＝ 已排進站區但點名未到班
+ */
+function nameChipClass(id, attendedIds, absentIds) {
+  if (absentIds?.has(id))   return 'bg-pink-100 border-red-500 text-red-900';
+  if (attendedIds?.has(id)) return 'bg-white border-blue-500 text-blue-900';
+  return 'bg-white border-slate-400 text-slate-800';
+}
+
+/**
  * 唯讀的站區畫布：只顯示版面與已指派人員，不能編輯。
  * 「顯示全部作業區」與全螢幕檢視都用這個，避免一次開多張可編輯的畫布互相干擾。
  */
-function StationCanvasView({ layout, cells, nameOf, absentIds }) {
+function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds }) {
   const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
   return (
     <div className="relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
@@ -11402,8 +11414,7 @@ function StationCanvasView({ layout, cells, nameOf, absentIds }) {
                     <span key={i}
                       style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
                       className={`font-bold rounded px-1.5 border-2 leading-tight
-                        ${absent ? 'bg-red-200 border-red-500 text-red-900'
-                                 : 'bg-teal-100 border-teal-500 text-teal-900'}`}>
+                                  ${nameChipClass(v, attendedIds, absentIds)}`}>
                       {nameOf(v)}{absent && ' ⚠'}
                     </span>
                   );
@@ -11707,6 +11718,17 @@ function StationBoard() {
     return set;
   }, [attendData, extras, date]);
 
+  /** 點名確認有到班者 → 名牌用白底藍框，與「只是排定出勤」區分開來 */
+  const attendedIds = useMemo(() => {
+    const recs = attendData[date] ?? {};
+    const set = new Set();
+    for (const [id, r] of Object.entries(recs))
+      if (r && r.present === true && !r._excluded) set.add(id);
+    for (const x of (extras[date] ?? []))
+      if (x.present === true) set.add(x.id);
+    return set;
+  }, [attendData, extras, date]);
+
   const board = stationBoard?.[date]?.[areaKey] ?? {};
   const nameOf = (v) => {
     if (!v) return '';
@@ -11959,10 +11981,16 @@ function StationBoard() {
           <div className="text-xs text-slate-500 mt-0.5">
             {showAll ? '全部作業區' : layout?.title}　|　{date}
           </div>
-          <div className="vsp-no-print text-[11px] text-slate-400 mt-1">
-            人員來自班表當日排定出勤者；
-            <span className="inline-block align-middle mx-1 px-1.5 py-0.5 rounded bg-red-100 border border-red-300 text-red-800">紅底</span>
-            表示已排進站區但點名為未到班
+          <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2 justify-center">
+            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-slate-400 text-slate-800 font-bold">
+              排定出勤
+            </span>
+            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-blue-500 text-blue-900 font-bold">
+              點名已到班
+            </span>
+            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-pink-100 border-red-500 text-red-900 font-bold">
+              未到班
+            </span>
           </div>
         </div>
 
@@ -11976,7 +12004,7 @@ function StationBoard() {
               </div>
               <StationCanvasView layout={layouts[k]}
                 cells={stationBoard?.[date]?.[k] ?? {}}
-                nameOf={nameOf} absentIds={absentIds} />
+                nameOf={nameOf} attendedIds={attendedIds} absentIds={absentIds} />
             </div>
           ))}
         </div>
@@ -12253,11 +12281,11 @@ function StationBoard() {
                       return v ? (
                         <button key={i} disabled={!canEdit}
                           onClick={() => setSlot(it.id, i, '')}
-                          title={absent ? '此人當日點名為未到班' : '點一下移除'}
+                          title={absent ? '此人當日點名為未到班'
+                                        : attendedIds.has(v) ? '點名已到班（點一下移除）' : '點一下移除'}
                           style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
                           className={`font-bold rounded px-1.5 border-2 leading-tight
-                            ${absent ? 'bg-red-200 border-red-500 text-red-900'
-                                     : 'bg-teal-100 border-teal-500 text-teal-900'}`}>
+                                      ${nameChipClass(v, attendedIds, absentIds)}`}>
                           {nameOf(v)}{absent && ' ⚠'}
                         </button>
                       ) : (
