@@ -11431,6 +11431,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
 
 function StationBoard() {
   const { employees, warehouses, schedule, attendData, extras, currentUser,
+          selectedWarehouse, selectedDept,
           stationBoard, setStationBoard, stationLayouts, setStationLayouts } = useApp();
   const toast = useToast();
 
@@ -11688,6 +11689,8 @@ function StationBoard() {
     let list = currentUser?.role === ROLES.VENDOR
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
+    // 先套用畫面上方的倉別／課別範圍，避免列出其他倉的人員
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, null, null);
     if (layout?.group)    list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
     if (layout?.workArea) list = list.filter(e => normName(e.workArea) === normName(layout.workArea));
     const longs = list
@@ -11695,7 +11698,9 @@ function StationBoard() {
       .map(e => ({ id: e.id, name: e.name, empId: e.empId, vendor: e.vendor, temp: false }));
 
     // 臨時人力：僅依組別區分，不分作業區
-    const temps = (extras[date] ?? [])
+    const deptName = warehouses.find(w => w.id === selectedWarehouse)
+                       ?.departments?.find(d => d.id === selectedDept)?.name ?? null;
+    const temps = filterExtrasByScope(extras[date] ?? [], warehouses, selectedWarehouse, deptName, null, null)
       .filter(x => !layout?.group || x.group === layout.group)
       .map(x => ({ id: x.id, name: x.name, empId: '', vendor: x.vendor, temp: true }));
 
@@ -11703,7 +11708,8 @@ function StationBoard() {
       Number(a.temp) - Number(b.temp) ||
       vendorRank(a.vendor) - vendorRank(b.vendor) ||
       (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
-  }, [employees, currentUser, schedule, extras, date, layout]);
+  }, [employees, currentUser, schedule, extras, date, layout,
+      warehouses, selectedWarehouse, selectedDept]);
 
   /**
    * 已排進站區、但當日點名為未到班者 → 格子以紅底標示，提醒現場人力有缺口。
