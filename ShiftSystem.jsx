@@ -1816,6 +1816,74 @@ function lockAllowsEdit(lockValue, role) {
  * 不需改動畫面程式。cols 為該列切成幾欄，每個 block 佔 span 欄。
  * slots 是預設顯示的空位數，實際可再加減。
  */
+/** 站區色票：站位標題的底色，用來區分區塊 */
+const STATION_COLORS = {
+  slate:  { name: '深灰', head: 'bg-slate-700 text-white' },
+  blue:   { name: '藍',   head: 'bg-blue-700 text-white' },
+  teal:   { name: '綠',   head: 'bg-teal-700 text-white' },
+  amber:  { name: '琥珀', head: 'bg-amber-600 text-white' },
+  rose:   { name: '紅',   head: 'bg-rose-700 text-white' },
+  violet: { name: '紫',   head: 'bg-violet-700 text-white' },
+};
+
+/** 位置圖元件的填色與框線色票 */
+const CANVAS_COLORS = {
+  none:   { name: '透明',   fill: 'transparent',  text: '#334155' },
+  white:  { name: '白',     fill: '#ffffff',      text: '#334155' },
+  green:  { name: '綠',     fill: '#22c55e',      text: '#ffffff' },
+  lgreen: { name: '淺綠',   fill: '#dcfce7',      text: '#166534' },
+  blue:   { name: '藍',     fill: '#dbeafe',      text: '#1d4ed8' },
+  red:    { name: '紅',     fill: '#fee2e2',      text: '#b91c1c' },
+  amber:  { name: '琥珀',   fill: '#fef3c7',      text: '#92400e' },
+  grey:   { name: '灰',     fill: '#e2e8f0',      text: '#334155' },
+  violet: { name: '紫',     fill: '#ede9fe',      text: '#6d28d9' },
+  pink:   { name: '粉',     fill: '#fce7f3',      text: '#be185d' },
+};
+const CANVAS_STROKES = {
+  none:   { name: '無框', color: 'transparent' },
+  slate:  { name: '灰',   color: '#94a3b8' },
+  green:  { name: '綠',   color: '#22c55e' },
+  blue:   { name: '藍',   color: '#3b82f6' },
+  red:    { name: '紅',   color: '#ef4444' },
+  amber:  { name: '橘',   color: '#f59e0b' },
+};
+
+/**
+ * 把舊的格線版面換算成位置圖座標（百分比），既有的五張版面才不會白做。
+ * 每個區塊依序往下堆疊，站位的欄位換算成寬度與水平位置。
+ */
+function gridLayoutToCanvas(layout) {
+  const items = [];
+  const grids = layout.grids ?? [];
+  const totalRows = grids.reduce((n, g) => n + Math.max(1, ...g.blocks.map(b => b.r)) + (g.title ? 1 : 0), 0) || 1;
+  const rowH = 100 / totalRows;
+  let cursor = 0;
+  for (const g of grids) {
+    if (g.title) {
+      items.push({ id: newStationKey(), kind: 'shape', label: g.title,
+                   x: 0, y: cursor * rowH, w: 100, h: rowH * 0.9,
+                   fill: 'grey', stroke: 'slate', dashed: false });
+      cursor += 1;
+    }
+    const rows = Math.max(1, ...g.blocks.map(b => b.r));
+    for (const b of g.blocks) {
+      items.push({
+        id: b.key ?? newStationKey(), kind: 'station', label: b.label, slots: b.slots ?? 1,
+        x: (b.c - 1) / g.cols * 100,
+        y: (cursor + b.r - 1) * rowH,
+        w: Math.max(b.w, 1) / g.cols * 100,
+        h: rowH * 0.92,
+        fill: 'white', stroke: 'slate', dashed: false,
+      });
+    }
+    cursor += rows;
+  }
+  return items;
+}
+
+/** 產生不重複的站位代碼 */
+const newStationKey = () => 'st_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
 const STATION_LAYOUTS = {
   '團預購': {
     // 綁定條件：長期人員取「組別 ＋ 作業區」皆符合者；
@@ -11263,10 +11331,24 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
  */
 function StationBoard() {
   const { employees, warehouses, schedule, attendData, extras, currentUser,
-          stationBoard, setStationBoard } = useApp();
+          stationBoard, setStationBoard, stationLayouts, setStationLayouts } = useApp();
   const toast = useToast();
 
-  const [areaKey, setAreaKey] = useState(Object.keys(STATION_LAYOUTS)[0]);
+  // 版面以資料庫的設定為準；尚未存過時以內建版面為起點
+  const layouts = stationLayouts ?? STATION_LAYOUTS;
+  const [areaKey, setAreaKey] = useState(Object.keys(layouts)[0]);
+  const [editMode, setEditMode] = useState(false);
+  const [areaModal, setAreaModal] = useState(null);  // 作業區設定
+
+  /** 修改版面：第一次編輯時先把內建版面複製成可存檔的資料 */
+  const mutate = (fn) => {
+    setStationLayouts(prev => {
+      const base = prev ?? JSON.parse(JSON.stringify(STATION_LAYOUTS));
+      const next = JSON.parse(JSON.stringify(base));
+      fn(next);
+      return next;
+    });
+  };
   const [date, setDate] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -11274,7 +11356,89 @@ function StationBoard() {
   const [picking, setPicking] = useState(null);   // { blockKey, idx }
   const [search, setSearch] = useState('');
 
-  const layout = STATION_LAYOUTS[areaKey];
+  const layout = layouts[areaKey];
+
+  const canvasRef = useRef(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const dragRef = useRef(null);   // { id, mode:'move'|'resize', ox, oy, sx, sy, sw, sh }
+
+  /** 目前作業區的位置圖元件；舊的格線版面自動換算成座標 */
+  const items = useMemo(() => {
+    if (!layout) return [];
+    if (Array.isArray(layout.items)) return layout.items;
+    return gridLayoutToCanvas(layout);
+  }, [layout]);
+
+  /** 寫回元件清單（第一次編輯會把換算結果一併存下來） */
+  const setItems = (fn) =>
+    mutate(L => {
+      const cur = Array.isArray(L[areaKey].items) ? L[areaKey].items : gridLayoutToCanvas(L[areaKey]);
+      L[areaKey].items = fn(JSON.parse(JSON.stringify(cur)));
+      delete L[areaKey].grids;     // 已轉為位置圖，不再需要舊格線
+    });
+
+  const pctOf = (e) => {
+    const r = canvasRef.current?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    return { x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 };
+  };
+
+  const startDrag = (e, id) => {
+    if (!editMode) return;
+    e.preventDefault();
+    const it = items.find(x => x.id === id);
+    if (!it) return;
+    const p = pctOf(e);
+    dragRef.current = { id, mode: 'move', ox: p.x - it.x, oy: p.y - it.y };
+    setSelectedId(id);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const startResize = (e, id) => {
+    if (!editMode) return;
+    e.preventDefault();
+    const it = items.find(x => x.id === id);
+    if (!it) return;
+    const p = pctOf(e);
+    dragRef.current = { id, mode: 'resize', sx: p.x, sy: p.y, sw: it.w, sh: it.h };
+    setSelectedId(id);
+  };
+
+  const onCanvasPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const p = pctOf(e);
+    const snap = v => Math.round(v * 2) / 2;          // 貼齊 0.5%，拖曳比較好對齊
+    setItems(list => list.map(it => {
+      if (it.id !== d.id) return it;
+      if (d.mode === 'move') {
+        return { ...it,
+          x: snap(Math.min(Math.max(0, p.x - d.ox), 100 - it.w)),
+          y: snap(Math.min(Math.max(0, p.y - d.oy), 100 - it.h)) };
+      }
+      return { ...it,
+        w: snap(Math.min(Math.max(2, d.sw + (p.x - d.sx)), 100 - it.x)),
+        h: snap(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y)) };
+    }));
+  };
+
+  const endDrag = () => { dragRef.current = null; };
+
+  const addItem = (kind) => {
+    const id = newStationKey();
+    setItems(list => [...list, {
+      id, kind,
+      label: kind === 'station' ? '新站位' : '新設備',
+      x: 40, y: 40, w: 12, h: 10,
+      fill: kind === 'station' ? 'white' : 'grey',
+      stroke: 'slate', dashed: false, slots: 1, icon: '',
+    }]);
+    setSelectedId(id);
+  };
+
+  const patchItem = (id, patch) => setItems(list => list.map(it => it.id === id ? { ...it, ...patch } : it));
+  const removeItem = (id) => { setItems(list => list.filter(it => it.id !== id)); setSelectedId(null); };
+
   const perms = currentUser?.permissions ?? getDefaultPermissions(currentUser?.role);
   const canEdit = perms?.station?.editStation !== false;
 
@@ -11371,6 +11535,49 @@ function StationBoard() {
     });
   };
 
+  // ── 版面編輯操作 ─────────────────────────────────────
+
+
+
+
+
+
+
+  const saveArea = (form, oldKey) => {
+    const name = form.name.trim();
+    if (!name) { toast('作業區名稱為必填', 'error'); return; }
+    if (!form.group) { toast('請選擇綁定的組別', 'error'); return; }
+    if (name !== oldKey && layouts[name]) { toast('已有同名的作業區', 'error'); return; }
+    mutate(L => {
+      const base = oldKey ? L[oldKey] : { grids: [{ title: null, cols: 6, blocks: [] }] };
+      if (oldKey && oldKey !== name) delete L[oldKey];
+      L[name] = {
+        ...base,
+        group: form.group,
+        workArea: form.workArea || undefined,
+        title: form.title || name,
+      };
+    });
+    setAreaKey(name);
+    setAreaModal(null);
+    toast(oldKey ? '已更新作業區' : '已新增作業區', 'success');
+  };
+
+  const removeArea = async () => {
+    if (Object.keys(layouts).length <= 1) { toast('至少要保留一個作業區', 'error'); return; }
+    if (!await askConfirm(`刪除作業區「${areaKey}」？\n版面會一併移除，已排定的站區指派資料仍保留在資料庫中。`)) return;
+    mutate(L => { delete L[areaKey]; });
+    setAreaKey(Object.keys(layouts).filter(k => k !== areaKey)[0]);
+    toast('已刪除作業區', 'info');
+  };
+
+  const resetLayout = async () => {
+    if (!await askConfirm('把這個作業區的版面還原成系統內建的樣子？\n您的調整會被覆蓋。')) return;
+    if (!STATION_LAYOUTS[areaKey]) { toast('這是自行新增的作業區，沒有內建版面可還原', 'warn'); return; }
+    mutate(L => { L[areaKey] = JSON.parse(JSON.stringify(STATION_LAYOUTS[areaKey])); });
+    toast('已還原內建版面', 'success');
+  };
+
   const clearAll = async () => {
     if (!await askConfirm(`清空 ${date} 的「${areaKey}」站區表？\n所有指派都會移除，當日點名紀錄不受影響。`)) return;
     setStationBoard(prev => {
@@ -11387,50 +11594,6 @@ function StationBoard() {
     return (e.name ?? '').toLowerCase().includes(q) || (e.empId ?? '').toLowerCase().includes(q);
   });
 
-  const Block = ({ b, compact = false }) => {
-    const arr = board[b.key] ?? [];
-    const count = Math.max(b.slots ?? 1, arr.length);
-    return (
-      <div className="border border-[#DDD9D0] rounded-lg bg-white overflow-hidden flex flex-col h-full">
-        <div className={`bg-slate-700 text-white font-bold text-center leading-none break-words
-                        ${compact ? 'text-[9px] px-0.5 py-1' : 'text-xs px-2 py-1.5'}`}>
-          {b.label}
-        </div>
-        <div className={`flex-1 flex flex-col gap-1 ${compact ? 'p-1' : 'p-1.5'}`}>
-          {Array.from({ length: count }).map((_, i) => {
-            const v = arr[i] ?? '';
-            const absent = absentIds.has(v);
-            return v ? (
-              <button key={i} disabled={!canEdit}
-                onClick={() => setSlot(b.key, i, '')}
-                title={absent ? '此人當日點名為未到班' : (canEdit ? '點一下移除' : undefined)}
-                className={`font-medium rounded border leading-tight break-words
-                  ${compact ? 'text-[10px] px-0.5 py-0.5' : 'text-sm px-2 py-1'}
-                  ${absent ? 'bg-red-100 border-red-300 text-red-800'
-                           : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
-                {nameOf(v)}{absent && ' ⚠'}
-              </button>
-            ) : (
-              <button key={i} disabled={!canEdit}
-                onClick={() => { setPicking({ blockKey: b.key, idx: i, freeText: b.freeText }); setSearch(''); }}
-                className={`text-slate-300 border border-dashed border-[#DDD9D0] rounded
-                           hover:border-blue-400 hover:text-blue-500 disabled:hover:border-[#DDD9D0]
-                           ${compact ? 'text-[10px] px-0.5 py-0.5' : 'text-xs px-2 py-1'}`}>
-                ＋
-              </button>
-            );
-          })}
-          {canEdit && (
-            <button onClick={() => addSlot(b.key)}
-              className={`text-slate-400 hover:text-slate-600 self-center
-                          ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
-              {compact ? '＋' : '＋ 加一位'}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
@@ -11445,7 +11608,7 @@ function StationBoard() {
           <span className="block text-xs font-medium text-slate-600 mb-1">作業區</span>
           <select value={areaKey} onChange={e => setAreaKey(e.target.value)}
             className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm">
-            {Object.keys(STATION_LAYOUTS).map(k => <option key={k} value={k}>{k}</option>)}
+            {Object.keys(layouts).map(k => <option key={k} value={k}>{k}</option>)}
           </select>
         </label>
         <span className="text-xs text-slate-500 pb-2">
@@ -11455,6 +11618,14 @@ function StationBoard() {
           {absentAssigned > 0 && <>．<b className="text-red-600">未到班 {absentAssigned}</b></>}
         </span>
         <div className="ml-auto flex gap-2 pb-1">
+          {canEdit && (
+            <button onClick={() => { setEditMode(v => !v); setSelectedId(null); }}
+              className={`px-3 py-1.5 rounded-lg text-sm border
+                ${editMode ? 'bg-blue-600 text-white border-transparent'
+                           : 'border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+              {editMode ? '✓ 完成編輯' : '✏️ 編輯版面'}
+            </button>
+          )}
           <button onClick={() => window.print()}
             className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
             🖨 列印
@@ -11468,7 +11639,42 @@ function StationBoard() {
         </div>
       </div>
 
-      {presentEmps.length === 0 && (
+      {editMode && (
+        <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 leading-relaxed">
+          <strong>編輯版面中</strong>：<strong>拖曳</strong>元件移動位置、選取後拖<strong>右下角藍點</strong>調整大小、
+          點元件可改名稱／圖示／底色／框線／人數。<strong>站位</strong>可指派人員，<strong>設備／標示</strong>（柱子、出入口、桌子等）只是圖示。
+          改動會自動存檔，所有人看到的版面都會更新。
+          <div className="flex flex-wrap gap-2 mt-2">
+            <button onClick={() => setAreaModal({ mode: 'edit', name: areaKey,
+                      group: layout?.group ?? '', workArea: layout?.workArea ?? '', title: layout?.title ?? '' })}
+              className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100">
+              ⚙️ 作業區設定
+            </button>
+            <button onClick={() => setAreaModal({ mode: 'new', name: '', group: '', workArea: '', title: '' })}
+              className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100">
+              ＋ 新增作業區
+            </button>
+            <button onClick={() => addItem('station')}
+              className="px-2.5 py-1 bg-white border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
+              ＋ 新增站位（可指派人員）
+            </button>
+            <button onClick={() => addItem('shape')}
+              className="px-2.5 py-1 bg-white border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50">
+              ＋ 新增設備／標示
+            </button>
+            <button onClick={resetLayout}
+              className="px-2.5 py-1 bg-white border border-[#DDD9D0] rounded-lg text-slate-600 hover:bg-[#F5F2EC]">
+              還原內建版面
+            </button>
+            <button onClick={removeArea}
+              className="px-2.5 py-1 bg-white border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50">
+              刪除此作業區
+            </button>
+          </div>
+        </div>
+      )}
+
+      {presentEmps.length === 0 && !editMode && (
         <div className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm leading-relaxed">
           <strong>{date} 沒有排定出勤的人員。</strong>
           站區表的人員來自<strong>班表管理當日排定為「V」的人</strong>，請先確認該日班表已排定。
@@ -11490,40 +11696,69 @@ function StationBoard() {
           </div>
         </div>
 
-        {/* 現場配置圖：依 Excel 的實際座標排列，並壓縮空白行列後放進一頁寬度，
-            不使用橫向捲動；欄位很多時字會變小，可用瀏覽器縮放看細節 */}
-        {layout?.grids?.map((g, gi) => (
-          <div key={gi} className="space-y-1">
-            {g.title && (
-              <div className="bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-1
-                              text-sm font-bold text-slate-700">{g.title}</div>
-            )}
-            <div className="grid gap-0.5 w-full"
-                 style={{ gridTemplateColumns: `repeat(${g.cols}, minmax(0, 1fr))` }}>
-              {g.blocks.map(b => (
-                <div key={b.key}
-                     style={{ gridColumn: `${b.c} / span ${Math.max(b.w, 1)}`, gridRow: b.r }}>
-                  <Block b={b} compact />
+        {/* 設備位置圖：元件以百分比定位，整張圖依容器寬度自動縮放，不需橫向捲動 */}
+        <div ref={canvasRef}
+             className={`relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
+                         ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
+             style={{ aspectRatio: `${layout?.canvasRatio ?? 16} / ${layout?.canvasRatioH ?? 9}` }}
+             onPointerMove={onCanvasPointerMove}
+             onPointerUp={endDrag}
+             onPointerLeave={endDrag}>
+          {(items ?? []).map(it => {
+            const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
+            const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
+            const arr = board[it.id] ?? [];
+            const count = it.kind === 'station' ? Math.max(it.slots ?? 1, arr.length) : 0;
+            const sel = selectedId === it.id;
+            return (
+              <div key={it.id}
+                   onPointerDown={e => editMode && startDrag(e, it.id)}
+                   onClick={() => { if (editMode) setSelectedId(it.id); }}
+                   className={`absolute rounded-md flex flex-col items-center justify-center
+                               text-center overflow-hidden select-none
+                               ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}`}
+                   style={{
+                     left: `${it.x}%`, top: `${it.y}%`, width: `${it.w}%`, height: `${it.h}%`,
+                     background: col.fill, color: col.text,
+                     border: `${it.dashed ? '2px dashed' : '2px solid'} ${stroke.color}`,
+                   }}>
+                <div className="text-[11px] font-bold leading-tight px-1 truncate w-full">
+                  {it.icon ? it.icon + ' ' : ''}{it.label}
                 </div>
-              ))}
-            </div>
-          </div>
-        ))}
 
-        {layout?.sections?.map((sec, si) => (
-          <div key={si} className="space-y-2">
-            {sec.title && (
-              <div className="bg-[#F5F2EC] border border-[#DDD9D0] rounded-lg px-3 py-1.5
-                              text-sm font-bold text-slate-700">{sec.title}</div>
-            )}
-            {sec.rows.map((row, ri) => (
-              <div key={ri} className="grid gap-2"
-                   style={{ gridTemplateColumns: `repeat(${row.cols}, minmax(0, 1fr))` }}>
-                {row.blocks.map(b => <Block key={b.key} b={b} />)}
+                {it.kind === 'station' && !editMode && (
+                  <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
+                    {Array.from({ length: count }).map((_, i) => {
+                      const v = arr[i] ?? '';
+                      const absent = absentIds.has(v);
+                      return v ? (
+                        <button key={i} disabled={!canEdit}
+                          onClick={() => setSlot(it.id, i, '')}
+                          title={absent ? '此人當日點名為未到班' : '點一下移除'}
+                          className={`text-[10px] font-medium rounded px-1 border leading-tight
+                            ${absent ? 'bg-red-100 border-red-300 text-red-800'
+                                     : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                          {nameOf(v)}{absent && ' ⚠'}
+                        </button>
+                      ) : (
+                        <button key={i} disabled={!canEdit}
+                          onClick={() => { setPicking({ blockKey: it.id, idx: i }); setSearch(''); }}
+                          className="text-[10px] text-slate-400 border border-dashed border-slate-300
+                                     rounded px-1 hover:border-blue-400 hover:text-blue-500">＋</button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {editMode && sel && (
+                  <div onPointerDown={e => { e.stopPropagation(); startResize(e, it.id); }}
+                       title="拖曳調整大小"
+                       className="absolute right-0 bottom-0 w-3 h-3 bg-blue-500 cursor-se-resize" />
+                )}
               </div>
-            ))}
-          </div>
-        ))}
+            );
+          })}
+        </div>
       </div>
 
       {unassigned.length > 0 && (
@@ -11540,6 +11775,160 @@ function StationBoard() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* 元件屬性：編輯模式下選取元件後出現 */}
+      {editMode && selectedId && (() => {
+        const it = items.find(x => x.id === selectedId);
+        if (!it) return null;
+        return (
+          <div className="bg-white border border-blue-300 rounded-xl p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-slate-700">元件設定</span>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full
+                ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                                        : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                {it.kind === 'station' ? '可指派人員' : '設備／標示'}
+              </span>
+              <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
+                className="text-[11px] text-blue-600 underline">切換</button>
+              <button onClick={() => setSelectedId(null)}
+                className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1">名稱</span>
+                <input value={it.label} onChange={e => patchItem(it.id, { label: e.target.value })}
+                  className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
+              </label>
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
+                <input value={it.icon ?? ''} onChange={e => patchItem(it.id, { icon: e.target.value })}
+                  placeholder="例 📦 🚪 🖥"
+                  className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24" />
+              </label>
+              {it.kind === 'station' && (
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">人數</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => patchItem(it.id, { slots: Math.max(1, (it.slots ?? 1) - 1) })}
+                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
+                    <span className="w-7 text-center font-bold">{it.slots ?? 1}</span>
+                    <button onClick={() => patchItem(it.id, { slots: (it.slots ?? 1) + 1 })}
+                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
+                  </div>
+                </label>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
+                <input type="checkbox" checked={!!it.dashed}
+                  onChange={e => patchItem(it.id, { dashed: e.target.checked })} />
+                虛線框
+              </label>
+              <button onClick={async () => {
+                  if (!await askConfirm(`刪除「${it.label}」？`)) return;
+                  removeItem(it.id);
+                }}
+                className="ml-auto px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
+                刪除
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-4">
+              <div>
+                <span className="block text-xs font-medium text-slate-600 mb-1">底色</span>
+                <div className="flex gap-1 flex-wrap">
+                  {Object.entries(CANVAS_COLORS).map(([k, v]) => (
+                    <button key={k} title={v.name} onClick={() => patchItem(it.id, { fill: k })}
+                      style={{ background: v.fill === 'transparent' ? '#fff' : v.fill }}
+                      className={`w-7 h-7 rounded border border-slate-300
+                        ${it.fill === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
+                      {v.fill === 'transparent' ? <span className="text-[10px] text-slate-400">／</span> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="block text-xs font-medium text-slate-600 mb-1">框線</span>
+                <div className="flex gap-1 flex-wrap">
+                  {Object.entries(CANVAS_STROKES).map(([k, v]) => (
+                    <button key={k} title={v.name} onClick={() => patchItem(it.id, { stroke: k })}
+                      style={{ borderColor: v.color === 'transparent' ? '#e2e8f0' : v.color }}
+                      className={`w-7 h-7 rounded border-[3px] bg-white
+                        ${it.stroke === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="block text-xs font-medium text-slate-600 mb-1">
+                  位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%　大小 {it.w.toFixed(1)}×{it.h.toFixed(1)}%
+                </span>
+                <div className="flex gap-1">
+                  {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
+                    <button key={t} onClick={() => patchItem(it.id, {
+                        x: Math.min(Math.max(0, it.x + dx), 100 - it.w),
+                        y: Math.min(Math.max(0, it.y + dy), 100 - it.h) })}
+                      className="px-2.5 py-1 border border-[#DDD9D0] rounded text-sm">{t}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 作業區設定／新增 */}
+      {areaModal && (
+        <Modal onClose={() => setAreaModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[360px]">
+            <h3 className="font-bold text-slate-800 mb-1">
+              {areaModal.mode === 'new' ? '新增作業區' : '作業區設定'}
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">
+              綁定條件決定這張站區表可以指派哪些人：<strong>組別</strong>必填；
+              若再指定<strong>作業區</strong>，則只取人員清冊中作業區相符的人。
+              臨時人力一律只依組別區分。
+            </p>
+            {[['name', '名稱（顯示於下拉選單）', true], ['title', '表頭標題（可留空）', false]].map(([k, label, req]) => (
+              <label key={k} className="block mb-3">
+                <span className="block text-xs font-medium text-slate-600 mb-1">
+                  {label}{req && <span className="text-red-400"> *</span>}
+                </span>
+                <input value={areaModal[k] ?? ''}
+                  onChange={e => setAreaModal(p => ({ ...p, [k]: e.target.value }))}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm" />
+              </label>
+            ))}
+            <label className="block mb-3">
+              <span className="block text-xs font-medium text-slate-600 mb-1">
+                綁定組別 <span className="text-red-400">*</span>
+              </span>
+              <select value={areaModal.group}
+                onChange={e => setAreaModal(p => ({ ...p, group: e.target.value }))}
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                <option value="">請選擇</option>
+                {[...new Set(employees.map(e => e.group).filter(Boolean))].sort()
+                  .map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </label>
+            <label className="block mb-4">
+              <span className="block text-xs font-medium text-slate-600 mb-1">綁定作業區（可留空）</span>
+              <select value={areaModal.workArea}
+                onChange={e => setAreaModal(p => ({ ...p, workArea: e.target.value }))}
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm">
+                <option value="">不限（整個組別）</option>
+                {[...new Set(employees.map(e => e.workArea).filter(Boolean))].sort()
+                  .map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAreaModal(null)}
+                className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
+              <button onClick={() => saveArea(areaModal, areaModal.mode === 'edit' ? areaKey : null)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {picking && (
@@ -13620,6 +14009,13 @@ export default function App() {
   // 多段區間（每段自帶鎖定模式與適用組別）；空值時沿用上面的單一區間
   const [deptSegments, setDeptSegments] = useState(() => LS.get('sms_dept_segments', {}));
   // 每日需求人數：key 為「課別|組別|日期」，各課各組分別記錄
+  // 站區表版面：可在畫面上編輯並存入資料庫；首次使用時以內建版面為起點。
+  // 存成資料而非寫死在程式裡，站區調整才不需要重新部署。
+  const [stationLayouts, setStationLayouts] = useState(() => LS.get('sms_station_layouts', null));
+  useEffect(() => {
+    if (stationLayouts) LS.set('sms_station_layouts', stationLayouts, storageWarn);
+  }, [stationLayouts]);
+
   // 站區表：stationBoard[日期][作業區][站區key] = [人員 id 或自由文字, ...]
   const [stationBoard, setStationBoard] = useState(() => LS.get('sms_station_board', {}));
   useEffect(() => { LS.set('sms_station_board', stationBoard, storageWarn); }, [stationBoard]);
@@ -13935,6 +14331,7 @@ export default function App() {
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
       if (s.stationBoard) setStationBoard(s.stationBoard);
+      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -13971,6 +14368,7 @@ export default function App() {
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
       if (s.stationBoard) setStationBoard(s.stationBoard);
+      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -14010,6 +14408,7 @@ export default function App() {
         if (state?.deptSegments)           setDeptSegments(state.deptSegments);
         if (state?.dailyDemand)            applyRemoteDemand(state.dailyDemand);
         if (state?.stationBoard)           setStationBoard(state.stationBoard);
+        if (state?.stationLayouts)         setStationLayouts(state.stationLayouts);
         if (state?.unlockPwd !== undefined) setUnlockPwd(state.unlockPwd);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
@@ -14086,6 +14485,7 @@ export default function App() {
       if (s.deptSegments) setDeptSegments(s.deptSegments);
       if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
       if (s.stationBoard) setStationBoard(s.stationBoard);
+      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
       if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -14232,7 +14632,7 @@ export default function App() {
     employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
     scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
     attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
-    stationBoard,
+    stationBoard, stationLayouts,
     users, workerPwds,
   };
 
@@ -14294,7 +14694,7 @@ export default function App() {
       employees, vendors, warehouses, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign,
       scheduleRange, openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames,
       attendData, extras, shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings,
-      stationBoard,
+      stationBoard, stationLayouts,
       users, workerPwds,
       ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
       ...(deletedEmpsRef.current.size > 0 ? { deletedEmployees: [...deletedEmpsRef.current] } : {}),
@@ -14331,7 +14731,7 @@ export default function App() {
     }, 2000);
   }, [employees, vendors, warehouses, schedule, systemLocked, deptLocks, deptRanges, deptSegments, dailyDemand, unlockPwd, periodRange, workAreas, lockerAssign, scheduleRange,
       openHolidays, vendorHolidayOpen, vendorRestOpen, workerRestOpen, vendorCompanyNames, attendData, extras,
-      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, stationBoard, users, workerPwds]);
+      shiftTypesByWh, shiftCodeRows, shiftCodeHeaders, attendSettings, stationBoard, stationLayouts, users, workerPwds]);
 
   // ── 出勤資料同步（PUT /api/attendance，2s debounce，admin/area/vendor/worker 皆適用）──
   const vendorAttendDebRef = useRef(null);
@@ -14464,7 +14864,7 @@ export default function App() {
     workAreas, setWorkAreas,
     selectedVendor, setSelectedVendor,
     schedule, setSchedule: setScheduleTracked, applyRemoteSchedule, saveIssue, markEmployeeDeleted,
-    stationBoard, setStationBoard,
+    stationBoard, setStationBoard, stationLayouts, setStationLayouts,
     systemLocked, setSystemLocked,
     deptLocks, setDeptLocks,
     deptRanges, setDeptRanges,

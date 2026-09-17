@@ -1700,6 +1700,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     dailyDemand:  data.dailyDemand ?? {},
     // 委外幹部若獲授權查看站區表，也需要這份資料
     stationBoard: data.stationBoard ?? {},
+    stationLayouts: data.stationLayouts ?? null,
     // 每期日期區間：委外幹部／人員的班表也要依同一週期分頁，
     // 未回傳時他們會退回「以月份檢視」，看到的期間與日翊端對不上。
     periodRange:  data.periodRange ?? null,
@@ -1849,7 +1850,7 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
       (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
       rest.deptLocks || rest.deptRanges || rest.deptSegments ||
       rest.attendData || rest.extras || rest.dailyDemand || rest.shiftTypesByWh ||
-      rest.stationBoard) {
+      rest.stationBoard || rest.stationLayouts) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1970,6 +1971,10 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
           if (Array.isArray(list)) merged[date] = list;
         rest.extras = merged;
       }
+
+      // 站區表版面：以作業區為鍵逐區合併，兩人同時調整不同作業區不會互蓋
+      if (rest.stationLayouts && typeof rest.stationLayouts === 'object')
+        rest.stationLayouts = { ...(cur.stationLayouts ?? {}), ...rest.stationLayouts };
 
       // 站區表：日期 → 作業區，兩層合併。不同人同時編排不同日期／作業區不會互蓋。
       if (rest.stationBoard && typeof rest.stationBoard === 'object') {
