@@ -1848,8 +1848,13 @@ const CANVAS_FONTS = {
   mono:    { name: '等寬',   css: 'Consolas, "Courier New", monospace' },
 };
 
-/** 位置圖的列印寬度（公分）。用來把元件尺寸換算成實際印出來的大小 */
-const DEFAULT_PRINT_W_CM = 27.7;   // A4 橫式扣掉邊界
+/**
+ * 位置圖固定以 A4 橫式、窄邊界（上下左右各 1.27cm）列印。
+ * 可列印範圍 = 29.7 − 2.54 = 27.16cm 寬、21 − 2.54 = 18.46cm 高。
+ * 元件的公分尺寸即以此換算，畫面比例也依此設定，所見即所印。
+ */
+const A4_W_CM = 27.16;
+const A4_H_CM = 18.46;
 
 const CANVAS_STROKES = {
   none:   { name: '無框', color: 'transparent' },
@@ -11472,13 +11477,11 @@ function StationBoard() {
   const patchItem = (id, patch) => setItems(list => list.map(it => it.id === id ? { ...it, ...patch } : it));
 
   // 百分比 ↔ 公分：以「列印寬度」為基準，高度再依畫布長寬比換算
-  const printW = layout?.printW ?? DEFAULT_PRINT_W_CM;
-  const printH = printW * ((layout?.canvasRatioH ?? 9) / (layout?.canvasRatio ?? 16));
-  const cmOf = (pct, axis) => (((pct / 100) * (axis === 'w' ? printW : printH))).toFixed(1);
+  const cmOf = (pct, axis) => (((pct / 100) * (axis === 'w' ? A4_W_CM : A4_H_CM))).toFixed(1);
   const setCm = (it, axis, cmStr) => {
     const cm = Number(cmStr);
     if (!Number.isFinite(cm) || cm <= 0) return;
-    const pct = Math.min((cm / (axis === 'w' ? printW : printH)) * 100, 100 - (axis === 'w' ? it.x : it.y));
+    const pct = Math.min((cm / (axis === 'w' ? A4_W_CM : A4_H_CM)) * 100, 100 - (axis === 'w' ? it.x : it.y));
     patchItem(it.id, axis === 'w' ? { w: pct } : { h: pct });
   };
   const removeItem = (id) => { setItems(list => list.filter(it => it.id !== id)); setSelectedId(null); };
@@ -11703,14 +11706,6 @@ function StationBoard() {
                          disabled:opacity-40 disabled:hover:bg-white">
               ↩ 復原{undoCount > 0 ? `（${undoCount}）` : ''}
             </button>
-            <label className="flex items-center gap-1 bg-white border border-blue-300 rounded-lg px-2 py-1">
-              <span className="text-[11px] text-slate-500">列印寬度</span>
-              <input type="number" step="0.1" min="5"
-                value={layout?.printW ?? DEFAULT_PRINT_W_CM}
-                onChange={e => mutate(L => { L[areaKey].printW = Number(e.target.value) || DEFAULT_PRINT_W_CM; })}
-                className="w-14 border border-[#DDD9D0] rounded px-1 py-0.5 text-xs" />
-              <span className="text-[11px] text-slate-500">cm</span>
-            </label>
             <button onClick={() => addItem('station')}
               className="px-2.5 py-1 bg-white border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
               ＋ 新增站位（可指派人員）
@@ -11742,11 +11737,25 @@ function StationBoard() {
         </div>
       )}
 
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
+      {/* 列印：固定 A4 橫式、窄邊界，且只印位置圖本身 */}
+      <style>{`
+        @media print {
+          @page { size: A4 landscape; margin: 1.27cm; }
+          body * { visibility: hidden !important; }
+          .vsp-print-area, .vsp-print-area * { visibility: visible !important; }
+          .vsp-print-area {
+            position: absolute; left: 0; top: 0; width: 100%;
+            border: 0 !important; padding: 0 !important; box-shadow: none !important;
+          }
+          .vsp-no-print { display: none !important; }
+        }
+      `}</style>
+
+      <div className="vsp-print-area bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
         <div className="text-center">
           <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
           <div className="text-xs text-slate-500 mt-0.5">{layout?.title}　|　{date}</div>
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="vsp-no-print text-[11px] text-slate-400 mt-1">
             人員來自班表當日排定出勤者；
             <span className="inline-block align-middle mx-1 px-1.5 py-0.5 rounded bg-red-100 border border-red-300 text-red-800">紅底</span>
             表示已排進站區但點名為未到班
@@ -11910,7 +11919,7 @@ function StationBoard() {
         <div ref={canvasRef}
              className={`relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
-             style={{ aspectRatio: `${layout?.canvasRatio ?? 16} / ${layout?.canvasRatioH ?? 9}` }}
+             style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}` }}
              onPointerMove={onCanvasPointerMove}
              onPointerUp={endDrag}
              onPointerLeave={endDrag}>
