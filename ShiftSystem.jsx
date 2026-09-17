@@ -12268,14 +12268,19 @@ function StationBoard() {
                         {v.fill === 'transparent' ? <span className="text-[10px] text-slate-400">／</span> : null}
                       </button>
                     ))}
-                    <input type="color" value={it.fillHex ?? '#ffffff'}
-                      onChange={e => patchSel({ fillHex: e.target.value })}
-                      title="自訂底色"
-                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
-                    <input type="color" value={it.textHex ?? '#334155'}
-                      onChange={e => patchSel({ textHex: e.target.value })}
-                      title="自訂文字顏色"
-                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
+                    {/* 色票之外還可以自己挑色：點色塊會開啟系統調色盤 */}
+                    <label className="flex items-center gap-1 ml-1 cursor-pointer" title="點色塊自己挑底色">
+                      <input type="color" value={it.fillHex ?? '#ffffff'}
+                        onChange={e => patchSel({ fillHex: e.target.value })}
+                        className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
+                      <span className="text-[10px] text-slate-500">自訂底色</span>
+                    </label>
+                    <label className="flex items-center gap-1 ml-1 cursor-pointer" title="點色塊自己挑文字顏色">
+                      <input type="color" value={it.textHex ?? '#334155'}
+                        onChange={e => patchSel({ textHex: e.target.value })}
+                        className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
+                      <span className="text-[10px] text-slate-500">文字色</span>
+                    </label>
                   </div>
                 </div>
                 <div>
@@ -12290,10 +12295,12 @@ function StationBoard() {
                         {v.color === 'transparent' ? '／' : null}
                       </button>
                     ))}
-                    <input type="color" value={it.strokeHex ?? '#94a3b8'}
-                      onChange={e => patchSel({ strokeHex: e.target.value })}
-                      title="自訂框線顏色"
-                      className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
+                    <label className="flex items-center gap-1 ml-1 cursor-pointer" title="點色塊自己挑框線顏色">
+                      <input type="color" value={it.strokeHex ?? '#94a3b8'}
+                        onChange={e => patchSel({ strokeHex: e.target.value })}
+                        className="w-5 h-5 rounded border border-slate-300 p-0 cursor-pointer" />
+                      <span className="text-[10px] text-slate-500">自訂框線</span>
+                    </label>
                   </div>
                 </div>
                 <div>
