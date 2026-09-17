@@ -11839,11 +11839,15 @@ function StationBoard() {
     toast('已清空', 'info');
   };
 
-  const pickList = unassigned.filter(e => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return (e.name ?? '').toLowerCase().includes(q) || (e.empId ?? '').toLowerCase().includes(q);
-  });
+  // 同一個人可以被指派到多個站位（例如一人顧兩站），所以已指派者仍留在清單中，
+  // 只是排到未指派者後面並標示「已指派」，避免誤選。
+  const pickList = presentEmps
+    .filter(e => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return (e.name ?? '').toLowerCase().includes(q) || (e.empId ?? '').toLowerCase().includes(q);
+    })
+    .sort((a, b) => Number(assignedIds.has(a.id)) - Number(assignedIds.has(b.id)));
 
 
   return (
@@ -12401,7 +12405,7 @@ function StationBoard() {
           <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[340px]">
             <h3 className="font-bold text-slate-800 mb-1">指派人員</h3>
             <p className="text-xs text-slate-500 mb-3">
-              只列出<strong>當日實到且尚未指派</strong>的人員。
+              列出<strong>當日排定出勤</strong>的人員；已指派者仍可再指派到其他站位。
             </p>
             {picking.freeText && (
               <div className="mb-3">
@@ -12427,6 +12431,11 @@ function StationBoard() {
                   className="w-full text-left px-3 py-2 text-sm hover:bg-[#F5F2EC] flex items-center gap-2">
                   <span className="font-medium text-slate-700">{e.name}</span>
                   <span className="text-xs text-slate-400 font-mono">{e.empId}</span>
+                  {assignedIds.has(e.id) && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
+                      已指派
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400 ml-auto">{e.vendor}</span>
                 </button>
               ))}
