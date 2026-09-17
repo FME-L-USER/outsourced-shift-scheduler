@@ -11358,6 +11358,64 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
  * 待指派清單裡，站區表才會反映現場真實人力。
  * 版面由 STATION_LAYOUTS 描述，站區調整只需改設定、不動畫面程式。
  */
+/**
+ * 唯讀的站區畫布：只顯示版面與已指派人員，不能編輯。
+ * 「顯示全部作業區」與全螢幕檢視都用這個，避免一次開多張可編輯的畫布互相干擾。
+ */
+function StationCanvasView({ layout, cells, nameOf, absentIds }) {
+  const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
+  return (
+    <div className="relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
+         style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}` }}>
+      {items.map(it => {
+        const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
+        const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
+        const arr = cells?.[it.id] ?? [];
+        const count = it.kind === 'station' ? Math.max(it.slots ?? 1, arr.length) : 0;
+        return (
+          <div key={it.id}
+               className="absolute rounded-md flex flex-col overflow-hidden"
+               style={{
+                 left: `${it.x}%`, top: `${it.y}%`, width: `${it.w}%`, height: `${it.h}%`,
+                 background: it.fillHex ?? col.fill,
+                 color: it.textHex ?? (it.fillHex ? '#334155' : col.text),
+                 border: `${it.dashed ? '2px dashed' : '2px solid'} ${it.strokeHex ?? stroke.color}`,
+                 alignItems: 'stretch',
+                 justifyContent: (ALIGN_V[it.valign] ?? ALIGN_V.middle).css,
+               }}>
+            <div className="leading-tight px-1 w-full break-words whitespace-pre-wrap"
+                 style={{
+                   fontSize: `${it.fontSize ?? 11}px`,
+                   fontWeight: it.bold === false ? 500 : 700,
+                   fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
+                   textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
+                 }}>
+              {it.icon ? it.icon + ' ' : ''}{it.label}
+            </div>
+            {it.kind === 'station' && (
+              <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
+                {Array.from({ length: count }).map((_, i) => {
+                  const v = arr[i] ?? '';
+                  if (!v) return null;
+                  const absent = absentIds?.has(v);
+                  return (
+                    <span key={i}
+                      className={`text-[10px] font-medium rounded px-1 border leading-tight
+                        ${absent ? 'bg-red-100 border-red-300 text-red-800'
+                                 : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                      {nameOf(v)}{absent && ' ⚠'}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StationBoard() {
   const { employees, warehouses, schedule, attendData, extras, currentUser,
           stationBoard, setStationBoard, stationLayouts, setStationLayouts } = useApp();
@@ -11398,6 +11456,19 @@ function StationBoard() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
+  const [showAll, setShowAll] = useState(false);  // 一頁顯示全部作業區（唯讀）
+  const fullRef = useRef(null);                   // 全螢幕顯示的容器
+  const [isFull, setIsFull] = useState(false);
+  useEffect(() => {
+    const onFs = () => setIsFull(document.fullscreenElement === fullRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+  const toggleFull = () => {
+    if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+    setEditMode(false);                           // 全螢幕只用來看，不編輯
+    fullRef.current?.requestFullscreen?.();
+  };
   const [picking, setPicking] = useState(null);   // { blockKey, idx }
   const [search, setSearch] = useState('');
 
@@ -11758,6 +11829,17 @@ function StationBoard() {
               {editMode ? '✓ 完成編輯' : '✏️ 編輯版面'}
             </button>
           )}
+          <button onClick={() => { setShowAll(v => !v); setSelectedIds([]); setEditMode(false); }}
+            title="一頁顯示所有作業區（唯讀）"
+            className={`px-3 py-1.5 rounded-lg text-sm border
+              ${showAll ? 'bg-slate-700 text-white border-transparent'
+                        : 'border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
+            🗂 {showAll ? '單一作業區' : '全部作業區'}
+          </button>
+          <button onClick={toggleFull} title="放大到整個螢幕，適合投在現場螢幕上"
+            className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+            {isFull ? '⛶ 離開全螢幕' : '⛶ 全螢幕'}
+          </button>
           <button onClick={() => window.print()}
             className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
             🖨 列印
@@ -11833,19 +11915,47 @@ function StationBoard() {
             border: 0 !important; padding: 0 !important; box-shadow: none !important;
           }
           .vsp-no-print { display: none !important; }
+          .vsp-page-break { break-before: page; page-break-before: always; }
+        }
+        /* 全螢幕：置中並依螢幕高度等比放大，維持 A4 橫式比例 */
+        .vsp-board:fullscreen {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          background: #fff; overflow: auto; border: 0; border-radius: 0;
+        }
+        .vsp-board:fullscreen > * {
+          width: min(100%, calc((100vh - 7rem) * ${A4_W_CM} / ${A4_H_CM}));
         }
       `}</style>
 
-      <div className="vsp-print-area bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
+      <div ref={fullRef}
+           className="vsp-print-area vsp-board bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
         <div className="text-center">
           <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
-          <div className="text-xs text-slate-500 mt-0.5">{layout?.title}　|　{date}</div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            {showAll ? '全部作業區' : layout?.title}　|　{date}
+          </div>
           <div className="vsp-no-print text-[11px] text-slate-400 mt-1">
             人員來自班表當日排定出勤者；
             <span className="inline-block align-middle mx-1 px-1.5 py-0.5 rounded bg-red-100 border border-red-300 text-red-800">紅底</span>
             表示已排進站區但點名為未到班
           </div>
         </div>
+
+      {showAll ? (
+        /* 全部作業區：一頁看完所有作業區（唯讀），列印時每區一頁 */
+        <div className="space-y-4">
+          {Object.keys(layouts).map((k, i) => (
+            <div key={k} className={i > 0 ? 'vsp-page-break space-y-1' : 'space-y-1'}>
+              <div className="text-sm font-bold text-slate-700">
+                {k}<span className="font-normal text-slate-400 ml-2">{layouts[k]?.title}</span>
+              </div>
+              <StationCanvasView layout={layouts[k]}
+                cells={stationBoard?.[date]?.[k] ?? {}}
+                nameOf={nameOf} absentIds={absentIds} />
+            </div>
+          ))}
+        </div>
+      ) : (<>
 
       {/* 元件屬性：編輯模式下選取元件後出現 */}
         {editMode && selectedIds.length > 0 && (() => {
@@ -12143,6 +12253,7 @@ function StationBoard() {
             );
           })}
         </div>
+      </>)}
       </div>
 
       {unassigned.length > 0 && (
