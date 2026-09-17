@@ -11722,9 +11722,20 @@ function StationBoard() {
                      background: col.fill, color: col.text,
                      border: `${it.dashed ? '2px dashed' : '2px solid'} ${stroke.color}`,
                    }}>
-                <div className="text-[11px] font-bold leading-tight px-1 truncate w-full">
-                  {it.icon ? it.icon + ' ' : ''}{it.label}
-                </div>
+                {editMode && sel ? (
+                  /* 選取後直接在元件上改字；按住輸入框不會觸發拖曳 */
+                  <input value={it.label} autoFocus
+                    onPointerDown={e => e.stopPropagation()}
+                    onChange={e => patchItem(it.id, { label: e.target.value })}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
+                    className="w-[92%] text-[11px] font-bold text-center bg-white/80 border border-blue-400
+                               rounded px-1 py-0.5 outline-none"
+                    style={{ color: col.text }} />
+                ) : (
+                  <div className="text-[11px] font-bold leading-tight px-1 truncate w-full">
+                    {it.icon ? it.icon + ' ' : ''}{it.label}
+                  </div>
+                )}
 
                 {it.kind === 'station' && !editMode && (
                   <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
