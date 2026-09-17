@@ -11838,9 +11838,10 @@ function StationBoard() {
 
               <div className="flex flex-wrap items-end gap-3">
                 <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">名稱</span>
-                  <input value={it.label} onChange={e => patchItem(it.id, { label: e.target.value })}
-                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
+                  <span className="block text-xs font-medium text-slate-600 mb-1">名稱（Enter 可換行）</span>
+                  <textarea value={it.label} rows={2}
+                    onChange={e => patchItem(it.id, { label: e.target.value })}
+                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44 resize-y" />
                 </label>
                 <label className="block">
                   <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
@@ -12009,19 +12010,19 @@ function StationBoard() {
                      border: `${it.dashed ? '2px dashed' : '2px solid'} ${it.strokeHex ?? stroke.color}`,
                    }}>
                 {editMode && sel ? (
-                  /* 選取後直接在元件上改字；按住輸入框不會觸發拖曳 */
-                  <input value={it.label} autoFocus
+                  /* 選取後直接在元件上改字；Enter 換行，Esc 結束編輯 */
+                  <textarea value={it.label} autoFocus rows={2}
                     onPointerDown={e => e.stopPropagation()}
                     onChange={e => patchItem(it.id, { label: e.target.value })}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
-                    className="w-[92%] text-center bg-transparent border border-blue-400
-                               rounded px-1 py-0.5 outline-none"
+                    onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
+                    className="w-[92%] h-[80%] resize-none text-center bg-transparent border border-blue-400
+                               rounded px-1 py-0.5 outline-none leading-tight"
                     style={{ fontSize: `${it.fontSize ?? 11}px`,
                              fontWeight: it.bold === false ? 500 : 700,
                              fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
                              color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
                 ) : (
-                  <div className="leading-tight px-1 w-full break-words"
+                  <div className="leading-tight px-1 w-full break-words whitespace-pre-wrap"
                        style={{
                          fontSize: `${it.fontSize ?? 11}px`,
                          fontWeight: it.bold === false ? 500 : 700,
