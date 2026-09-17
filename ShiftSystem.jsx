@@ -11722,6 +11722,16 @@ function StationBoard() {
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // Delete／Backspace：刪除選取的元件（誤刪可按「復原」救回）
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length === 0) return;
+        const n = selectedIds.length;
+        setItems(list => list.filter(it => !selectedIds.includes(it.id)));
+        setSelectedIds([]);
+        toast(`已刪除 ${n} 個元件，可按「復原」救回`, 'info');
+        e.preventDefault();
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === 'c') { copyItems(); e.preventDefault(); }
@@ -11994,6 +12004,7 @@ function StationBoard() {
           <strong>編輯版面中</strong>：<strong>拖曳</strong>元件移動位置、選取後拖<strong>右下角藍點</strong>調整大小、
           點元件可改名稱／圖示／底色／框線／人數。<strong>站位</strong>可指派人員，<strong>設備／標示</strong>（柱子、出入口、桌子等）只是圖示。
           改動會自動存檔，所有人看到的版面都會更新。
+          快速鍵：<strong>Ctrl+C／Ctrl+V</strong> 複製貼上、<strong>Delete</strong> 刪除選取的元件。
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <button onClick={() => guardAdmin('作業區設定', () => setAreaModal({ mode: 'edit', name: areaKey,
                       group: layout?.group ?? '', workArea: layout?.workArea ?? '', title: layout?.title ?? '' }))}
