@@ -11508,6 +11508,11 @@ function StationBoard() {
   const setSelectedId = (id) => setSelectedIds(id ? [id] : []);
   const toggleSelect = (id) =>
     setSelectedIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]);
+
+  // 大小（公分）輸入中的暫存值：邊打邊套用會被格式化成 1 位小數而打不完整，
+  // 因此打字期間先存草稿，離開欄位或按 Enter 才套用。
+  const [cmDraft, setCmDraft] = useState({});
+  useEffect(() => { setCmDraft({}); }, [selectedIds.join(',')]);
   const dragRef = useRef(null);   // { id, mode:'move'|'resize'|'pan', ox, oy, sx, sy, sw, sh, px, py }
   const [guides, setGuides] = useState({ v: [], h: [] });   // 拖曳時的對齊虛線（百分比座標）
 
@@ -12206,14 +12211,21 @@ function StationBoard() {
                     大小（公分）{multi ? '：一起設定' : ''}
                   </span>
                   <div className="flex items-center gap-1 mb-2">
-                    <input type="number" step="0.1" min="0.3" value={cmOf(it.w, 'w')}
-                      onChange={e => setCmSel('w', e.target.value)}
+                    <input type="number" step="0.1" min="0.3"
+                      value={cmDraft.w ?? cmOf(it.w, 'w')}
+                      onChange={e => setCmDraft(d => ({ ...d, w: e.target.value }))}
+                      onBlur={e => { setCmSel('w', e.target.value); setCmDraft(d => ({ ...d, w: undefined })); }}
+                      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                       className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
                     <span className="text-xs text-slate-400">寬 ×</span>
-                    <input type="number" step="0.1" min="0.3" value={cmOf(it.h, 'h')}
-                      onChange={e => setCmSel('h', e.target.value)}
+                    <input type="number" step="0.1" min="0.3"
+                      value={cmDraft.h ?? cmOf(it.h, 'h')}
+                      onChange={e => setCmDraft(d => ({ ...d, h: e.target.value }))}
+                      onBlur={e => { setCmSel('h', e.target.value); setCmDraft(d => ({ ...d, h: undefined })); }}
+                      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                       className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
                     <span className="text-xs text-slate-400">高 cm</span>
+                    <span className="text-[11px] text-slate-400 ml-1">輸入後按 Enter</span>
                   </div>
                   <span className="block text-xs font-medium text-slate-600 mb-1">
                     {multi ? `位置微調（${sels.length} 個一起移動）` : `位置 ${it.x.toFixed(1)}%, ${it.y.toFixed(1)}%`}
