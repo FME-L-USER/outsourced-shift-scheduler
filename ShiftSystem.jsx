@@ -1841,6 +1841,9 @@ const CANVAS_COLORS = {
 };
 /** 可選字型：只用系統一定有的中文字型，避免在現場電腦變成別的樣子 */
 /** 元件內文字的對齊方式 */
+/** 站區表作業區異動的管理密碼（防止現場誤觸，真正的權限控管仍以管理員身分為準） */
+const STATION_ADMIN_PWD = '8963';
+
 const ALIGN_H = {
   left:   { name: '靠左', icon: '⬅', css: 'left' },
   center: { name: '置中', icon: '↔', css: 'center' },
@@ -11470,6 +11473,26 @@ function StationBoard() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
+  // 作業區的新增／設定／刪除只開放管理員，且異動前需再輸入一次密碼，
+  // 避免現場誤觸把整個作業區的版面刪掉。
+  const [pwdGate, setPwdGate] = useState(null);   // { label, run }
+  const [gatePwd, setGatePwd] = useState('');
+  const isAdmin = currentUser?.role === ROLES.ADMIN;
+  const runGate = () => {
+    if (gatePwd !== STATION_ADMIN_PWD) { toast('密碼錯誤', 'error'); return; }
+    const fn = pwdGate?.run;
+    setPwdGate(null); setGatePwd('');
+    fn?.();
+  };
+  const guardAdmin = (label, run) => {
+    if (!isAdmin) { toast('此功能僅限管理員使用', 'warn'); return; }
+    setGatePwd('');
+    setPwdGate({ label, run });
+  };
+
+  // 複製／貼上元件：Ctrl+C 複製選取的元件，Ctrl+V 貼上（位置略為錯開以免完全重疊）
+  const clipRef = useRef([]);
+
   const [showAll, setShowAll] = useState(false);  // 一頁顯示全部作業區（唯讀）
   const fullRef = useRef(null);                   // 全螢幕顯示的容器
   const [isFull, setIsFull] = useState(false);
@@ -11668,6 +11691,46 @@ function StationBoard() {
   };
 
   const patchItem = (id, patch) => setItems(list => list.map(it => it.id === id ? { ...it, ...patch } : it));
+
+  /** 複製選取的元件；沒有選取時不做事 */
+  const copyItems = () => {
+    const picked = items.filter(it => selectedIds.includes(it.id));
+    if (picked.length === 0) return;
+    clipRef.current = JSON.parse(JSON.stringify(picked));
+    toast(`已複製 ${picked.length} 個元件`, 'info');
+  };
+
+  /** 貼上：每次往右下偏移 1.5%，避免疊在原件正上方看不出來 */
+  const pasteItems = () => {
+    const clip = clipRef.current;
+    if (!clip || clip.length === 0) { toast('剪貼簿沒有元件', 'warn'); return; }
+    const copies = clip.map(it => ({
+      ...it,
+      id: newStationKey(),
+      x: Math.min(Math.max(0, it.x + 1.5), 100 - it.w),
+      y: Math.min(Math.max(0, it.y + 1.5), 100 - it.h),
+    }));
+    setItems(list => [...list, ...copies]);
+    setSelectedIds(copies.map(c => c.id));
+    clipRef.current = copies;            // 連續貼上會像階梯一樣往右下排開
+    toast(`已貼上 ${copies.length} 個元件`, 'success');
+  };
+
+  // 編輯版面時的鍵盤快速鍵；在輸入框中打字不攔截
+  useEffect(() => {
+    if (!editMode) return;
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'c') { copyItems(); e.preventDefault(); }
+      if (k === 'v') { pasteItems(); e.preventDefault(); }
+      if (k === 'd') { copyItems(); pasteItems(); e.preventDefault(); }   // 直接複製一份
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editMode, items, selectedIds]);
 
   // 百分比 ↔ 公分：以「列印寬度」為基準，高度再依畫布長寬比換算
   // 顯示到小數第 2 位（去掉多餘的 0）：只顯示 1 位時，0.65 與 0.74 都會寫成 0.7，
@@ -11931,37 +11994,45 @@ function StationBoard() {
           <strong>編輯版面中</strong>：<strong>拖曳</strong>元件移動位置、選取後拖<strong>右下角藍點</strong>調整大小、
           點元件可改名稱／圖示／底色／框線／人數。<strong>站位</strong>可指派人員，<strong>設備／標示</strong>（柱子、出入口、桌子等）只是圖示。
           改動會自動存檔，所有人看到的版面都會更新。
-          <div className="flex flex-wrap gap-2 mt-2">
-            <button onClick={() => setAreaModal({ mode: 'edit', name: areaKey,
-                      group: layout?.group ?? '', workArea: layout?.workArea ?? '', title: layout?.title ?? '' })}
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <button onClick={() => guardAdmin('作業區設定', () => setAreaModal({ mode: 'edit', name: areaKey,
+                      group: layout?.group ?? '', workArea: layout?.workArea ?? '', title: layout?.title ?? '' }))}
               className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100">
               ⚙️ 作業區設定
             </button>
-            <button onClick={() => setAreaModal({ mode: 'new', name: '', group: '', workArea: '', title: '' })}
+            <button onClick={() => guardAdmin('新增作業區',
+                      () => setAreaModal({ mode: 'new', name: '', group: '', workArea: '', title: '' }))}
               className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100">
               ＋ 新增作業區
             </button>
-            <button onClick={undo} disabled={undoCount === 0}
-              className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100
-                         disabled:opacity-40 disabled:hover:bg-white">
-              ↩ 復原{undoCount > 0 ? `（${undoCount}）` : ''}
-            </button>
-            <button onClick={() => addItem('station')}
-              className="px-2.5 py-1 bg-white border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
-              ＋ 新增站位（可指派人員）
-            </button>
-            <button onClick={() => addItem('shape')}
-              className="px-2.5 py-1 bg-white border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50">
-              ＋ 新增設備／標示
-            </button>
-            <button onClick={resetLayout}
+            <button onClick={() => guardAdmin('還原內建版面', resetLayout)}
               className="px-2.5 py-1 bg-white border border-[#DDD9D0] rounded-lg text-slate-600 hover:bg-[#F5F2EC]">
               還原內建版面
             </button>
-            <button onClick={removeArea}
+            <button onClick={() => guardAdmin('刪除此作業區', removeArea)}
               className="px-2.5 py-1 bg-white border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50">
               刪除此作業區
             </button>
+
+            {/* 最常用的三個動作放右側並加上底色，好找也不會誤按到左邊的設定類按鈕 */}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button onClick={undo} disabled={undoCount === 0}
+                className="px-3 py-1.5 bg-amber-400 text-amber-950 border border-amber-500 rounded-lg
+                           font-bold shadow-sm hover:bg-amber-300
+                           disabled:opacity-40 disabled:hover:bg-amber-400">
+                ↩ 復原{undoCount > 0 ? `（${undoCount}）` : ''}
+              </button>
+              <button onClick={() => addItem('station')}
+                className="px-3 py-1.5 bg-teal-600 text-white border border-teal-700 rounded-lg
+                           font-bold shadow-sm hover:bg-teal-500">
+                ＋ 新增站位（可指派人員）
+              </button>
+              <button onClick={() => addItem('shape')}
+                className="px-3 py-1.5 bg-slate-600 text-white border border-slate-700 rounded-lg
+                           font-bold shadow-sm hover:bg-slate-500">
+                ＋ 新增設備／標示
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -12421,6 +12492,32 @@ function StationBoard() {
                 className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">取消</button>
               <button onClick={() => saveArea(areaModal, areaModal.mode === 'edit' ? areaKey : null)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">儲存</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pwdGate && (
+        <Modal onClose={() => setPwdGate(null)}>
+          <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[320px]">
+            <h3 className="font-bold text-slate-800 mb-1">{pwdGate.label}</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              此動作會影響所有人看到的站區表，請輸入管理密碼確認。
+            </p>
+            <input type="password" value={gatePwd} autoFocus
+              onChange={e => setGatePwd(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') runGate(); }}
+              placeholder="管理密碼"
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm mb-3" />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setPwdGate(null)}
+                className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
+                取消
+              </button>
+              <button onClick={runGate}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                確認
+              </button>
             </div>
           </div>
         </Modal>
