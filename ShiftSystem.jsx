@@ -11393,7 +11393,8 @@ function StationBoard() {
 
   const canvasRef = useRef(null);
   const [selectedId, setSelectedId] = useState(null);
-  const dragRef = useRef(null);   // { id, mode:'move'|'resize', ox, oy, sx, sy, sw, sh }
+  const dragRef = useRef(null);   // { id, mode:'move'|'resize'|'pan', ox, oy, sx, sy, sw, sh, px, py }
+  const [guides, setGuides] = useState({ v: [], h: [] });   // 拖曳時的對齊虛線（百分比座標）
 
   /** 目前作業區的位置圖元件；舊的格線版面自動換算成座標 */
   const items = useMemo(() => {
@@ -11441,26 +11442,80 @@ function StationBoard() {
     setSelectedId(id);
   };
 
+  /**
+   * 對齊輔助線：把拖曳中元件的左／中／右（上／中／下）跟其他元件的同類邊界比對，
+   * 距離在 ALIGN_TOL 以內就貼齊，並回報要畫哪幾條虛線。
+   */
+  const ALIGN_TOL = 0.9;                              // 百分比，約等於 2~3mm
+  const alignAxis = (val, size, others, axis) => {
+    const edges = [val, val + size / 2, val + size];   // 自己的三個對齊點
+    let best = null;
+    for (const o of others) {
+      const oVal = axis === 'x' ? o.x : o.y;
+      const oSize = axis === 'x' ? o.w : o.h;
+      for (const target of [oVal, oVal + oSize / 2, oVal + oSize]) {
+        for (let i = 0; i < 3; i++) {
+          const diff = Math.abs(edges[i] - target);
+          if (diff <= ALIGN_TOL && (!best || diff < best.diff)) {
+            best = { diff, target, shift: target - edges[i] };
+          }
+        }
+      }
+    }
+    return best;
+  };
+
   const onCanvasPointerMove = (e) => {
     const d = dragRef.current;
     if (!d) return;
+    if (d.mode === 'pan') {                            // 空白處拖曳＝移動畫面
+      const dx = d.px - e.clientX, dy = d.py - e.clientY;
+      if (d.scroller) { d.scroller.scrollLeft += dx; d.scroller.scrollTop += dy; }
+      else window.scrollBy(dx, dy);
+      dragRef.current = { ...d, px: e.clientX, py: e.clientY };
+      return;
+    }
     const p = pctOf(e);
     // 拖曳中的每一次移動不各記一步，起點在 startDrag／startResize 時已記錄
     const snap = v => Math.round(v * 2) / 2;          // 貼齊 0.5%，拖曳比較好對齊
+    const others = items.filter(it => it.id !== d.id);
+    const nextGuides = { v: [], h: [] };
     setItemsNoRecord(list => list.map(it => {
       if (it.id !== d.id) return it;
       if (d.mode === 'move') {
-        return { ...it,
-          x: snap(Math.min(Math.max(0, p.x - d.ox), 100 - it.w)),
-          y: snap(Math.min(Math.max(0, p.y - d.oy), 100 - it.h)) };
+        let x = snap(Math.min(Math.max(0, p.x - d.ox), 100 - it.w));
+        let y = snap(Math.min(Math.max(0, p.y - d.oy), 100 - it.h));
+        const ax = alignAxis(x, it.w, others, 'x');
+        const ay = alignAxis(y, it.h, others, 'y');
+        if (ax) { x = Math.min(Math.max(0, x + ax.shift), 100 - it.w); nextGuides.v.push(ax.target); }
+        if (ay) { y = Math.min(Math.max(0, y + ay.shift), 100 - it.h); nextGuides.h.push(ay.target); }
+        return { ...it, x, y };
       }
       return { ...it,
         w: snap(Math.min(Math.max(2, d.sw + (p.x - d.sx)), 100 - it.x)),
         h: snap(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y)) };
     }));
+    setGuides(nextGuides);
   };
 
-  const endDrag = () => { dragRef.current = null; };
+  /** 往上找真正在捲動的容器；找不到就用視窗本身 */
+  const scrollParentOf = (el) => {
+    for (let n = el?.parentElement; n; n = n.parentElement) {
+      const ov = getComputedStyle(n).overflowY;
+      if ((ov === 'auto' || ov === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+    }
+    return null;
+  };
+
+  /** 在畫布空白處按下：拖曳可移動畫面（不會動到元件） */
+  const startPan = (e) => {
+    if (e.target !== e.currentTarget) return;          // 點在元件上就不是平移
+    dragRef.current = { mode: 'pan', px: e.clientX, py: e.clientY,
+                        scroller: scrollParentOf(canvasRef.current) };
+    setSelectedId(null);
+  };
+
+  const endDrag = () => { dragRef.current = null; setGuides({ v: [], h: [] }); };
 
   const addItem = (kind) => {
     const id = newStationKey();
@@ -11919,10 +11974,21 @@ function StationBoard() {
         <div ref={canvasRef}
              className={`relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
-             style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}` }}
+             style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
+                      cursor: editMode ? (dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab') : 'default' }}
+             onPointerDown={e => editMode && startPan(e)}
              onPointerMove={onCanvasPointerMove}
              onPointerUp={endDrag}
              onPointerLeave={endDrag}>
+          {/* 對齊輔助線：只在拖曳時出現，不會印出來 */}
+          {guides.v.map((x, i) => (
+            <div key={`gv${i}`} className="vsp-no-print absolute top-0 bottom-0 border-l border-dashed border-rose-400 z-20 pointer-events-none"
+                 style={{ left: `${x}%` }} />
+          ))}
+          {guides.h.map((y, i) => (
+            <div key={`gh${i}`} className="vsp-no-print absolute left-0 right-0 border-t border-dashed border-rose-400 z-20 pointer-events-none"
+                 style={{ top: `${y}%` }} />
+          ))}
           {(items ?? []).map(it => {
             const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
             const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
