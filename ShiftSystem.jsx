@@ -11696,7 +11696,123 @@ function StationBoard() {
           </div>
         </div>
 
+      {/* 元件屬性：編輯模式下選取元件後出現 */}
+        {editMode && selectedId && (() => {
+          const it = items.find(x => x.id === selectedId);
+          if (!it) return null;
+          return (
+            <div className="bg-white border border-blue-300 rounded-xl p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-700">元件設定</span>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full
+                  ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                                          : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                  {it.kind === 'station' ? '可指派人員' : '設備／標示'}
+                </span>
+                <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
+                  className="text-[11px] text-blue-600 underline">切換</button>
+                <button onClick={() => setSelectedId(null)}
+                  className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">名稱</span>
+                  <input value={it.label} onChange={e => patchItem(it.id, { label: e.target.value })}
+                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
+                </label>
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
+                  <input value={it.icon ?? ''} onChange={e => patchItem(it.id, { icon: e.target.value })}
+                    placeholder="例 📦 🚪 🖥"
+                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24" />
+                </label>
+                {it.kind === 'station' && (
+                  <label className="block">
+                    <span className="block text-xs font-medium text-slate-600 mb-1">人數</span>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => patchItem(it.id, { slots: Math.max(1, (it.slots ?? 1) - 1) })}
+                        className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
+                      <span className="w-7 text-center font-bold">{it.slots ?? 1}</span>
+                      <button onClick={() => patchItem(it.id, { slots: (it.slots ?? 1) + 1 })}
+                        className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
+                    </div>
+                  </label>
+                )}
+                <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
+                  <input type="checkbox" checked={!!it.dashed}
+                    onChange={e => patchItem(it.id, { dashed: e.target.checked })} />
+                  虛線框
+                </label>
+                <button onClick={async () => {
+                    if (!await askConfirm(`刪除「${it.label}」？`)) return;
+                    removeItem(it.id);
+                  }}
+                  className="ml-auto px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
+                  刪除
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-4">
+                <div>
+                  <span className="block text-xs font-medium text-slate-600 mb-1">底色</span>
+                  <div className="flex gap-1 flex-wrap">
+                    {Object.entries(CANVAS_COLORS).map(([k, v]) => (
+                      <button key={k} title={v.name} onClick={() => patchItem(it.id, { fill: k, fillHex: undefined })}
+                        style={{ background: v.fill === 'transparent' ? '#fff' : v.fill }}
+                        className={`w-7 h-7 rounded border border-slate-300
+                          ${it.fill === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
+                        {v.fill === 'transparent' ? <span className="text-[10px] text-slate-400">／</span> : null}
+                      </button>
+                    ))}
+                    <input type="color" value={it.fillHex ?? '#ffffff'}
+                      onChange={e => patchItem(it.id, { fillHex: e.target.value })}
+                      title="自訂底色"
+                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                    <input type="color" value={it.textHex ?? '#334155'}
+                      onChange={e => patchItem(it.id, { textHex: e.target.value })}
+                      title="自訂文字顏色"
+                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                  </div>
+                </div>
+                <div>
+                  <span className="block text-xs font-medium text-slate-600 mb-1">框線</span>
+                  <div className="flex gap-1 flex-wrap">
+                    {Object.entries(CANVAS_STROKES).map(([k, v]) => (
+                      <button key={k} title={v.name} onClick={() => patchItem(it.id, { stroke: k, strokeHex: undefined })}
+                        style={{ borderColor: v.color === 'transparent' ? '#cbd5e1' : v.color,
+                                 borderStyle: v.color === 'transparent' ? 'dashed' : 'solid' }}
+                        className={`w-7 h-7 rounded border-[3px] bg-white text-[10px] text-slate-400
+                          ${it.stroke === k && !it.strokeHex ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
+                        {v.color === 'transparent' ? '／' : null}
+                      </button>
+                    ))}
+                    <input type="color" value={it.strokeHex ?? '#94a3b8'}
+                      onChange={e => patchItem(it.id, { strokeHex: e.target.value })}
+                      title="自訂框線顏色"
+                      className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
+                  </div>
+                </div>
+                <div>
+                  <span className="block text-xs font-medium text-slate-600 mb-1">
+                    位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%　大小 {it.w.toFixed(1)}×{it.h.toFixed(1)}%
+                  </span>
+                  <div className="flex gap-1">
+                    {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
+                      <button key={t} onClick={() => patchItem(it.id, {
+                          x: Math.min(Math.max(0, it.x + dx), 100 - it.w),
+                          y: Math.min(Math.max(0, it.y + dy), 100 - it.h) })}
+                        className="px-2.5 py-1 border border-[#DDD9D0] rounded text-sm">{t}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 設備位置圖：元件以百分比定位，整張圖依容器寬度自動縮放，不需橫向捲動 */}
+
         <div ref={canvasRef}
              className={`relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
@@ -11719,8 +11835,9 @@ function StationBoard() {
                                ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}`}
                    style={{
                      left: `${it.x}%`, top: `${it.y}%`, width: `${it.w}%`, height: `${it.h}%`,
-                     background: col.fill, color: col.text,
-                     border: `${it.dashed ? '2px dashed' : '2px solid'} ${stroke.color}`,
+                     background: it.fillHex ?? col.fill,
+                     color: it.textHex ?? (it.fillHex ? '#334155' : col.text),
+                     border: `${it.dashed ? '2px dashed' : '2px solid'} ${it.strokeHex ?? stroke.color}`,
                    }}>
                 {editMode && sel ? (
                   /* 選取後直接在元件上改字；按住輸入框不會觸發拖曳 */
@@ -11728,9 +11845,9 @@ function StationBoard() {
                     onPointerDown={e => e.stopPropagation()}
                     onChange={e => patchItem(it.id, { label: e.target.value })}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
-                    className="w-[92%] text-[11px] font-bold text-center bg-white/80 border border-blue-400
+                    className="w-[92%] text-[11px] font-bold text-center bg-transparent border border-blue-400
                                rounded px-1 py-0.5 outline-none"
-                    style={{ color: col.text }} />
+                    style={{ color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
                 ) : (
                   <div className="text-[11px] font-bold leading-tight px-1 truncate w-full">
                     {it.icon ? it.icon + ' ' : ''}{it.label}
@@ -11787,106 +11904,6 @@ function StationBoard() {
           </div>
         </div>
       )}
-
-      {/* 元件屬性：編輯模式下選取元件後出現 */}
-      {editMode && selectedId && (() => {
-        const it = items.find(x => x.id === selectedId);
-        if (!it) return null;
-        return (
-          <div className="bg-white border border-blue-300 rounded-xl p-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-slate-700">元件設定</span>
-              <span className={`text-[11px] px-2 py-0.5 rounded-full
-                ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                                        : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                {it.kind === 'station' ? '可指派人員' : '設備／標示'}
-              </span>
-              <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
-                className="text-[11px] text-blue-600 underline">切換</button>
-              <button onClick={() => setSelectedId(null)}
-                className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="block">
-                <span className="block text-xs font-medium text-slate-600 mb-1">名稱</span>
-                <input value={it.label} onChange={e => patchItem(it.id, { label: e.target.value })}
-                  className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44" />
-              </label>
-              <label className="block">
-                <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
-                <input value={it.icon ?? ''} onChange={e => patchItem(it.id, { icon: e.target.value })}
-                  placeholder="例 📦 🚪 🖥"
-                  className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24" />
-              </label>
-              {it.kind === 'station' && (
-                <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">人數</span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => patchItem(it.id, { slots: Math.max(1, (it.slots ?? 1) - 1) })}
-                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
-                    <span className="w-7 text-center font-bold">{it.slots ?? 1}</span>
-                    <button onClick={() => patchItem(it.id, { slots: (it.slots ?? 1) + 1 })}
-                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
-                  </div>
-                </label>
-              )}
-              <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
-                <input type="checkbox" checked={!!it.dashed}
-                  onChange={e => patchItem(it.id, { dashed: e.target.checked })} />
-                虛線框
-              </label>
-              <button onClick={async () => {
-                  if (!await askConfirm(`刪除「${it.label}」？`)) return;
-                  removeItem(it.id);
-                }}
-                className="ml-auto px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
-                刪除
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-4">
-              <div>
-                <span className="block text-xs font-medium text-slate-600 mb-1">底色</span>
-                <div className="flex gap-1 flex-wrap">
-                  {Object.entries(CANVAS_COLORS).map(([k, v]) => (
-                    <button key={k} title={v.name} onClick={() => patchItem(it.id, { fill: k })}
-                      style={{ background: v.fill === 'transparent' ? '#fff' : v.fill }}
-                      className={`w-7 h-7 rounded border border-slate-300
-                        ${it.fill === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
-                      {v.fill === 'transparent' ? <span className="text-[10px] text-slate-400">／</span> : null}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <span className="block text-xs font-medium text-slate-600 mb-1">框線</span>
-                <div className="flex gap-1 flex-wrap">
-                  {Object.entries(CANVAS_STROKES).map(([k, v]) => (
-                    <button key={k} title={v.name} onClick={() => patchItem(it.id, { stroke: k })}
-                      style={{ borderColor: v.color === 'transparent' ? '#e2e8f0' : v.color }}
-                      className={`w-7 h-7 rounded border-[3px] bg-white
-                        ${it.stroke === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`} />
-                  ))}
-                </div>
-              </div>
-              <div>
-                <span className="block text-xs font-medium text-slate-600 mb-1">
-                  位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%　大小 {it.w.toFixed(1)}×{it.h.toFixed(1)}%
-                </span>
-                <div className="flex gap-1">
-                  {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
-                    <button key={t} onClick={() => patchItem(it.id, {
-                        x: Math.min(Math.max(0, it.x + dx), 100 - it.w),
-                        y: Math.min(Math.max(0, it.y + dy), 100 - it.h) })}
-                      className="px-2.5 py-1 border border-[#DDD9D0] rounded text-sm">{t}</button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* 作業區設定／新增 */}
       {areaModal && (
