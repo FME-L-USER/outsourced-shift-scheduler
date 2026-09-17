@@ -14511,14 +14511,61 @@ export default function App() {
   // 每日需求人數：key 為「課別|組別|日期」，各課各組分別記錄
   // 站區表版面：可在畫面上編輯並存入資料庫；首次使用時以內建版面為起點。
   // 存成資料而非寫死在程式裡，站區調整才不需要重新部署。
-  const [stationLayouts, setStationLayouts] = useState(() => LS.get('sms_station_layouts', null));
+  const [stationLayouts, setStationLayoutsRaw] = useState(() => LS.get('sms_station_layouts', null));
   useEffect(() => {
     if (stationLayouts) LS.set('sms_station_layouts', stationLayouts, storageWarn);
   }, [stationLayouts]);
 
+  // 編輯版面時每隔幾秒的伺服器同步會用「還沒收到這次修改」的舊版本蓋掉畫面，
+  // 造成剛拉出來的元件忽然消失。作法與需求人數相同：記住本機改過的作業區，
+  // 套用伺服器資料時把這些作業區疊回本機版本。
+  const dirtyLayoutsRef = useRef(new Set());
+  const setStationLayouts = useCallback((arg) => {
+    setStationLayoutsRaw(prev => {
+      const next = typeof arg === 'function' ? arg(prev) : arg;
+      for (const k of new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]))
+        if (prev?.[k] !== next?.[k]) dirtyLayoutsRef.current.add(k);
+      return next;
+    });
+  }, []);
+  const applyRemoteLayouts = useCallback((remote) => {
+    if (!remote) return;
+    setStationLayoutsRaw(prev => {
+      if (!prev) return remote;
+      const merged = { ...remote };
+      for (const k of dirtyLayoutsRef.current) {
+        if (prev[k] === undefined) delete merged[k];
+        else merged[k] = prev[k];
+      }
+      return merged;
+    });
+  }, []);
+
   // 站區表：stationBoard[日期][作業區][站區key] = [人員 id 或自由文字, ...]
-  const [stationBoard, setStationBoard] = useState(() => LS.get('sms_station_board', {}));
+  const [stationBoard, setStationBoardRaw] = useState(() => LS.get('sms_station_board', {}));
   useEffect(() => { LS.set('sms_station_board', stationBoard, storageWarn); }, [stationBoard]);
+
+  // 指派人員同理：以日期為單位保護本機剛做的指派
+  const dirtyBoardRef = useRef(new Set());
+  const setStationBoard = useCallback((arg) => {
+    setStationBoardRaw(prev => {
+      const next = typeof arg === 'function' ? arg(prev) : arg;
+      for (const k of new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]))
+        if (prev?.[k] !== next?.[k]) dirtyBoardRef.current.add(k);
+      return next;
+    });
+  }, []);
+  const applyRemoteBoard = useCallback((remote) => {
+    if (!remote) return;
+    setStationBoardRaw(prev => {
+      const merged = { ...remote };
+      for (const k of dirtyBoardRef.current) {
+        if (prev?.[k] === undefined) delete merged[k];
+        else merged[k] = prev[k];
+      }
+      return merged;
+    });
+  }, []);
 
   const [dailyDemand, setDailyDemandRaw] = useState(() => LS.get('sms_daily_demand', {}));
   // 需求人數與班表一樣會被 30 秒的背景同步整份取代。若不保護，正在輸入
@@ -14830,8 +14877,8 @@ export default function App() {
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
-      if (s.stationBoard) setStationBoard(s.stationBoard);
-      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
+      if (s.stationBoard) applyRemoteBoard(s.stationBoard);
+      if (s.stationLayouts) applyRemoteLayouts(s.stationLayouts);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -14867,8 +14914,8 @@ export default function App() {
           if (s.deptRanges)              setDeptRanges(s.deptRanges);
           if (s.deptSegments) setDeptSegments(s.deptSegments);
           if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
-      if (s.stationBoard) setStationBoard(s.stationBoard);
-      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
+      if (s.stationBoard) applyRemoteBoard(s.stationBoard);
+      if (s.stationLayouts) applyRemoteLayouts(s.stationLayouts);
           if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
@@ -14907,8 +14954,8 @@ export default function App() {
         if (state?.deptRanges)             setDeptRanges(state.deptRanges);
         if (state?.deptSegments)           setDeptSegments(state.deptSegments);
         if (state?.dailyDemand)            applyRemoteDemand(state.dailyDemand);
-        if (state?.stationBoard)           setStationBoard(state.stationBoard);
-        if (state?.stationLayouts)         setStationLayouts(state.stationLayouts);
+        if (state?.stationBoard)           applyRemoteBoard(state.stationBoard);
+        if (state?.stationLayouts)         applyRemoteLayouts(state.stationLayouts);
         if (state?.unlockPwd !== undefined) setUnlockPwd(state.unlockPwd);
         if (state?.periodRange)            setPeriodRange(state.periodRange);
         if (state?.workAreas?.length > 0)  setWorkAreas(state.workAreas);
@@ -14984,8 +15031,8 @@ export default function App() {
       if (s.deptRanges)              setDeptRanges(s.deptRanges);
       if (s.deptSegments) setDeptSegments(s.deptSegments);
       if (s.dailyDemand) applyRemoteDemand(s.dailyDemand);
-      if (s.stationBoard) setStationBoard(s.stationBoard);
-      if (s.stationLayouts) setStationLayouts(s.stationLayouts);
+      if (s.stationBoard) applyRemoteBoard(s.stationBoard);
+      if (s.stationLayouts) applyRemoteLayouts(s.stationLayouts);
       if (s.unlockPwd !== undefined) setUnlockPwd(s.unlockPwd);
               if (s.periodRange)             setPeriodRange(s.periodRange);
               if (s.workAreas?.length > 0)   setWorkAreas(s.workAreas);
