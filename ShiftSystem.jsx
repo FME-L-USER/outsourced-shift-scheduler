@@ -1839,6 +1839,18 @@ const CANVAS_COLORS = {
   violet: { name: '紫',     fill: '#ede9fe',      text: '#6d28d9' },
   pink:   { name: '粉',     fill: '#fce7f3',      text: '#be185d' },
 };
+/** 可選字型：只用系統一定有的中文字型，避免在現場電腦變成別的樣子 */
+const CANVAS_FONTS = {
+  default: { name: '預設',   css: 'inherit' },
+  hei:     { name: '黑體',   css: '"Microsoft JhengHei", "PingFang TC", sans-serif' },
+  kai:     { name: '標楷體', css: '"DFKai-sb", "BiauKai", serif' },
+  ming:    { name: '明體',   css: '"PMingLiU", "Songti TC", serif' },
+  mono:    { name: '等寬',   css: 'Consolas, "Courier New", monospace' },
+};
+
+/** 位置圖的列印寬度（公分）。用來把元件尺寸換算成實際印出來的大小 */
+const DEFAULT_PRINT_W_CM = 27.7;   // A4 橫式扣掉邊界
+
 const CANVAS_STROKES = {
   none:   { name: '無框', color: 'transparent' },
   slate:  { name: '灰',   color: '#94a3b8' },
@@ -11340,14 +11352,30 @@ function StationBoard() {
   const [editMode, setEditMode] = useState(false);
   const [areaModal, setAreaModal] = useState(null);  // 作業區設定
 
+  // 編輯版面的復原堆疊（僅本次操作期間有效，最多 30 步）
+  const undoRef = useRef([]);
+  const [undoCount, setUndoCount] = useState(0);
+
   /** 修改版面：第一次編輯時先把內建版面複製成可存檔的資料 */
-  const mutate = (fn) => {
+  const mutate = (fn, { record = true } = {}) => {
     setStationLayouts(prev => {
       const base = prev ?? JSON.parse(JSON.stringify(STATION_LAYOUTS));
+      if (record) {
+        undoRef.current = [...undoRef.current.slice(-29), JSON.parse(JSON.stringify(base))];
+        setUndoCount(undoRef.current.length);
+      }
       const next = JSON.parse(JSON.stringify(base));
       fn(next);
       return next;
     });
+  };
+
+  const undo = () => {
+    const prev = undoRef.current.pop();
+    setUndoCount(undoRef.current.length);
+    if (!prev) { toast('沒有可復原的步驟', 'info'); return; }
+    setStationLayouts(prev);
+    setSelectedId(null);
   };
   const [date, setDate] = useState(() => {
     const d = new Date();
@@ -11370,12 +11398,14 @@ function StationBoard() {
   }, [layout]);
 
   /** 寫回元件清單（第一次編輯會把換算結果一併存下來） */
-  const setItems = (fn) =>
+  const setItemsWith = (fn, opts) =>
     mutate(L => {
       const cur = Array.isArray(L[areaKey].items) ? L[areaKey].items : gridLayoutToCanvas(L[areaKey]);
       L[areaKey].items = fn(JSON.parse(JSON.stringify(cur)));
       delete L[areaKey].grids;     // 已轉為位置圖，不再需要舊格線
-    });
+    }, opts);
+  const setItems = (fn) => setItemsWith(fn);
+  const setItemsNoRecord = (fn) => setItemsWith(fn, { record: false });
 
   const pctOf = (e) => {
     const r = canvasRef.current?.getBoundingClientRect();
@@ -11389,6 +11419,7 @@ function StationBoard() {
     const it = items.find(x => x.id === id);
     if (!it) return;
     const p = pctOf(e);
+    mutate(() => {});                       // 記錄拖曳前的狀態，供復原
     dragRef.current = { id, mode: 'move', ox: p.x - it.x, oy: p.y - it.y };
     setSelectedId(id);
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -11400,6 +11431,7 @@ function StationBoard() {
     const it = items.find(x => x.id === id);
     if (!it) return;
     const p = pctOf(e);
+    mutate(() => {});                       // 記錄縮放前的狀態，供復原
     dragRef.current = { id, mode: 'resize', sx: p.x, sy: p.y, sw: it.w, sh: it.h };
     setSelectedId(id);
   };
@@ -11408,8 +11440,9 @@ function StationBoard() {
     const d = dragRef.current;
     if (!d) return;
     const p = pctOf(e);
+    // 拖曳中的每一次移動不各記一步，起點在 startDrag／startResize 時已記錄
     const snap = v => Math.round(v * 2) / 2;          // 貼齊 0.5%，拖曳比較好對齊
-    setItems(list => list.map(it => {
+    setItemsNoRecord(list => list.map(it => {
       if (it.id !== d.id) return it;
       if (d.mode === 'move') {
         return { ...it,
@@ -11437,6 +11470,17 @@ function StationBoard() {
   };
 
   const patchItem = (id, patch) => setItems(list => list.map(it => it.id === id ? { ...it, ...patch } : it));
+
+  // 百分比 ↔ 公分：以「列印寬度」為基準，高度再依畫布長寬比換算
+  const printW = layout?.printW ?? DEFAULT_PRINT_W_CM;
+  const printH = printW * ((layout?.canvasRatioH ?? 9) / (layout?.canvasRatio ?? 16));
+  const cmOf = (pct, axis) => (((pct / 100) * (axis === 'w' ? printW : printH))).toFixed(1);
+  const setCm = (it, axis, cmStr) => {
+    const cm = Number(cmStr);
+    if (!Number.isFinite(cm) || cm <= 0) return;
+    const pct = Math.min((cm / (axis === 'w' ? printW : printH)) * 100, 100 - (axis === 'w' ? it.x : it.y));
+    patchItem(it.id, axis === 'w' ? { w: pct } : { h: pct });
+  };
   const removeItem = (id) => { setItems(list => list.filter(it => it.id !== id)); setSelectedId(null); };
 
   const perms = currentUser?.permissions ?? getDefaultPermissions(currentUser?.role);
@@ -11654,6 +11698,19 @@ function StationBoard() {
               className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100">
               ＋ 新增作業區
             </button>
+            <button onClick={undo} disabled={undoCount === 0}
+              className="px-2.5 py-1 bg-white border border-blue-300 rounded-lg hover:bg-blue-100
+                         disabled:opacity-40 disabled:hover:bg-white">
+              ↩ 復原{undoCount > 0 ? `（${undoCount}）` : ''}
+            </button>
+            <label className="flex items-center gap-1 bg-white border border-blue-300 rounded-lg px-2 py-1">
+              <span className="text-[11px] text-slate-500">列印寬度</span>
+              <input type="number" step="0.1" min="5"
+                value={layout?.printW ?? DEFAULT_PRINT_W_CM}
+                onChange={e => mutate(L => { L[areaKey].printW = Number(e.target.value) || DEFAULT_PRINT_W_CM; })}
+                className="w-14 border border-[#DDD9D0] rounded px-1 py-0.5 text-xs" />
+              <span className="text-[11px] text-slate-500">cm</span>
+            </label>
             <button onClick={() => addItem('station')}
               className="px-2.5 py-1 bg-white border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
               ＋ 新增站位（可指派人員）
@@ -11739,6 +11796,30 @@ function StationBoard() {
                     </div>
                   </label>
                 )}
+                  <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">字型</span>
+                  <select value={it.font ?? 'default'}
+                    onChange={e => patchItem(it.id, { font: e.target.value })}
+                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24">
+                    {Object.entries(CANVAS_FONTS).map(([k, v]) =>
+                      <option key={k} value={k}>{v.name}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-600 mb-1">字級</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => patchItem(it.id, { fontSize: Math.max(6, (it.fontSize ?? 11) - 1) })}
+                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
+                    <span className="w-7 text-center font-bold">{it.fontSize ?? 11}</span>
+                    <button onClick={() => patchItem(it.id, { fontSize: Math.min(48, (it.fontSize ?? 11) + 1) })}
+                      className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
+                  </div>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
+                  <input type="checkbox" checked={it.bold !== false}
+                    onChange={e => patchItem(it.id, { bold: e.target.checked })} />
+                  粗體
+                </label>
                 <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
                   <input type="checkbox" checked={!!it.dashed}
                     onChange={e => patchItem(it.id, { dashed: e.target.checked })} />
@@ -11794,8 +11875,21 @@ function StationBoard() {
                   </div>
                 </div>
                 <div>
+                    <span className="block text-xs font-medium text-slate-600 mb-1">
+                    大小（公分，以列印寬度換算）
+                  </span>
+                  <div className="flex items-center gap-1 mb-2">
+                    <input type="number" step="0.1" min="0.3" value={cmOf(it.w, 'w')}
+                      onChange={e => setCm(it, 'w', e.target.value)}
+                      className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
+                    <span className="text-xs text-slate-400">寬 ×</span>
+                    <input type="number" step="0.1" min="0.3" value={cmOf(it.h, 'h')}
+                      onChange={e => setCm(it, 'h', e.target.value)}
+                      className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
+                    <span className="text-xs text-slate-400">高 cm</span>
+                  </div>
                   <span className="block text-xs font-medium text-slate-600 mb-1">
-                    位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%　大小 {it.w.toFixed(1)}×{it.h.toFixed(1)}%
+                    位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%
                   </span>
                   <div className="flex gap-1">
                     {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
@@ -11845,11 +11939,19 @@ function StationBoard() {
                     onPointerDown={e => e.stopPropagation()}
                     onChange={e => patchItem(it.id, { label: e.target.value })}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
-                    className="w-[92%] text-[11px] font-bold text-center bg-transparent border border-blue-400
+                    className="w-[92%] text-center bg-transparent border border-blue-400
                                rounded px-1 py-0.5 outline-none"
-                    style={{ color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
+                    style={{ fontSize: `${it.fontSize ?? 11}px`,
+                             fontWeight: it.bold === false ? 500 : 700,
+                             fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
+                             color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
                 ) : (
-                  <div className="text-[11px] font-bold leading-tight px-1 truncate w-full">
+                  <div className="leading-tight px-1 w-full break-words"
+                       style={{
+                         fontSize: `${it.fontSize ?? 11}px`,
+                         fontWeight: it.bold === false ? 500 : 700,
+                         fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
+                       }}>
                     {it.icon ? it.icon + ' ' : ''}{it.label}
                   </div>
                 )}
