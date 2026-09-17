@@ -11459,15 +11459,26 @@ function StationBoard() {
   const [showAll, setShowAll] = useState(false);  // 一頁顯示全部作業區（唯讀）
   const fullRef = useRef(null);                   // 全螢幕顯示的容器
   const [isFull, setIsFull] = useState(false);
+  // 有些環境（內嵌視窗、瀏覽器政策）不允許真正的全螢幕，這時改用覆蓋整個視窗的放大檢視
+  const [coverFull, setCoverFull] = useState(false);
   useEffect(() => {
     const onFs = () => setIsFull(document.fullscreenElement === fullRef.current);
+    const onKey = e => { if (e.key === 'Escape') setCoverFull(false); };
     document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('fullscreenchange', onFs);
+                   document.removeEventListener('keydown', onKey); };
   }, []);
   const toggleFull = () => {
     if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+    if (coverFull) { setCoverFull(false); return; }
     setEditMode(false);                           // 全螢幕只用來看，不編輯
-    fullRef.current?.requestFullscreen?.();
+    const el = fullRef.current;
+    try {
+      const p = el?.requestFullscreen?.();
+      if (p?.catch) p.catch(() => setCoverFull(true));      // 被擋下就退回放大檢視
+      else if (!p) setCoverFull(true);
+    } catch { setCoverFull(true); }
   };
   const [picking, setPicking] = useState(null);   // { blockKey, idx }
   const [search, setSearch] = useState('');
@@ -11838,7 +11849,7 @@ function StationBoard() {
           </button>
           <button onClick={toggleFull} title="放大到整個螢幕，適合投在現場螢幕上"
             className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
-            {isFull ? '⛶ 離開全螢幕' : '⛶ 全螢幕'}
+            {(isFull || coverFull) ? '⛶ 離開全螢幕' : '⛶ 全螢幕'}
           </button>
           <button onClick={() => window.print()}
             className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm text-slate-600 hover:bg-[#F5F2EC]">
@@ -11918,17 +11929,26 @@ function StationBoard() {
           .vsp-page-break { break-before: page; page-break-before: always; }
         }
         /* 全螢幕：置中並依螢幕高度等比放大，維持 A4 橫式比例 */
-        .vsp-board:fullscreen {
+        .vsp-board:fullscreen, .vsp-board.vsp-cover {
           display: flex; flex-direction: column; align-items: center; justify-content: center;
           background: #fff; overflow: auto; border: 0; border-radius: 0;
         }
-        .vsp-board:fullscreen > * {
+        .vsp-board.vsp-cover { position: fixed; inset: 0; z-index: 60; }
+        .vsp-board:fullscreen > *, .vsp-board.vsp-cover > * {
           width: min(100%, calc((100vh - 7rem) * ${A4_W_CM} / ${A4_H_CM}));
         }
       `}</style>
 
       <div ref={fullRef}
-           className="vsp-print-area vsp-board bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4">
+           className={`vsp-print-area vsp-board bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4
+                       ${coverFull ? 'vsp-cover' : ''}`}>
+        {(isFull || coverFull) && (
+          <button onClick={toggleFull}
+            className="vsp-no-print fixed top-3 right-4 z-[61] px-3 py-1.5 rounded-lg text-sm
+                       bg-slate-800 text-white shadow hover:bg-slate-700">
+            ⛶ 離開全螢幕（Esc）
+          </button>
+        )}
         <div className="text-center">
           <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
           <div className="text-xs text-slate-500 mt-0.5">
