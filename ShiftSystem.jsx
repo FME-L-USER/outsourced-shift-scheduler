@@ -11392,7 +11392,12 @@ function StationBoard() {
   const layout = layouts[areaKey];
 
   const canvasRef = useRef(null);
-  const [selectedId, setSelectedId] = useState(null);
+  // 可複選：按住 Ctrl／Shift 點擊可加選，屬性設定會一次套用到所有選取的元件
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
+  const setSelectedId = (id) => setSelectedIds(id ? [id] : []);
+  const toggleSelect = (id) =>
+    setSelectedIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]);
   const dragRef = useRef(null);   // { id, mode:'move'|'resize'|'pan', ox, oy, sx, sy, sw, sh, px, py }
   const [guides, setGuides] = useState({ v: [], h: [] });   // 拖曳時的對齊虛線（百分比座標）
 
@@ -11424,10 +11429,15 @@ function StationBoard() {
     e.preventDefault();
     const it = items.find(x => x.id === id);
     if (!it) return;
+    if (e.ctrlKey || e.metaKey || e.shiftKey) { toggleSelect(id); return; }   // 加選／取消加選
+    // 拖曳已選取的元件時，整組一起移動；否則只選這一個
+    const ids = selectedIds.includes(id) ? selectedIds : [id];
+    if (!selectedIds.includes(id)) setSelectedId(id);
     const p = pctOf(e);
     mutate(() => {});                       // 記錄拖曳前的狀態，供復原
-    dragRef.current = { id, mode: 'move', ox: p.x - it.x, oy: p.y - it.y };
-    setSelectedId(id);
+    const origins = {};
+    items.forEach(x => { if (ids.includes(x.id)) origins[x.id] = { x: x.x, y: x.y }; });
+    dragRef.current = { id, ids, origins, mode: 'move', ox: p.x - it.x, oy: p.y - it.y };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
@@ -11478,23 +11488,31 @@ function StationBoard() {
     const p = pctOf(e);
     // 拖曳中的每一次移動不各記一步，起點在 startDrag／startResize 時已記錄
     const snap = v => Math.round(v * 2) / 2;          // 貼齊 0.5%，拖曳比較好對齊
-    const others = items.filter(it => it.id !== d.id);
     const nextGuides = { v: [], h: [] };
-    setItemsNoRecord(list => list.map(it => {
-      if (it.id !== d.id) return it;
-      if (d.mode === 'move') {
-        let x = snap(Math.min(Math.max(0, p.x - d.ox), 100 - it.w));
-        let y = snap(Math.min(Math.max(0, p.y - d.oy), 100 - it.h));
-        const ax = alignAxis(x, it.w, others, 'x');
-        const ay = alignAxis(y, it.h, others, 'y');
-        if (ax) { x = Math.min(Math.max(0, x + ax.shift), 100 - it.w); nextGuides.v.push(ax.target); }
-        if (ay) { y = Math.min(Math.max(0, y + ay.shift), 100 - it.h); nextGuides.h.push(ay.target); }
-        return { ...it, x, y };
-      }
-      return { ...it,
+    if (d.mode === 'move') {
+      const lead = items.find(it => it.id === d.id);
+      if (!lead) return;
+      const others = items.filter(it => !d.ids.includes(it.id));
+      // 先算領頭元件的新位置（含貼齊），再把同樣的位移套用到其他被選取的元件
+      let x = snap(Math.min(Math.max(0, p.x - d.ox), 100 - lead.w));
+      let y = snap(Math.min(Math.max(0, p.y - d.oy), 100 - lead.h));
+      const ax = alignAxis(x, lead.w, others, 'x');
+      const ay = alignAxis(y, lead.h, others, 'y');
+      if (ax) { x = Math.min(Math.max(0, x + ax.shift), 100 - lead.w); nextGuides.v.push(ax.target); }
+      if (ay) { y = Math.min(Math.max(0, y + ay.shift), 100 - lead.h); nextGuides.h.push(ay.target); }
+      const dx = x - d.origins[d.id].x, dy = y - d.origins[d.id].y;
+      setItemsNoRecord(list => list.map(it => {
+        const o = d.origins[it.id];
+        if (!o) return it;
+        return { ...it,
+          x: Math.min(Math.max(0, o.x + dx), 100 - it.w),
+          y: Math.min(Math.max(0, o.y + dy), 100 - it.h) };
+      }));
+    } else {
+      setItemsNoRecord(list => list.map(it => it.id !== d.id ? it : { ...it,
         w: snap(Math.min(Math.max(2, d.sw + (p.x - d.sx)), 100 - it.x)),
-        h: snap(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y)) };
-    }));
+        h: snap(Math.min(Math.max(2, d.sh + (p.y - d.sy)), 100 - it.y)) }));
+    }
     setGuides(nextGuides);
   };
 
@@ -11818,38 +11836,60 @@ function StationBoard() {
         </div>
 
       {/* 元件屬性：編輯模式下選取元件後出現 */}
-        {editMode && selectedId && (() => {
-          const it = items.find(x => x.id === selectedId);
+        {editMode && selectedIds.length > 0 && (() => {
+          const sels = items.filter(x => selectedIds.includes(x.id));
+          const it = sels[0];
           if (!it) return null;
+          const multi = sels.length > 1;
+          /** 屬性一次套用到所有選取的元件 */
+          const patchSel = (patch) =>
+            setItems(list => list.map(x => selectedIds.includes(x.id) ? { ...x, ...patch } : x));
+          /** 以公分設定大小：每個元件各自依自己的位置做上限裁切 */
+          const setCmSel = (axis, cmStr) => {
+            const cm = Number(cmStr);
+            if (!Number.isFinite(cm) || cm <= 0) return;
+            setItems(list => list.map(x => !selectedIds.includes(x.id) ? x
+              : axis === 'w' ? { ...x, w: Math.min((cm / A4_W_CM) * 100, 100 - x.x) }
+                             : { ...x, h: Math.min((cm / A4_H_CM) * 100, 100 - x.y) }));
+          };
           return (
             <div className="bg-white border border-blue-300 rounded-xl p-3 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-700">元件設定</span>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full
-                  ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                                          : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                  {it.kind === 'station' ? '可指派人員' : '設備／標示'}
+                <span className="text-sm font-bold text-slate-700">
+                  元件設定{multi ? `（已選 ${sels.length} 個，設定會一起套用）` : ''}
                 </span>
-                <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
-                  className="text-[11px] text-blue-600 underline">切換</button>
-                <button onClick={() => setSelectedId(null)}
+                {!multi && (
+                  <>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full
+                      ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                                              : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                      {it.kind === 'station' ? '可指派人員' : '設備／標示'}
+                    </span>
+                    <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
+                      className="text-[11px] text-blue-600 underline">切換</button>
+                  </>
+                )}
+                <span className="text-[11px] text-slate-400">按住 Ctrl 或 Shift 點擊可加選多個元件</span>
+                <button onClick={() => setSelectedIds([])}
                   className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
               </div>
 
               <div className="flex flex-wrap items-end gap-3">
-                <label className="block">
-                  <span className="block text-xs font-medium text-slate-600 mb-1">名稱（Enter 可換行）</span>
-                  <textarea value={it.label} rows={2}
-                    onChange={e => patchItem(it.id, { label: e.target.value })}
-                    className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44 resize-y" />
-                </label>
+                {!multi && (
+                  <label className="block">
+                    <span className="block text-xs font-medium text-slate-600 mb-1">名稱（Enter 可換行）</span>
+                    <textarea value={it.label} rows={2}
+                      onChange={e => patchItem(it.id, { label: e.target.value })}
+                      className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-44 resize-y" />
+                  </label>
+                )}
                 <label className="block">
                   <span className="block text-xs font-medium text-slate-600 mb-1">圖示</span>
-                  <input value={it.icon ?? ''} onChange={e => patchItem(it.id, { icon: e.target.value })}
+                  <input value={it.icon ?? ''} onChange={e => patchSel({ icon: e.target.value })}
                     placeholder="例 📦 🚪 🖥"
                     className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24" />
                 </label>
-                {it.kind === 'station' && (
+                {!multi && it.kind === 'station' && (
                   <label className="block">
                     <span className="block text-xs font-medium text-slate-600 mb-1">人數</span>
                     <div className="flex items-center gap-1">
@@ -11864,7 +11904,7 @@ function StationBoard() {
                   <label className="block">
                   <span className="block text-xs font-medium text-slate-600 mb-1">字型</span>
                   <select value={it.font ?? 'default'}
-                    onChange={e => patchItem(it.id, { font: e.target.value })}
+                    onChange={e => patchSel({ font: e.target.value })}
                     className="border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm w-24">
                     {Object.entries(CANVAS_FONTS).map(([k, v]) =>
                       <option key={k} value={k}>{v.name}</option>)}
@@ -11873,26 +11913,27 @@ function StationBoard() {
                 <label className="block">
                   <span className="block text-xs font-medium text-slate-600 mb-1">字級</span>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => patchItem(it.id, { fontSize: Math.max(6, (it.fontSize ?? 11) - 1) })}
+                    <button onClick={() => patchSel({ fontSize: Math.max(6, (it.fontSize ?? 11) - 1) })}
                       className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">−</button>
                     <span className="w-7 text-center font-bold">{it.fontSize ?? 11}</span>
-                    <button onClick={() => patchItem(it.id, { fontSize: Math.min(48, (it.fontSize ?? 11) + 1) })}
+                    <button onClick={() => patchSel({ fontSize: Math.min(48, (it.fontSize ?? 11) + 1) })}
                       className="px-2 py-1 border border-[#DDD9D0] rounded text-sm">＋</button>
                   </div>
                 </label>
                 <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
                   <input type="checkbox" checked={it.bold !== false}
-                    onChange={e => patchItem(it.id, { bold: e.target.checked })} />
+                    onChange={e => patchSel({ bold: e.target.checked })} />
                   粗體
                 </label>
                 <label className="flex items-center gap-1.5 text-xs text-slate-600 pb-2">
                   <input type="checkbox" checked={!!it.dashed}
-                    onChange={e => patchItem(it.id, { dashed: e.target.checked })} />
+                    onChange={e => patchSel({ dashed: e.target.checked })} />
                   虛線框
                 </label>
                 <button onClick={async () => {
-                    if (!await askConfirm(`刪除「${it.label}」？`)) return;
-                    removeItem(it.id);
+                    if (!await askConfirm(multi ? `刪除已選取的 ${sels.length} 個元件？` : `刪除「${it.label}」？`)) return;
+                    setItems(list => list.filter(x => !selectedIds.includes(x.id)));
+                    setSelectedIds([]);
                   }}
                   className="ml-auto px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
                   刪除
@@ -11904,7 +11945,7 @@ function StationBoard() {
                   <span className="block text-xs font-medium text-slate-600 mb-1">底色</span>
                   <div className="flex gap-1 flex-wrap">
                     {Object.entries(CANVAS_COLORS).map(([k, v]) => (
-                      <button key={k} title={v.name} onClick={() => patchItem(it.id, { fill: k, fillHex: undefined })}
+                      <button key={k} title={v.name} onClick={() => patchSel({ fill: k, fillHex: undefined })}
                         style={{ background: v.fill === 'transparent' ? '#fff' : v.fill }}
                         className={`w-7 h-7 rounded border border-slate-300
                           ${it.fill === k ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}>
@@ -11912,11 +11953,11 @@ function StationBoard() {
                       </button>
                     ))}
                     <input type="color" value={it.fillHex ?? '#ffffff'}
-                      onChange={e => patchItem(it.id, { fillHex: e.target.value })}
+                      onChange={e => patchSel({ fillHex: e.target.value })}
                       title="自訂底色"
                       className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
                     <input type="color" value={it.textHex ?? '#334155'}
-                      onChange={e => patchItem(it.id, { textHex: e.target.value })}
+                      onChange={e => patchSel({ textHex: e.target.value })}
                       title="自訂文字顏色"
                       className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
                   </div>
@@ -11925,7 +11966,7 @@ function StationBoard() {
                   <span className="block text-xs font-medium text-slate-600 mb-1">框線</span>
                   <div className="flex gap-1 flex-wrap">
                     {Object.entries(CANVAS_STROKES).map(([k, v]) => (
-                      <button key={k} title={v.name} onClick={() => patchItem(it.id, { stroke: k, strokeHex: undefined })}
+                      <button key={k} title={v.name} onClick={() => patchSel({ stroke: k, strokeHex: undefined })}
                         style={{ borderColor: v.color === 'transparent' ? '#cbd5e1' : v.color,
                                  borderStyle: v.color === 'transparent' ? 'dashed' : 'solid' }}
                         className={`w-7 h-7 rounded border-[3px] bg-white text-[10px] text-slate-400
@@ -11934,33 +11975,34 @@ function StationBoard() {
                       </button>
                     ))}
                     <input type="color" value={it.strokeHex ?? '#94a3b8'}
-                      onChange={e => patchItem(it.id, { strokeHex: e.target.value })}
+                      onChange={e => patchSel({ strokeHex: e.target.value })}
                       title="自訂框線顏色"
                       className="w-7 h-7 rounded border border-slate-300 p-0 cursor-pointer" />
                   </div>
                 </div>
                 <div>
                     <span className="block text-xs font-medium text-slate-600 mb-1">
-                    大小（公分，以列印寬度換算）
+                    大小（公分）{multi ? '：一起設定' : ''}
                   </span>
                   <div className="flex items-center gap-1 mb-2">
                     <input type="number" step="0.1" min="0.3" value={cmOf(it.w, 'w')}
-                      onChange={e => setCm(it, 'w', e.target.value)}
+                      onChange={e => setCmSel('w', e.target.value)}
                       className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
                     <span className="text-xs text-slate-400">寬 ×</span>
                     <input type="number" step="0.1" min="0.3" value={cmOf(it.h, 'h')}
-                      onChange={e => setCm(it, 'h', e.target.value)}
+                      onChange={e => setCmSel('h', e.target.value)}
                       className="w-16 border border-[#DDD9D0] rounded px-1.5 py-1 text-sm" />
                     <span className="text-xs text-slate-400">高 cm</span>
                   </div>
                   <span className="block text-xs font-medium text-slate-600 mb-1">
-                    位置 {it.x.toFixed(1)}%, {it.y.toFixed(1)}%
+                    {multi ? `位置微調（${sels.length} 個一起移動）` : `位置 ${it.x.toFixed(1)}%, ${it.y.toFixed(1)}%`}
                   </span>
                   <div className="flex gap-1">
                     {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
-                      <button key={t} onClick={() => patchItem(it.id, {
-                          x: Math.min(Math.max(0, it.x + dx), 100 - it.w),
-                          y: Math.min(Math.max(0, it.y + dy), 100 - it.h) })}
+                      <button key={t} onClick={() => setItems(list => list.map(x =>
+                          !selectedIds.includes(x.id) ? x : { ...x,
+                            x: Math.min(Math.max(0, x.x + dx), 100 - x.w),
+                            y: Math.min(Math.max(0, x.y + dy), 100 - x.h) }))}
                         className="px-2.5 py-1 border border-[#DDD9D0] rounded text-sm">{t}</button>
                     ))}
                   </div>
@@ -11995,11 +12037,10 @@ function StationBoard() {
             const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
             const arr = board[it.id] ?? [];
             const count = it.kind === 'station' ? Math.max(it.slots ?? 1, arr.length) : 0;
-            const sel = selectedId === it.id;
+            const sel = selectedIds.includes(it.id);
             return (
               <div key={it.id}
                    onPointerDown={e => editMode && startDrag(e, it.id)}
-                   onClick={() => { if (editMode) setSelectedId(it.id); }}
                    className={`absolute rounded-md flex flex-col items-center justify-center
                                text-center overflow-hidden select-none
                                ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}`}
@@ -12009,7 +12050,7 @@ function StationBoard() {
                      color: it.textHex ?? (it.fillHex ? '#334155' : col.text),
                      border: `${it.dashed ? '2px dashed' : '2px solid'} ${it.strokeHex ?? stroke.color}`,
                    }}>
-                {editMode && sel ? (
+                {editMode && selectedId === it.id ? (
                   /* 選取後直接在元件上改字；Enter 換行，Esc 結束編輯 */
                   <textarea value={it.label} autoFocus rows={2}
                     onPointerDown={e => e.stopPropagation()}
