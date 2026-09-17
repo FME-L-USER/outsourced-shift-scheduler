@@ -11360,13 +11360,14 @@ function EmpModal({ emp, onSave, onClose, title, vendorNameOptions, deptOptions,
  */
 /**
  * 站區表人名的底色規則：
- *   白底灰框　＝ 班表排定出勤，尚未點名
+ *   白底灰框　＝ 該日尚未開始點名（整天都還沒有任何點名紀錄）
  *   白底藍框　＝ 點名確認有出勤
- *   粉紅底紅框＝ 已排進站區但點名未到班
+ *   粉紅底紅框＝ 點名未到班；點名已開始卻仍無紀錄者也算未到，避免漏點被當成正常
  */
-function nameChipClass(id, attendedIds, absentIds) {
+function nameChipClass(id, attendedIds, absentIds, rollCallStarted) {
   if (absentIds?.has(id))   return 'bg-pink-100 border-red-500 text-red-900';
   if (attendedIds?.has(id)) return 'bg-white border-blue-500 text-blue-900';
+  if (rollCallStarted)      return 'bg-pink-100 border-red-500 text-red-900';
   return 'bg-white border-slate-400 text-slate-800';
 }
 
@@ -11374,7 +11375,7 @@ function nameChipClass(id, attendedIds, absentIds) {
  * 唯讀的站區畫布：只顯示版面與已指派人員，不能編輯。
  * 「顯示全部作業區」與全螢幕檢視都用這個，避免一次開多張可編輯的畫布互相干擾。
  */
-function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds }) {
+function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, rollCallStarted }) {
   const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
   return (
     <div className="relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
@@ -11409,12 +11410,12 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds }) {
                 {Array.from({ length: count }).map((_, i) => {
                   const v = arr[i] ?? '';
                   if (!v) return null;
-                  const absent = absentIds?.has(v);
+                  const absent = absentIds?.has(v) || (rollCallStarted && !attendedIds?.has(v));
                   return (
                     <span key={i}
                       style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
                       className={`font-bold rounded px-1.5 border-2 leading-tight
-                                  ${nameChipClass(v, attendedIds, absentIds)}`}>
+                                  ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                       {nameOf(v)}{absent && ' ⚠'}
                     </span>
                   );
@@ -11718,6 +11719,15 @@ function StationBoard() {
     return set;
   }, [attendData, extras, date]);
 
+  /**
+   * 當日是否已開始點名：只要有任何一筆點名紀錄就算。
+   * 點名一開始，沒有紀錄的人就視同未到（統計本來就是這樣算），避免漏點被誤認為正常。
+   */
+  const rollCallStarted = useMemo(() =>
+    Object.keys(attendData[date] ?? {}).length > 0 ||
+    (extras[date] ?? []).some(x => x.present !== undefined),
+    [attendData, extras, date]);
+
   /** 點名確認有到班者 → 名牌用白底藍框，與「只是排定出勤」區分開來 */
   const attendedIds = useMemo(() => {
     const recs = attendData[date] ?? {};
@@ -11749,7 +11759,9 @@ function StationBoard() {
   }, [board]);
 
   const unassigned = presentEmps.filter(e => !assignedIds.has(e.id));
-  const absentAssigned = [...assignedIds].filter(id => absentIds.has(id)).length;
+  // 未到班人數與畫面上的紅底一致：點名開始後，沒有到班紀錄者也算未到
+  const absentAssigned = [...assignedIds].filter(id =>
+    absentIds.has(id) || (rollCallStarted && !attendedIds.has(id))).length;
 
   const setSlot = (blockKey, idx, value) => {
     setStationBoard(prev => {
@@ -11983,7 +11995,7 @@ function StationBoard() {
           </div>
           <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2 justify-center">
             <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-slate-400 text-slate-800 font-bold">
-              排定出勤
+              排定出勤（尚未點名）
             </span>
             <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-blue-500 text-blue-900 font-bold">
               點名已到班
@@ -11991,6 +12003,7 @@ function StationBoard() {
             <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-pink-100 border-red-500 text-red-900 font-bold">
               未到班
             </span>
+            {rollCallStarted && <span className="text-slate-400">（當日已開始點名，無點名紀錄者視同未到）</span>}
           </div>
         </div>
 
@@ -12004,7 +12017,8 @@ function StationBoard() {
               </div>
               <StationCanvasView layout={layouts[k]}
                 cells={stationBoard?.[date]?.[k] ?? {}}
-                nameOf={nameOf} attendedIds={attendedIds} absentIds={absentIds} />
+                nameOf={nameOf} attendedIds={attendedIds} absentIds={absentIds}
+                rollCallStarted={rollCallStarted} />
             </div>
           ))}
         </div>
@@ -12277,15 +12291,17 @@ function StationBoard() {
                   <div className="flex flex-wrap gap-0.5 justify-center px-0.5 pb-0.5 w-full overflow-hidden">
                     {Array.from({ length: count }).map((_, i) => {
                       const v = arr[i] ?? '';
-                      const absent = absentIds.has(v);
+                      const absent = absentIds.has(v) || (rollCallStarted && !attendedIds.has(v));
                       return v ? (
                         <button key={i} disabled={!canEdit}
                           onClick={() => setSlot(it.id, i, '')}
-                          title={absent ? '此人當日點名為未到班'
-                                        : attendedIds.has(v) ? '點名已到班（點一下移除）' : '點一下移除'}
+                          title={attendedIds.has(v) ? '點名已到班（點一下移除）'
+                                 : absentIds.has(v) ? '此人當日點名為未到班'
+                                 : rollCallStarted ? '當日已在點名，但此人尚無點名紀錄（視同未到）'
+                                 : '點一下移除'}
                           style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
                           className={`font-bold rounded px-1.5 border-2 leading-tight
-                                      ${nameChipClass(v, attendedIds, absentIds)}`}>
+                                      ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                           {nameOf(v)}{absent && ' ⚠'}
                         </button>
                       ) : (
