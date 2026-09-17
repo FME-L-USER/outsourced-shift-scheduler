@@ -11400,9 +11400,10 @@ function StationCanvasView({ layout, cells, nameOf, absentIds }) {
                   const absent = absentIds?.has(v);
                   return (
                     <span key={i}
-                      className={`text-[10px] font-medium rounded px-1 border leading-tight
-                        ${absent ? 'bg-red-100 border-red-300 text-red-800'
-                                 : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                      style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
+                      className={`font-bold rounded px-1.5 border-2 leading-tight
+                        ${absent ? 'bg-red-200 border-red-500 text-red-900'
+                                 : 'bg-teal-100 border-teal-500 text-teal-900'}`}>
                       {nameOf(v)}{absent && ' ⚠'}
                     </span>
                   );
@@ -11835,7 +11836,9 @@ function StationBoard() {
         </span>
         <div className="ml-auto flex gap-2 pb-1">
           {canEdit && (
-            <button onClick={() => { setEditMode(v => !v); setSelectedId(null); }}
+            // 編輯一定回到單一作業區：全部作業區是唯讀畫面，在那邊改了也看不到
+            <button title="編輯版面（會回到單一作業區）"
+              onClick={() => { setEditMode(v => !v); setSelectedId(null); setShowAll(false); }}
               className={`px-3 py-1.5 rounded-lg text-sm border
                 ${editMode ? 'bg-blue-600 text-white border-transparent'
                            : 'border-[#DDD9D0] text-slate-600 hover:bg-[#F5F2EC]'}`}>
@@ -11866,7 +11869,7 @@ function StationBoard() {
         </div>
       </div>
 
-      {editMode && (
+      {editMode && !showAll && (
         <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 leading-relaxed">
           <strong>編輯版面中</strong>：<strong>拖曳</strong>元件移動位置、選取後拖<strong>右下角藍點</strong>調整大小、
           點元件可改名稱／圖示／底色／框線／人數。<strong>站位</strong>可指派人員，<strong>設備／標示</strong>（柱子、出入口、桌子等）只是圖示。
@@ -12251,9 +12254,10 @@ function StationBoard() {
                         <button key={i} disabled={!canEdit}
                           onClick={() => setSlot(it.id, i, '')}
                           title={absent ? '此人當日點名為未到班' : '點一下移除'}
-                          className={`text-[10px] font-medium rounded px-1 border leading-tight
-                            ${absent ? 'bg-red-100 border-red-300 text-red-800'
-                                     : 'bg-teal-50 border-teal-200 text-slate-800'}`}>
+                          style={{ fontSize: `${Math.max(11, (it.fontSize ?? 11))}px` }}
+                          className={`font-bold rounded px-1.5 border-2 leading-tight
+                            ${absent ? 'bg-red-200 border-red-500 text-red-900'
+                                     : 'bg-teal-100 border-teal-500 text-teal-900'}`}>
                           {nameOf(v)}{absent && ' ⚠'}
                         </button>
                       ) : (
