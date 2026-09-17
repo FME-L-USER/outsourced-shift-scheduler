@@ -12376,10 +12376,15 @@ function StationBoard() {
                    }}>
                 {editMode && selectedId === it.id ? (
                   /* 選取後直接在元件上改字；Enter 換行，Esc 結束編輯 */
-                  <textarea value={it.label} autoFocus rows={2}
+                  <textarea value={it.label} rows={2}
+                    title="點一下即可修改文字"
                     onPointerDown={e => e.stopPropagation()}
                     onChange={e => patchItem(it.id, { label: e.target.value })}
-                    onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') e.currentTarget.blur();
+                      // 游標在輸入框裡時 Delete 是刪字；要刪元件請先按 Esc 或點空白處
+                      e.stopPropagation();
+                    }}
                     className="w-full h-[80%] resize-none bg-transparent border border-blue-400
                                rounded px-1 py-0.5 outline-none leading-tight"
                     style={{ textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
