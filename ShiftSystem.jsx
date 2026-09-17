@@ -12147,6 +12147,12 @@ function StationBoard() {
               : axis === 'w' ? { ...x, w: Math.min((cm / A4_W_CM) * 100, 100 - x.x) }
                              : { ...x, h: Math.min((cm / A4_H_CM) * 100, 100 - x.y) }));
           };
+          /** 人數加減：各站位以自己的人數為基準增減，複選時不會被改成同一個值 */
+          const bumpSlots = (delta) =>
+            setItems(list => list.map(x =>
+              (selectedIds.includes(x.id) && x.kind === 'station')
+                ? { ...x, slots: Math.max(0, (x.slots ?? 1) + delta) } : x));
+
           return (
             <div className="bg-white border border-blue-300 rounded-xl px-2.5 py-2 space-y-1.5">
               <div className="flex items-center gap-2">
@@ -12184,14 +12190,19 @@ function StationBoard() {
                     placeholder="例 📦 🚪 🖥"
                     className="border border-[#DDD9D0] rounded px-1.5 py-1 text-xs w-20" />
                 </label>
-                {!multi && it.kind === 'station' && (
+                {sels.some(x => x.kind === 'station') && (
                   <label className="block">
-                    <span className="block text-[11px] font-medium text-slate-500 mb-0.5">人數</span>
+                    <span className="block text-[11px] font-medium text-slate-500 mb-0.5">
+                      人數{multi ? '（一起加減）' : ''}
+                    </span>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => patchSel({ slots: Math.max(0, (it.slots ?? 1) - 1) })}
+                      <button onClick={() => bumpSlots(-1)}
                         className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">−</button>
-                      <span className="w-6 text-center font-bold">{it.slots ?? 1}</span>
-                      <button onClick={() => patchSel({ slots: (it.slots ?? 1) + 1 })}
+                      <span className="w-6 text-center font-bold">
+                        {sels.filter(x => x.kind === 'station')
+                             .every(x => (x.slots ?? 1) === (it.slots ?? 1)) ? (it.slots ?? 1) : '–'}
+                      </span>
+                      <button onClick={() => bumpSlots(1)}
                         className="px-1.5 py-0.5 border border-[#DDD9D0] rounded text-xs">＋</button>
                     </div>
                   </label>
