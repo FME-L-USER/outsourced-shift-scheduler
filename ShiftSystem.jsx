@@ -8310,6 +8310,24 @@ function Attendance({ phoneOnly = false }) {
 
   const defaultStatus = attendSettings.lateEarlyStatus?.[0] ?? '正常到班（無遲到早退）';
 
+  /**
+   * 某日某人的點名紀錄。沒有紀錄時依班表推導預設值。
+   *
+   * 匯出 Excel 原本另外寫了一份預設為「出勤」的版本，與畫面相反，
+   * 造成實到人數灌水、未點名者也不會出現在異常名單。兩處統一用這一份。
+   */
+  const recordFor = (dateStr, empId) => {
+    if (attendData[dateStr]?.[empId]) return attendData[dateStr][empId];
+    const [sy, sm, sd] = String(dateStr).split('-').map(Number);
+    const shiftCode = schedule[empId]?.[dateKey(sy, sm, sd)];
+    if (shiftCode === 'V')
+      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '', _noRecord: true };
+    const MAP = { '休': '休假', '例': '例假', '國': '國定假日' };
+    if (MAP[shiftCode])
+      return { present: false, lateEarly: defaultStatus, timeNote: '', absType: MAP[shiftCode], note: '', _noRecord: true };
+    return { present: false, lateEarly: defaultStatus, timeNote: '', absType: '', note: '', _noRecord: true };
+  };
+
   const getRecord = (empId) => {
     if (attendData[attendDate]?.[empId]) return attendData[attendDate][empId];
     // schedule 的鍵為 dateKey 格式（不補零，如 2026-9-2），attendDate 有補零（2026-09-02），
@@ -8443,8 +8461,10 @@ function Attendance({ phoneOnly = false }) {
   const exportStats = (reportDate, reportGroup) => {
     try {
       const emps = rollCallList(reportDate, reportGroup);
+      // 與回報文字一致：臨時人力依作業組別篩選；未指定組別者不屬於任何一組
       const exExtras = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
-      const getData = id => attendData[reportDate]?.[id] ?? { present: true };
+      const exUngrouped = reportGroup ? (extras[reportDate] ?? []).filter(e => !e.group) : [];
+      const getData = id => recordFor(reportDate, id);
 
       const s1 = [['廠商', '應到', '實到', '缺勤', '到班率']];
       const vm = {};
@@ -8465,16 +8485,24 @@ function Attendance({ phoneOnly = false }) {
         s1.push([v, d.t, d.p, d.t - d.p, d.t > 0 ? `${Math.round((d.p/d.t)*100)}%` : '—']);
       });
       s1.push(['合計', tt, tp, tt - tp, tt > 0 ? `${Math.round((tp/tt)*100)}%` : '—']);
+      if (exUngrouped.length > 0) {
+        s1.push([]);
+        s1.push([`※ 另有 ${exUngrouped.length} 位臨時人力未指定作業組別，未計入本統計：`
+                 + exUngrouped.map(e => e.name).join('、')]);
+      }
 
       const s2 = [['日期', '廠商', '員工編號', '姓名', '出勤狀況', '假別/遲到狀態', '備註']];
       emps.forEach(emp => {
         const rec = getData(emp.id);
-        if (!rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus)) {
-          s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
-            rec.present ? '出勤' : '缺勤',
-            rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
-            rec.note || '']);
-        }
+        const abnormal = !rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus);
+        if (!abnormal) return;
+        // 未點名與缺勤要分開：前者是「還沒確認」，後者是「確認沒來」，
+        // 混在一起會讓請假統計失真。
+        const status = rec._noRecord ? '未點名' : (rec.present ? '出勤' : '缺勤');
+        s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
+          status,
+          rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
+          rec.note || '']);
       });
       exExtras.forEach(e => {
         if (!e.present || (e.lateEarly && e.lateEarly !== defaultStatus)) {
