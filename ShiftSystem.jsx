@@ -11894,6 +11894,45 @@ function StationBoard() {
     });
   };
 
+  /**
+   * 拖放指派：從左側清單把人拖到站位，或在站位之間搬移。
+   * dataTransfer 帶的是 { empId, from, idx }；from 為來源站位（從清單拖曳時為 null）。
+   */
+  const [dropTarget, setDropTarget] = useState(null);
+  const dragPayload = (e) => {
+    try { return JSON.parse(e.dataTransfer.getData('text/plain') || '{}'); } catch { return {}; }
+  };
+  const dropOnStation = (e, blockKey) => {
+    e.preventDefault();
+    setDropTarget(null);
+    const { empId, from, idx } = dragPayload(e);
+    if (!empId || !canEdit) return;
+    if (from === blockKey) return;                       // 拖回原站位不用處理
+    setStationBoard(prev => {
+      const day = { ...(prev[date] ?? {}) };
+      const area = { ...(day[areaKey] ?? {}) };
+      if (from) {                                        // 站位之間搬移：先清掉原本的位置
+        const src = [...(area[from] ?? [])];
+        if (src[idx] === empId) src[idx] = '';
+        area[from] = src;
+      }
+      const arr = [...(area[blockKey] ?? [])];
+      const empty = arr.findIndex(v => !v);              // 填到第一個空位，沒有空位就新增一格
+      if (empty >= 0) arr[empty] = empId; else arr.push(empId);
+      area[blockKey] = arr;
+      day[areaKey] = area;
+      return { ...prev, [date]: day };
+    });
+  };
+  /** 拖回左側清單＝從站位移除 */
+  const dropOnList = (e) => {
+    e.preventDefault();
+    setDropTarget(null);
+    const { empId, from, idx } = dragPayload(e);
+    if (!empId || !from || !canEdit) return;
+    setSlot(from, idx, '');
+  };
+
   const addSlot = (blockKey) => {
     setStationBoard(prev => {
       const day = { ...(prev[date] ?? {}) };
@@ -12157,8 +12196,52 @@ function StationBoard() {
         }
       `}</style>
 
+      <div className="flex gap-3 items-start">
+
+      {/* 左側出勤人員清單：可直接拖到站位指派，拖回清單則取消指派 */}
+      {!showAll && !isFull && !coverFull && (
+        <div onDragOver={e => { e.preventDefault(); setDropTarget('list'); }}
+             onDragLeave={() => setDropTarget(null)}
+             onDrop={dropOnList}
+             className={`vsp-no-print w-40 shrink-0 bg-white border rounded-xl p-2 space-y-1
+                         max-h-[70vh] overflow-y-auto
+                         ${dropTarget === 'list' ? 'border-rose-400 bg-rose-50' : 'border-[#DDD9D0]'}`}>
+          <div className="text-xs font-bold text-slate-700">
+            出勤人員
+            <span className="ml-1 font-normal text-slate-400">
+              未指派 {unassigned.length}／{presentEmps.length}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 leading-snug">
+            拖曳姓名到站位即可指派；拖回這裡取消指派。
+          </div>
+          {presentEmps.length === 0 && (
+            <div className="text-[11px] text-slate-400 py-2">當日沒有排定出勤的人員</div>
+          )}
+          {presentEmps.map(e => {
+            const done = assignedIds.has(e.id);
+            return (
+              <div key={e.id} draggable={canEdit}
+                onDragStart={ev => {
+                  ev.dataTransfer.setData('text/plain', JSON.stringify({ empId: e.id }));
+                  ev.dataTransfer.effectAllowed = 'copyMove';
+                }}
+                title={done ? '已指派，仍可再拖到其他站位' : '拖到站位即可指派'}
+                className={`flex items-center gap-1 px-1.5 py-1 rounded border text-[11px] cursor-grab
+                            active:cursor-grabbing
+                            ${done ? 'bg-slate-50 border-slate-200 text-slate-400'
+                                   : 'bg-white border-slate-300 text-slate-700 hover:border-blue-400'}`}>
+                <span className="font-medium truncate">{e.name}</span>
+                {e.temp && <span className="text-[9px] text-amber-600">臨</span>}
+                {done && <span className="ml-auto text-[9px]">已派</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div ref={fullRef}
-           className={`vsp-print-area vsp-board bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4
+           className={`vsp-print-area vsp-board flex-1 min-w-0 bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4
                        ${showAll ? '' : 'vsp-single'} ${coverFull ? 'vsp-cover' : ''}`}>
         {(isFull || coverFull) && (
           <button onClick={toggleFull}
@@ -12497,8 +12580,12 @@ function StationBoard() {
             return (
               <div key={it.id}
                    onPointerDown={e => editMode && startDrag(e, it.id)}
+                   onDragOver={e => { if (!editMode && it.kind === 'station') { e.preventDefault(); setDropTarget(it.id); } }}
+                   onDragLeave={() => setDropTarget(t => t === it.id ? null : t)}
+                   onDrop={e => { if (!editMode && it.kind === 'station') dropOnStation(e, it.id); }}
                    className={`absolute rounded-md flex flex-col overflow-hidden select-none
-                               ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}`}
+                               ${editMode ? 'cursor-move' : ''} ${sel ? 'ring-2 ring-blue-500 z-10' : ''}
+                               ${dropTarget === it.id ? 'ring-2 ring-emerald-500 z-10' : ''}`}
                    style={{
                      left: `${it.x}%`, top: `${it.y}%`, width: `${it.w}%`, height: `${it.h}%`,
                      background: it.fillHex ?? col.fill,
@@ -12543,7 +12630,11 @@ function StationBoard() {
                       const v = arr[i] ?? '';
                       const absent = absentIds.has(v) || (rollCallStarted && !attendedIds.has(v));
                       return v ? (
-                        <button key={i} disabled={!canEdit}
+                        <button key={i} disabled={!canEdit} draggable={canEdit}
+                          onDragStart={ev => {
+                            ev.dataTransfer.setData('text/plain', JSON.stringify({ empId: v, from: it.id, idx: i }));
+                            ev.dataTransfer.effectAllowed = 'move';
+                          }}
                           onClick={() => setSlot(it.id, i, '')}
                           title={attendedIds.has(v) ? '點名已到班（點一下移除）'
                                  : absentIds.has(v) ? '此人當日點名為未到班'
@@ -12577,22 +12668,7 @@ function StationBoard() {
         </div>
       </>)}
       </div>
-
-      {unassigned.length > 0 && (
-        <div className="bg-white border border-[#DDD9D0] rounded-xl p-3">
-          <div className="text-sm font-bold text-slate-700 mb-2">
-            尚未指派（{unassigned.length} 位）
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {unassigned.map(e => (
-              <span key={e.id} className="text-xs bg-amber-50 border border-amber-200 text-amber-800
-                                          rounded-full px-2.5 py-1">
-                {e.name}<span className="text-amber-400 ml-1">{e.vendor}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* 作業區設定／新增 */}
       {areaModal && (
