@@ -12159,6 +12159,17 @@ function StationBoard() {
               : axis === 'w' ? { ...x, w: Math.min((cm / A4_W_CM) * 100, 100 - x.x) }
                              : { ...x, h: Math.min((cm / A4_H_CM) * 100, 100 - x.y) }));
           };
+          const allStation = sels.every(x => x.kind === 'station');
+          const allShape   = sels.every(x => x.kind !== 'station');
+          /**
+           * 切換類型：全部同一種就整批換成另一種；混合時一律先統一成「可指派人員」，
+           * 避免按一下之後兩種互換、看不出到底變成什麼。
+           */
+          const toggleKind = () => {
+            const target = allStation ? 'shape' : 'station';
+            patchSel({ kind: target });
+          };
+
           /** 人數加減：各站位以自己的人數為基準增減，複選時不會被改成同一個值 */
           const bumpSlots = (delta) =>
             setItems(list => list.map(x =>
@@ -12171,17 +12182,14 @@ function StationBoard() {
                 <span className="text-xs font-bold text-slate-700">
                   元件設定{multi ? `（已選 ${sels.length} 個，設定會一起套用）` : ''}
                 </span>
-                {!multi && (
-                  <>
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full
-                      ${it.kind === 'station' ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                                              : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                      {it.kind === 'station' ? '可指派人員' : '設備／標示'}
-                    </span>
-                    <button onClick={() => patchItem(it.id, { kind: it.kind === 'station' ? 'shape' : 'station' })}
-                      className="text-[11px] text-blue-600 underline">切換</button>
-                  </>
-                )}
+                <span className={`text-[11px] px-2 py-0.5 rounded-full
+                  ${allStation ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                   : allShape  ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                               : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                  {allStation ? '可指派人員' : allShape ? '設備／標示' : '兩種都有'}
+                </span>
+                <button onClick={toggleKind} title="站位 ↔ 設備／標示，複選時一起切換"
+                  className="text-[11px] text-blue-600 underline">切換</button>
                 <span className="text-[11px] text-slate-400">按住 Ctrl 或 Shift 點擊可加選多個元件</span>
                 <button onClick={() => setSelectedIds([])}
                   className="ml-auto text-slate-400 hover:text-slate-600">✕</button>
