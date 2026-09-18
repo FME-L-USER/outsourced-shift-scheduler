@@ -11723,6 +11723,18 @@ function StationBoard() {
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // 方向鍵：微調選取元件的位置（按住 Shift 移動得更細）
+      const ARROW = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      if (ARROW[e.key]) {
+        if (selectedIds.length === 0) return;
+        const step = e.shiftKey ? 0.1 : 0.5;          // 百分比
+        const [sx, sy] = ARROW[e.key];
+        setItems(list => list.map(x => !selectedIds.includes(x.id) ? x : { ...x,
+          x: Math.min(Math.max(0, x.x + sx * step), 100 - x.w),
+          y: Math.min(Math.max(0, x.y + sy * step), 100 - x.h) }));
+        e.preventDefault();
+        return;
+      }
       // Delete／Backspace：刪除選取的元件（誤刪可按「復原」救回）
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedIds.length === 0) return;
@@ -12005,7 +12017,7 @@ function StationBoard() {
           <strong>編輯版面中</strong>：<strong>拖曳</strong>元件移動位置、選取後拖<strong>右下角藍點</strong>調整大小、
           點元件可改名稱／圖示／底色／框線／人數。<strong>站位</strong>可指派人員，<strong>設備／標示</strong>（柱子、出入口、桌子等）只是圖示。
           改動會自動存檔，所有人看到的版面都會更新。
-          快速鍵：<strong>Ctrl+C／Ctrl+V</strong> 複製貼上、<strong>Delete</strong> 刪除選取的元件。
+          快速鍵：<strong>Ctrl+C／Ctrl+V</strong> 複製貼上、<strong>Delete</strong> 刪除、<strong>方向鍵</strong>微調位置（按住 Shift 更細）。
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <button onClick={() => guardAdmin('作業區設定', () => setAreaModal({ mode: 'edit', name: areaKey,
                       group: layout?.group ?? '', workArea: layout?.workArea ?? '', title: layout?.title ?? '' }))}
