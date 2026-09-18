@@ -11503,6 +11503,10 @@ function StationBoard() {
   // 複製／貼上元件：Ctrl+C 複製選取的元件，Ctrl+V 貼上（位置略為錯開以免完全重疊）
   const clipRef = useRef([]);
 
+  // 畫面縮放：1 = 符合視窗，可自行放大縮小（放大後以捲軸檢視）
+  const [zoom, setZoom] = useState(1);
+  const zoomStep = (d) => setZoom(z => Math.min(3, Math.max(0.4, Math.round((z + d) * 10) / 10)));
+
   const [showAll, setShowAll] = useState(false);  // 一頁顯示全部作業區（唯讀）
   const fullRef = useRef(null);                   // 全螢幕顯示的容器
   const [isFull, setIsFull] = useState(false);
@@ -12010,6 +12014,15 @@ function StationBoard() {
               {editMode ? '✓ 完成編輯' : '✏️ 編輯版面'}
             </button>
           )}
+          <div className="flex items-center gap-1 border border-[#DDD9D0] rounded-lg px-1.5 py-0.5">
+            <span className="text-[11px] text-slate-500">縮放</span>
+            <button onClick={() => zoomStep(-0.1)} title="縮小"
+              className="px-1.5 text-slate-600 hover:text-blue-600">−</button>
+            <button onClick={() => setZoom(1)} title="回到符合視窗大小"
+              className="w-11 text-xs text-slate-700 hover:text-blue-600">{Math.round(zoom * 100)}%</button>
+            <button onClick={() => zoomStep(0.1)} title="放大"
+              className="px-1.5 text-slate-600 hover:text-blue-600">＋</button>
+          </div>
           <button onClick={() => { setShowAll(v => !v); setSelectedIds([]); setEditMode(false); }}
             title="一頁顯示所有作業區（唯讀）"
             className={`px-3 py-1.5 rounded-lg text-sm border
@@ -12114,10 +12127,16 @@ function StationBoard() {
           .vsp-print-area.vsp-single { height: ${A4_H_CM}cm !important; overflow: hidden !important; }
           /* 全部作業區：每個作業區各佔一頁 */
           .vsp-area-page { height: ${A4_H_CM}cm; overflow: hidden; display: flex; flex-direction: column; }
+          /* 畫面上的縮放與捲動容器不影響列印 */
+          .vsp-zoom-wrap {
+            overflow: visible !important; display: flex !important;
+            flex: 1 1 auto !important; min-height: 0 !important; justify-content: center !important;
+          }
           /* 位置圖維持 A4 比例縮放並置中，標題佔掉的高度不會讓圖被壓扁 */
           .vsp-print-area .vsp-canvas {
-            flex: 1 1 auto !important; min-height: 0 !important; max-width: 100% !important;
-            width: auto !important; height: auto !important; margin: 0 auto !important;
+            flex: 0 0 auto !important; min-height: 0 !important; max-width: 100% !important;
+            height: 100% !important; width: auto !important; margin: 0 auto !important;
+            transform: none !important;
             aspect-ratio: ${A4_W_CM} / ${A4_H_CM} !important;
           }
           .vsp-no-print { display: none !important; }
@@ -12441,8 +12460,9 @@ function StationBoard() {
           );
         })()}
 
-        {/* 設備位置圖：元件以百分比定位，整張圖依容器寬度自動縮放，不需橫向捲動 */}
+        {/* 設備位置圖：元件以百分比定位，依容器寬度自動縮放；放大時才會出現捲軸 */}
 
+        <div className="vsp-zoom-wrap w-full overflow-auto flex">
         <div ref={canvasRef}
              className={`vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
@@ -12450,8 +12470,9 @@ function StationBoard() {
                       // 一般檢視時盡量佔滿可用寬度，只用視窗高度做上限，避免兩側留白過多；
                       // 編輯版面時工具列與屬性面板較高，維持原寬度以免畫布小到不好操作
                       width: editMode
-                        ? '100%'
-                        : `min(100%, calc((100vh - 220px) * ${A4_W_CM} / ${A4_H_CM}))`,
+                        ? `calc(100% * ${zoom})`
+                        : `calc(min(100%, calc((100vh - 220px) * ${A4_W_CM} / ${A4_H_CM})) * ${zoom})`,
+                      flex: '0 0 auto',
                       margin: '0 auto',
                       cursor: editMode ? (dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab') : 'default' }}
              onPointerDown={e => editMode && startPan(e)}
@@ -12552,6 +12573,7 @@ function StationBoard() {
               </div>
             );
           })}
+        </div>
         </div>
       </>)}
       </div>
