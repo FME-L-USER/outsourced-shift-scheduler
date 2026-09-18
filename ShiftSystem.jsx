@@ -12396,10 +12396,13 @@ function StationBoard() {
                         className="px-2 py-0.5 border border-[#DDD9D0] rounded text-xs">{t}</button>
                     ))}
                     <span className="mx-1 text-[11px] text-slate-400">疊層</span>
-                    {[['⤒', 'front', '移到最上層'], ['↑', 'up', '往上一層'],
-                      ['↓', 'down', '往下一層'], ['⤓', 'back', '移到最下層']].map(([t, m, tip]) => (
-                      <button key={m} title={tip} onClick={() => reorder(m)}
-                        className="px-2 py-0.5 border border-[#DDD9D0] rounded text-xs">{t}</button>
+                    {[['最上層', 'front'], ['上一層', 'up'],
+                      ['下一層', 'down'], ['最下層', 'back']].map(([t, m], i) => (
+                      <span key={m} className="text-[11px] text-slate-400">
+                        {i > 0 && <span className="mx-0.5">｜</span>}
+                        <span onClick={() => reorder(m)} role="button"
+                          className="text-blue-600 underline cursor-pointer hover:text-blue-800">{t}</span>
+                      </span>
                     ))}
                   </div>
                 </div>
