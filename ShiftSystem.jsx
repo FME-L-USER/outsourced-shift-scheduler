@@ -11381,7 +11381,7 @@ function nameChipClass(id, attendedIds, absentIds, rollCallStarted) {
 function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, rollCallStarted }) {
   const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
   return (
-    <div className="relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
+    <div className="vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
          style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}` }}>
       {items.map(it => {
         const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
@@ -12074,13 +12074,29 @@ function StationBoard() {
 
       {/* 列印：固定 A4 橫式、窄邊界，且只印位置圖本身 */}
       <style>{`
+        /* @page 放在最外層：包在 @media print 內時部分瀏覽器不套用，列印會變成直向 */
+        @page { size: A4 landscape; margin: 1.27cm; }
         @media print {
           @page { size: A4 landscape; margin: 1.27cm; }
+          html, body { width: ${A4_W_CM}cm; margin: 0 !important; padding: 0 !important; }
           body * { visibility: hidden !important; }
           .vsp-print-area, .vsp-print-area * { visibility: visible !important; }
           .vsp-print-area {
-            position: absolute; left: 0; top: 0; width: 100%;
+            position: absolute; left: 0; top: 0;
+            width: ${A4_W_CM}cm !important;
             border: 0 !important; padding: 0 !important; box-shadow: none !important;
+            display: flex !important; flex-direction: column !important;
+            -webkit-print-color-adjust: exact; print-color-adjust: exact;
+          }
+          /* 單一作業區：整張表剛好一頁，超出的部分不另外印一張 */
+          .vsp-print-area.vsp-single { height: ${A4_H_CM}cm !important; overflow: hidden !important; }
+          /* 全部作業區：每個作業區各佔一頁 */
+          .vsp-area-page { height: ${A4_H_CM}cm; overflow: hidden; display: flex; flex-direction: column; }
+          /* 位置圖維持 A4 比例縮放並置中，標題佔掉的高度不會讓圖被壓扁 */
+          .vsp-print-area .vsp-canvas {
+            flex: 1 1 auto !important; min-height: 0 !important;
+            width: auto !important; height: auto !important; margin: 0 auto !important;
+            aspect-ratio: ${A4_W_CM} / ${A4_H_CM} !important;
           }
           .vsp-no-print { display: none !important; }
           .vsp-page-break { break-before: page; page-break-before: always; }
@@ -12098,7 +12114,7 @@ function StationBoard() {
 
       <div ref={fullRef}
            className={`vsp-print-area vsp-board bg-white border border-[#DDD9D0] rounded-xl p-4 space-y-4
-                       ${coverFull ? 'vsp-cover' : ''}`}>
+                       ${showAll ? '' : 'vsp-single'} ${coverFull ? 'vsp-cover' : ''}`}>
         {(isFull || coverFull) && (
           <button onClick={toggleFull}
             className="vsp-no-print fixed top-3 right-4 z-[61] px-3 py-1.5 rounded-lg text-sm
@@ -12129,7 +12145,7 @@ function StationBoard() {
         /* 全部作業區：一頁看完所有作業區（唯讀），列印時每區一頁 */
         <div className="space-y-4">
           {Object.keys(layouts).map((k, i) => (
-            <div key={k} className={i > 0 ? 'vsp-page-break space-y-1' : 'space-y-1'}>
+            <div key={k} className={`vsp-area-page space-y-1 ${i > 0 ? 'vsp-page-break' : ''}`}>
               <div className="text-sm font-bold text-slate-700">
                 {k}<span className="font-normal text-slate-400 ml-2">{layouts[k]?.title}</span>
               </div>
@@ -12414,7 +12430,7 @@ function StationBoard() {
         {/* 設備位置圖：元件以百分比定位，整張圖依容器寬度自動縮放，不需橫向捲動 */}
 
         <div ref={canvasRef}
-             className={`relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
+             className={`vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
              style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
                       cursor: editMode ? (dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab') : 'default' }}
