@@ -12170,6 +12170,34 @@ function StationBoard() {
             patchSel({ kind: target });
           };
 
+          /**
+           * 疊層順序：元件以陣列順序繪製，越後面越上層。
+           * 上／下移時只跟「沒被選取的鄰居」交換，整組選取才能一起移動而不互相干擾。
+           */
+          const reorder = (mode) => setItems(list => {
+            const picked = list.filter(x => selectedIds.includes(x.id));
+            if (picked.length === 0) return list;
+            const rest = list.filter(x => !selectedIds.includes(x.id));
+            if (mode === 'front') return [...rest, ...picked];
+            if (mode === 'back')  return [...picked, ...rest];
+            const next = [...list];
+            const idxs = next.map((x, i) => selectedIds.includes(x.id) ? i : -1).filter(i => i >= 0);
+            if (mode === 'up') {
+              for (let k = idxs.length - 1; k >= 0; k--) {
+                const i = idxs[k];
+                if (i === next.length - 1 || selectedIds.includes(next[i + 1].id)) continue;
+                [next[i], next[i + 1]] = [next[i + 1], next[i]];
+              }
+            } else {
+              for (let k = 0; k < idxs.length; k++) {
+                const i = idxs[k];
+                if (i === 0 || selectedIds.includes(next[i - 1].id)) continue;
+                [next[i], next[i - 1]] = [next[i - 1], next[i]];
+              }
+            }
+            return next;
+          });
+
           /** 人數加減：各站位以自己的人數為基準增減，複選時不會被改成同一個值 */
           const bumpSlots = (delta) =>
             setItems(list => list.map(x =>
@@ -12359,12 +12387,18 @@ function StationBoard() {
                   <span className="block text-[11px] font-medium text-slate-500 mb-0.5">
                     {multi ? `位置微調（${sels.length} 個一起移動）` : `位置 ${it.x.toFixed(1)}%, ${it.y.toFixed(1)}%`}
                   </span>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 items-center">
                     {[['←', -0.5, 0], ['→', 0.5, 0], ['↑', 0, -0.5], ['↓', 0, 0.5]].map(([t, dx, dy]) => (
                       <button key={t} onClick={() => setItems(list => list.map(x =>
                           !selectedIds.includes(x.id) ? x : { ...x,
                             x: Math.min(Math.max(0, x.x + dx), 100 - x.w),
                             y: Math.min(Math.max(0, x.y + dy), 100 - x.h) }))}
+                        className="px-2 py-0.5 border border-[#DDD9D0] rounded text-xs">{t}</button>
+                    ))}
+                    <span className="mx-1 text-[11px] text-slate-400">疊層</span>
+                    {[['⤒', 'front', '移到最上層'], ['↑', 'up', '往上一層'],
+                      ['↓', 'down', '往下一層'], ['⤓', 'back', '移到最下層']].map(([t, m, tip]) => (
+                      <button key={m} title={tip} onClick={() => reorder(m)}
                         className="px-2 py-0.5 border border-[#DDD9D0] rounded text-xs">{t}</button>
                     ))}
                   </div>
