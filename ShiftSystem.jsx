@@ -11986,6 +11986,19 @@ function StationBoard() {
           未指派 <b className={unassigned.length ? 'text-amber-600' : 'text-teal-700'}>{unassigned.length}</b>
           {absentAssigned > 0 && <>．<b className="text-red-600">未到班 {absentAssigned}</b></>}
         </span>
+        {/* 顏色說明：放在上方統計旁，位置圖本身就不必再佔一行 */}
+        <span className="text-[11px] text-slate-500 pb-2 flex flex-wrap items-center gap-1.5">
+          <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-slate-400 text-slate-800 font-bold">
+            排定出勤（尚未點名）
+          </span>
+          <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-blue-500 text-blue-900 font-bold">
+            點名已到班
+          </span>
+          <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-pink-100 border-red-500 text-red-900 font-bold">
+            未到班
+          </span>
+          {rollCallStarted && <span className="text-slate-400">（當日已開始點名，無點名紀錄者視同未到）</span>}
+        </span>
         <div className="ml-auto flex gap-2 pb-1">
           {canEdit && (
             // 編輯一定回到單一作業區：全部作業區是唯讀畫面，在那邊改了也看不到
@@ -12139,18 +12152,6 @@ function StationBoard() {
           <div className="text-lg font-bold tracking-widest text-slate-800">站 區 表</div>
           <div className="text-xs text-slate-500 mt-0.5">
             {showAll ? '全部作業區' : layout?.title}　|　{date}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2 justify-center">
-            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-slate-400 text-slate-800 font-bold">
-              排定出勤（尚未點名）
-            </span>
-            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-white border-blue-500 text-blue-900 font-bold">
-              點名已到班
-            </span>
-            <span className="inline-block px-1.5 py-0.5 rounded border-2 bg-pink-100 border-red-500 text-red-900 font-bold">
-              未到班
-            </span>
-            {rollCallStarted && <span className="text-slate-400">（當日已開始點名，無點名紀錄者視同未到）</span>}
           </div>
         </div>
 
