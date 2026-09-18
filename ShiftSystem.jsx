@@ -11378,11 +11378,13 @@ function nameChipClass(id, attendedIds, absentIds, rollCallStarted) {
  * 唯讀的站區畫布：只顯示版面與已指派人員，不能編輯。
  * 「顯示全部作業區」與全螢幕檢視都用這個，避免一次開多張可編輯的畫布互相干擾。
  */
-function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, rollCallStarted }) {
+function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, rollCallStarted, fitPx }) {
   const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
   return (
     <div className="vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
-         style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}` }}>
+         style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
+                  width: `min(100%, calc((100vh - ${fitPx ?? 340}px) * ${A4_W_CM} / ${A4_H_CM}))`,
+                  margin: '0 auto' }}>
       {items.map(it => {
         const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
         const stroke = CANVAS_STROKES[it.stroke] ?? CANVAS_STROKES.slate;
@@ -12094,7 +12096,7 @@ function StationBoard() {
           .vsp-area-page { height: ${A4_H_CM}cm; overflow: hidden; display: flex; flex-direction: column; }
           /* 位置圖維持 A4 比例縮放並置中，標題佔掉的高度不會讓圖被壓扁 */
           .vsp-print-area .vsp-canvas {
-            flex: 1 1 auto !important; min-height: 0 !important;
+            flex: 1 1 auto !important; min-height: 0 !important; max-width: 100% !important;
             width: auto !important; height: auto !important; margin: 0 auto !important;
             aspect-ratio: ${A4_W_CM} / ${A4_H_CM} !important;
           }
@@ -12109,6 +12111,10 @@ function StationBoard() {
         .vsp-board.vsp-cover { position: fixed; inset: 0; z-index: 60; }
         .vsp-board:fullscreen > *, .vsp-board.vsp-cover > * {
           width: min(100%, calc((100vh - 7rem) * ${A4_W_CM} / ${A4_H_CM}));
+        }
+        /* 全螢幕時以螢幕高度為準，畫布本身的寬度限制不再適用 */
+        .vsp-board:fullscreen .vsp-canvas, .vsp-board.vsp-cover .vsp-canvas {
+          width: 100% !important;
         }
       `}</style>
 
@@ -12152,7 +12158,7 @@ function StationBoard() {
               <StationCanvasView layout={layouts[k]}
                 cells={stationBoard?.[date]?.[k] ?? {}}
                 nameOf={nameOf} attendedIds={attendedIds} absentIds={absentIds}
-                rollCallStarted={rollCallStarted} />
+                rollCallStarted={rollCallStarted} fitPx={420} />
             </div>
           ))}
         </div>
@@ -12433,6 +12439,12 @@ function StationBoard() {
              className={`vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
              style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
+                      // 一般檢視時讓整張圖落在一個畫面內，不必上下捲動；
+                      // 編輯版面時工具列與屬性面板較高，維持原寬度以免畫布小到不好操作
+                      width: editMode
+                        ? '100%'
+                        : `min(100%, calc((100vh - 340px) * ${A4_W_CM} / ${A4_H_CM}))`,
+                      margin: '0 auto',
                       cursor: editMode ? (dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab') : 'default' }}
              onPointerDown={e => editMode && startPan(e)}
              onPointerMove={onCanvasPointerMove}
