@@ -1869,6 +1869,13 @@ const CANVAS_FONTS = {
  * 元件的公分尺寸即以此換算，畫面比例也依此設定，所見即所印。
  */
 const A4_W_CM = 27.16;
+/**
+ * 位置圖的字級基準寬度（px）。元件字級是以「畫布約 1000px 寬」的情況設定的，
+ * 畫布縮小時字要跟著等比縮小，否則字塞不進格子會擠成好幾行。
+ * 換算方式：字級(px) ÷ 基準寬度 × 100 ＝ 以畫布寬度為單位的 cqw。
+ */
+const CANVAS_REF_W = 1000;
+const canvasFont = (px) => `max(6px, ${(px / CANVAS_REF_W * 100).toFixed(3)}cqw)`;
 const A4_H_CM = 18.46;
 
 const CANVAS_STROKES = {
@@ -11382,7 +11389,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
   const items = Array.isArray(layout?.items) ? layout.items : gridLayoutToCanvas(layout ?? {});
   return (
     <div className="vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
-         style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
+         style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`, containerType: 'inline-size',
                   width: `min(100%, calc((100vh - ${fitPx ?? 340}px) * ${A4_W_CM} / ${A4_H_CM}))`,
                   margin: '0 auto' }}>
       {items.map(it => {
@@ -11404,7 +11411,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
                }}>
             <div className="leading-tight px-1 w-full break-words whitespace-pre-wrap"
                  style={{
-                   fontSize: `${it.fontSize ?? 11}px`,
+                   fontSize: canvasFont(it.fontSize ?? 11),
                    fontWeight: it.bold === false ? 500 : 700,
                    fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
                    textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
@@ -11419,7 +11426,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
                   const absent = absentIds?.has(v) || (rollCallStarted && !attendedIds?.has(v));
                   return (
                     <span key={i} title={nameOf(v)}
-                      style={{ fontSize: `${Math.max(10, (it.fontSize ?? 11))}px` }}
+                      style={{ fontSize: canvasFont(Math.max(10, (it.fontSize ?? 11))) }}
                       className={`font-bold rounded px-1 border-2 leading-tight max-w-full truncate
                                   ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                       {nameOf(v)}{absent && ' ⚠'}
@@ -12438,7 +12445,7 @@ function StationBoard() {
         <div ref={canvasRef}
              className={`vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
-             style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`,
+             style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`, containerType: 'inline-size',
                       // 一般檢視時讓整張圖落在一個畫面內，不必上下捲動；
                       // 編輯版面時工具列與屬性面板較高，維持原寬度以免畫布小到不好操作
                       width: editMode
@@ -12492,14 +12499,14 @@ function StationBoard() {
                     className="w-full h-[80%] resize-none bg-transparent border border-blue-400
                                rounded px-1 py-0.5 outline-none leading-tight"
                     style={{ textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
-                             fontSize: `${it.fontSize ?? 11}px`,
+                             fontSize: canvasFont(it.fontSize ?? 11),
                              fontWeight: it.bold === false ? 500 : 700,
                              fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
                              color: it.textHex ?? (it.fillHex ? '#334155' : col.text) }} />
                 ) : (
                   <div className="leading-tight px-1 w-full break-words whitespace-pre-wrap"
                        style={{
-                         fontSize: `${it.fontSize ?? 11}px`,
+                         fontSize: canvasFont(it.fontSize ?? 11),
                          fontWeight: it.bold === false ? 500 : 700,
                          fontFamily: (CANVAS_FONTS[it.font] ?? CANVAS_FONTS.default).css,
                          textAlign: (ALIGN_H[it.align] ?? ALIGN_H.center).css,
@@ -12520,7 +12527,7 @@ function StationBoard() {
                                  : absentIds.has(v) ? '此人當日點名為未到班'
                                  : rollCallStarted ? '當日已在點名，但此人尚無點名紀錄（視同未到）'
                                  : '點一下移除'}
-                          style={{ fontSize: `${Math.max(10, (it.fontSize ?? 11))}px` }}
+                          style={{ fontSize: canvasFont(Math.max(10, (it.fontSize ?? 11))) }}
                           className={`font-bold rounded px-1 border-2 leading-tight max-w-full truncate
                                       ${nameChipClass(v, attendedIds, absentIds, rollCallStarted)}`}>
                           {nameOf(v)}{absent && ' ⚠'}
