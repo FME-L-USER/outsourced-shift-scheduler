@@ -11390,7 +11390,7 @@ function StationCanvasView({ layout, cells, nameOf, attendedIds, absentIds, roll
   return (
     <div className="vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden bg-white"
          style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`, containerType: 'inline-size',
-                  width: `min(100%, calc((100vh - ${fitPx ?? 340}px) * ${A4_W_CM} / ${A4_H_CM}))`,
+                  width: `min(100%, calc((100vh - ${fitPx ?? 220}px) * ${A4_W_CM} / ${A4_H_CM}))`,
                   margin: '0 auto' }}>
       {items.map(it => {
         const col = CANVAS_COLORS[it.fill] ?? CANVAS_COLORS.white;
@@ -12165,7 +12165,7 @@ function StationBoard() {
               <StationCanvasView layout={layouts[k]}
                 cells={stationBoard?.[date]?.[k] ?? {}}
                 nameOf={nameOf} attendedIds={attendedIds} absentIds={absentIds}
-                rollCallStarted={rollCallStarted} fitPx={420} />
+                rollCallStarted={rollCallStarted} fitPx={300} />
             </div>
           ))}
         </div>
@@ -12446,11 +12446,11 @@ function StationBoard() {
              className={`vsp-canvas relative w-full border border-[#DDD9D0] rounded-lg overflow-hidden
                          ${editMode ? 'bg-[linear-gradient(0deg,#f1f5f9_1px,transparent_1px),linear-gradient(90deg,#f1f5f9_1px,transparent_1px)] bg-[size:5%_5%]' : 'bg-white'}`}
              style={{ aspectRatio: `${A4_W_CM} / ${A4_H_CM}`, containerType: 'inline-size',
-                      // 一般檢視時讓整張圖落在一個畫面內，不必上下捲動；
+                      // 一般檢視時盡量佔滿可用寬度，只用視窗高度做上限，避免兩側留白過多；
                       // 編輯版面時工具列與屬性面板較高，維持原寬度以免畫布小到不好操作
                       width: editMode
                         ? '100%'
-                        : `min(100%, calc((100vh - 340px) * ${A4_W_CM} / ${A4_H_CM}))`,
+                        : `min(100%, calc((100vh - 220px) * ${A4_W_CM} / ${A4_H_CM}))`,
                       margin: '0 auto',
                       cursor: editMode ? (dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab') : 'default' }}
              onPointerDown={e => editMode && startPan(e)}
