@@ -12526,9 +12526,10 @@ function StationBoard() {
                           {nameOf(v)}{absent && ' ⚠'}
                         </button>
                       ) : (
+                        /* 空位的「＋」只在畫面上操作用，列印時不印 */
                         <button key={i} disabled={!canEdit}
                           onClick={() => { setPicking({ blockKey: it.id, idx: i }); setSearch(''); }}
-                          className="text-[10px] text-slate-400 border border-dashed border-slate-300
+                          className="vsp-no-print text-[10px] text-slate-400 border border-dashed border-slate-300
                                      rounded px-1 hover:border-blue-400 hover:text-blue-500">＋</button>
                       );
                     })}
