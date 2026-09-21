@@ -5111,8 +5111,13 @@ function ScheduleTable() {
     }
   };
 
-  const exportConverted = () => {
+  /**
+   * 班表匯出。mode = 'code' 為代碼轉換版（依班別代號表換成公司代碼），
+   * mode = 'mark' 為記號版，內容與畫面上看到的 V／休／例／國 相同。
+   */
+  const exportConverted = (mode = 'code') => {
     try {
+      const isMark = mode === 'mark';
       const colLabel = h => rangeMode ? `${h.month}/${h.day}(${h.wd})` : `${h.day}(${h.wd})`;
       const header = ['員工編號', '姓名', '廠商', ...dayHeaders.map(colLabel), '出勤天', '休假天'];
       const rows = visibleEmployees.map(emp => {
@@ -5120,12 +5125,12 @@ function ScheduleTable() {
         let leaveDays = 0;
         const dayCells = dayHeaders.map(({ dk, day, month, year }) => {
           const raw = schedule[emp.id]?.[dk] ?? 'V';
-          const holidayLabel = raw === '國' ? getHolidayLabel(day, month, year) : null;
-          const sc = getDisplayCode(emp, raw, day, month, year);
-          const display = (sc !== raw ? sc : null) ?? holidayLabel ?? raw;
           if (raw === 'V') workDays++;
           else if (raw === '休' || raw === '例' || raw === '國') leaveDays++;
-          return display;
+          if (isMark) return SHIFT_CODES[raw]?.label || raw;     // 與畫面一致的記號
+          const holidayLabel = raw === '國' ? getHolidayLabel(day, month, year) : null;
+          const sc = getDisplayCode(emp, raw, day, month, year);
+          return (sc !== raw ? sc : null) ?? holidayLabel ?? raw;
         });
         return [emp.empId ?? '', emp.name, emp.vendor ?? '', ...dayCells, workDays, leaveDays];
       });
@@ -5137,8 +5142,8 @@ function ScheduleTable() {
       const label = rangeMode
         ? `${viewPeriod.start}~${viewPeriod.end}`
         : `${selectedYear}年${selectedMonth}月`;
-      XLSX.writeFile(wb, `班表_代碼轉換_${label}.xlsx`);
-      toast('代碼轉換匯出成功', 'success');
+      XLSX.writeFile(wb, `班表_${isMark ? '記號' : '代碼轉換'}_${label}.xlsx`);
+      toast(`${isMark ? '記號' : '代碼轉換'}匯出成功`, 'success');
     } catch (err) {
       toast('匯出失敗：' + err.message, 'error');
     }
@@ -5848,9 +5853,14 @@ function ScheduleTable() {
             className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
             🎌 一鍵轉換國
           </button>}
-          {isManager && <button onClick={exportConverted}
+          {isManager && <button onClick={() => exportConverted('code')}
             className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-1">
             📊 代碼轉換匯出
+          </button>}
+          {isManager && <button onClick={() => exportConverted('mark')}
+            title="匯出畫面上看到的 V／休／例／國 記號"
+            className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-sm hover:bg-emerald-600 flex items-center gap-1">
+            🔡 記號匯出
           </button>}
           <button onClick={handlePrintReport}
             className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1">
