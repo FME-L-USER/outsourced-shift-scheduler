@@ -2059,6 +2059,26 @@ app.post('/api/auth/vendor-register', requireAuth, requireAdmin, async (req, res
   }
 });
 
+// ── PUT /api/auth/vendor-scope （admin only）──────────────
+// 只更新廠商帳號的可見範圍（vendors／allowed_warehouses），不動密碼。
+// 用於補齊舊帳號缺少的倉別；若走 vendor-register 會連同密碼一起覆蓋，
+// 可能把使用者自己改過的密碼蓋回舊值。
+app.put('/api/auth/vendor-scope', requireAuth, requireAdmin, async (req, res) => {
+  const { username, vendors, allowed_warehouses } = req.body ?? {};
+  if (!username) return res.status(400).json({ error: '缺少帳號' });
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE users SET vendors=$2, allowed_warehouses=$3 WHERE username=$1 AND role='vendor'`,
+      [username, vendors || [], allowed_warehouses || []]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: '找不到此帳號' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('vendor-scope error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
 // ── POST /api/auth/vendor-login ──────────────────────────
 // 廠商幹部登入：支援兩種模式
 //   password     — 明文密碼，server 以 PBKDF2 驗證（DB 帳號直接登入）

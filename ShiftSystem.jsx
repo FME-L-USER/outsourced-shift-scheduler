@@ -14185,9 +14185,47 @@ function AccountManagement() {
     users.filter(u => u.role === ROLES.VENDOR && u.employeeId).map(u => u.employeeId)
   );
 
+  /**
+   * 舊的升級帳號沒有設定所屬倉別（allowedWarehouses 為空），可用範圍會比
+   * 廠商自行申請的帳號窄。管理員進到此頁時自動補上，之後兩者權限一致。
+   */
+  const whOfEmp = (emp) =>
+    warehouses.find(w => (w.departments ?? []).some(d => emp?.dept && d.name === emp.dept))
+    ?? warehouses.find(w => (w.departments ?? []).some(d => (d.vendors ?? []).includes(emp?.vendor)));
+  useEffect(() => {
+    if (currentUser?.role !== ROLES.ADMIN) return;
+    const broken = users.filter(u =>
+      u.role === ROLES.VENDOR && u.employeeId && (u.allowedWarehouses ?? []).length === 0);
+    if (broken.length === 0) return;
+    const fixed = [];
+    for (const u of broken) {
+      const emp = employees.find(e => e.id === u.employeeId);
+      const wh = whOfEmp(emp);
+      if (wh) fixed.push({ ...u, allowedWarehouses: [wh.id] });
+    }
+    if (fixed.length === 0) return;
+    const byId = new Map(fixed.map(u => [u.id, u]));
+    setUsers(prev => prev.map(u => byId.get(u.id) ?? u));
+    // 只更新可見範圍，不走 vendor-register，避免把使用者改過的密碼覆蓋回舊值
+    const token = localStorage.getItem(JWT_KEY);
+    if (token) {
+      fixed.forEach(u => {
+        fetch('/api/auth/vendor-scope', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ username: u.username, vendors: u.vendors ?? [],
+                                 allowed_warehouses: u.allowedWarehouses ?? [] }),
+        }).catch(e => console.warn('補齊倉別失敗:', e.message));
+      });
+    }
+  }, [users, employees, warehouses, currentUser]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleUpgradeToVendor = async (emp) => {
     if (upgradedEmpIds.has(emp.id)) { toast('此員工已有委外幹部帳號', 'warn'); return; }
     const hashed = await hashPwd(emp.empId);
+    // 權限與「廠商自行申請」的帳號一致：以所屬倉別為範圍、看得到該倉該廠商的所有人員，
+    // 不受課別限制。倉別優先用員工的課別回推，找不到再用廠商比對。
+    const ownWh = whOfEmp(emp);
     const newUser = {
       id: 'worker_upgraded_' + emp.id,
       username: emp.empId,
@@ -14195,7 +14233,7 @@ function AccountManagement() {
       name: emp.name,
       role: ROLES.VENDOR,
       vendors: emp.vendor ? [emp.vendor] : [],
-      allowedWarehouses: [],
+      allowedWarehouses: ownWh ? [ownWh.id] : [],
       approved: true,
       loginCount: 0,
       employeeId: emp.id,
