@@ -2509,7 +2509,9 @@ const STAFF_PAGE_OPTIONS = () => NAV_ITEMS.filter(n => n.roles.includes(ROLES.AR
 
 function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, collapsed, onToggle }) {
   const { employees: navEmployees } = useApp();
-  const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+  // 與角色預設值合併：帳號是在新分頁（如站區表）加入之前建立的，
+  // 其 permissions 不會有該鍵，若只看「!== false」會變成未授權也看得到。
+  const userPerms = { ...getDefaultPermissions(currentUser.role), ...(currentUser.permissions ?? {}) };
   const items = NAV_ITEMS.filter(n =>
     n.roles.includes(currentUser.role) &&
     (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false) &&
@@ -3711,7 +3713,9 @@ function WarehouseDeptBar() {
 function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, open, onClose }) {
   const { employees: navEmployees } = useApp();  // hook 須在提早 return 之前呼叫
   if (!open) return null;
-  const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+  // 與角色預設值合併：帳號是在新分頁（如站區表）加入之前建立的，
+  // 其 permissions 不會有該鍵，若只看「!== false」會變成未授權也看得到。
+  const userPerms = { ...getDefaultPermissions(currentUser.role), ...(currentUser.permissions ?? {}) };
   const items = NAV_ITEMS.filter(n =>
     n.roles.includes(currentUser.role) &&
     (currentUser.role === ROLES.ADMIN || userPerms[n.key]?.view !== false) &&
@@ -16048,7 +16052,10 @@ export default function App() {
 
             <div className="flex-1 overflow-y-auto" style={{background:'var(--sms-bg)'}}>
               {(() => {
-                const userPerms = currentUser.permissions ?? getDefaultPermissions(currentUser.role);
+                // 與角色預設值合併：帳號是在新分頁（如站區表）加入之前建立的，
+                // 其 permissions 不會有該鍵，若只看「!== false」會變成未授權也看得到。
+                const userPerms = { ...getDefaultPermissions(currentUser.role),
+                                    ...(currentUser.permissions ?? {}) };
                 const allowed = currentUser.role === ROLES.ADMIN || userPerms[currentPage]?.view !== false;
                 if (!allowed) return (
                   <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
