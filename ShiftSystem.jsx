@@ -3903,6 +3903,28 @@ function Dashboard() {
     return Object.entries(dayData).filter(([id, r]) => scopeIds.has(id) && r.present).length;
   }, [attendData, attendDk, dashEmployees]);
 
+  /**
+   * 各組別的長期在職人數（組別 × 廠商）。
+   * 只算長期人員且未離職者，並套用畫面上方的倉別／課別／組別／作業區篩選。
+   */
+  const groupHeadcount = useMemo(() => {
+    const vendors = [...new Set(visibleEmployees.map(e => e.vendor))]
+      .sort((a, b) => vendorRank(a) - vendorRank(b));
+    const map = new Map();
+    for (const e of visibleEmployees) {
+      const g = (e.group ?? '').trim() || '未設定組別';
+      if (!map.has(g)) map.set(g, { group: g, counts: {}, total: 0 });
+      const row = map.get(g);
+      row.counts[e.vendor] = (row.counts[e.vendor] ?? 0) + 1;
+      row.total++;
+    }
+    const rows = [...map.values()].sort((a, b) =>
+      a.group === '未設定組別' ? 1 : b.group === '未設定組別' ? -1
+        : a.group.localeCompare(b.group, 'zh-Hant'));
+    const totals = vendors.map(v => visibleEmployees.filter(e => e.vendor === v).length);
+    return { vendors, rows, totals, grand: visibleEmployees.length };
+  }, [visibleEmployees]);
+
   // ── derived ──
   const totalPrevWorking = vendorStats.reduce((a, s) => a + s.prevWorking, 0);
   const weekDiff         = selectedDayWorking - totalPrevWorking;
@@ -4201,6 +4223,66 @@ function Dashboard() {
           </div>
         </div>
 
+      </div>
+
+      {/* ── 各組別長期在職人數（組別 × 廠商）── */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 pt-4 pb-3">
+          <div className="text-sm font-bold text-slate-800">各組別長期在職人數</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            依人員清冊的組別統計，不含臨時人力與已離職者；共 {groupHeadcount.grand} 人
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse" style={{ minWidth: 480, fontVariantNumeric: 'tabular-nums' }}>
+            <thead>
+              <tr className="bg-slate-50 border-y-2 border-slate-200">
+                <th className="text-left px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">組別</th>
+                {groupHeadcount.vendors.map(v => (
+                  <th key={v} className="text-center px-3 py-2 text-[10.5px] font-bold tracking-wider text-slate-500">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle"
+                          style={{ background: VENDOR_COLORS_MAP[v] }} />
+                    {v}
+                  </th>
+                ))}
+                <th className="text-center px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-600">總計</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupHeadcount.rows.length === 0 && (
+                <tr><td colSpan={groupHeadcount.vendors.length + 2}
+                        className="px-3 py-4 text-center text-xs text-slate-400">沒有符合條件的人員</td></tr>
+              )}
+              {groupHeadcount.rows.map((r, i) => (
+                <tr key={r.group}
+                    className={`hover:bg-blue-50/40 transition-colors
+                                ${i > 0 ? 'border-t border-slate-100' : ''} ${i % 2 === 1 ? 'bg-slate-50/50' : ''}`}>
+                  <td className="px-3 py-2.5 text-sm font-medium text-slate-700">
+                    {r.group === '未設定組別'
+                      ? <span className="text-amber-600">⚠ 未設定組別</span>
+                      : r.group}
+                  </td>
+                  {groupHeadcount.vendors.map(v => (
+                    <td key={v} className="px-3 py-2.5 text-center text-sm">
+                      {r.counts[v] ? <span className="text-slate-700">{r.counts[v]}</span>
+                                   : <span className="text-slate-300">—</span>}
+                    </td>
+                  ))}
+                  <td className="px-3 py-2.5 text-center text-sm font-bold text-slate-800">{r.total}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-50 border-t-2 border-slate-200">
+                <td className="px-3 py-2.5 text-sm font-bold text-slate-600">總計</td>
+                {groupHeadcount.totals.map((n, i) => (
+                  <td key={i} className="px-3 py-2.5 text-center text-sm font-bold text-slate-700">{n}</td>
+                ))}
+                <td className="px-3 py-2.5 text-center text-sm font-bold text-blue-700">{groupHeadcount.grand}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
 
       {/* ── Vendor detail table ── */}
