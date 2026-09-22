@@ -14200,7 +14200,8 @@ function AccountManagement() {
       loginCount: 0,
       employeeId: emp.id,
       permissions: getDefaultPermissions(ROLES.VENDOR),
-      mustChangePassword: true,
+      // 由人員清冊升級的幹部：帳密與員編相同，不強制改密碼（與委外人員一致）
+      mustChangePassword: false,
     };
     setUsers(prev => [...prev, newUser]);
     toast(`已升級 ${emp.name}（${emp.empId}）為委外幹部`, 'success');
@@ -15892,7 +15893,10 @@ export default function App() {
   }
 
   // 首次登入強制改密碼（委外人員已改為帳密皆為員工編號，一律跳過）
-  if (currentUser.mustChangePassword && currentUser.role !== ROLES.WORKER) {
+  // 由人員清冊升級的委外幹部（帶 employeeId）與委外人員一樣，帳密＝員編、不強制改密碼；
+  // 先前已建立、仍帶著舊旗標的帳號也一併豁免，不必再手動清除。
+  const upgradedVendor = currentUser.role === ROLES.VENDOR && !!currentUser.employeeId;
+  if (currentUser.mustChangePassword && currentUser.role !== ROLES.WORKER && !upgradedVendor) {
     const isWorker = currentUser.role === ROLES.WORKER;
     return (
       <ToastProvider>
