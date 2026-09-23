@@ -206,7 +206,18 @@ const inServiceOn = (e, dk) => {
   const [y, m, d] = String(dk).split('-').map(Number);
   const [ly, lm, ld] = String(e.leaveDate).split('-').map(Number);
   if (!y || !ly) return true;
-  return new Date(y, m - 1, d).getTime() <= new Date(ly, lm - 1, ld).getTime();
+  // 離職日＝生效日：當天起就不在職，最後一個工作日是離職日的前一天
+  return new Date(y, m - 1, d).getTime() < new Date(ly, lm - 1, ld).getTime();
+};
+
+/**
+ * 該日是否仍應出現在名單上。
+ * 在職者一律顯示；已離職者只在離職日之前顯示，讓離職日可以預先登錄；
+ * 已離職但沒填離職日的人視同立即離職，不再顯示。
+ */
+const activeOn = (e, dk) => {
+  if (!isLeaver(e)) return true;
+  return !!e?.leaveDate && inServiceOn(e, dk);
 };
 
 /** 離職日顯示成 M/D；沒填則回傳空字串 */
@@ -4984,9 +4995,16 @@ function ScheduleTable() {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    // 離職人員預設不出現在班表。檢視過去期間時可勾選顯示，
+    // 離職人員預設只顯示到離職日前一天（離職日可預先登錄），
+    // 檢視更早的期間時可勾選「顯示離職」把人全部列出來，
     // 否則離職前的班表會變成空白，與報表對不起來。
-    if (!showLeavers) list = list.filter(e => !isLeaver(e));
+    if (!showLeavers) {
+      // 以目前檢視期間的最後一天判斷：離職日在這之後的人仍要列出來排班
+      const lastDk = rangeMode && viewRange
+        ? viewRange.end
+        : dateKey(selectedYear, selectedMonth, getDaysInMonth(selectedYear, selectedMonth));
+      list = list.filter(e => activeOn(e, lastDk));
+    }
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (nameSearch.trim()) {
       const q = nameSearch.trim().toLowerCase();
@@ -5018,7 +5036,8 @@ function ScheduleTable() {
     if (!sort.col) return [...list].sort(byDefault);
     const cmp = primary[sort.col];
     return [...list].sort((a, b) => (cmp(a, b) * sort.dir) || byDefault(a, b));
-  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch, shiftTypesByWh, sort, showLeavers]);
+  }, [employees, currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor, nameSearch, shiftTypesByWh, sort, showLeavers,
+      rangeMode, viewRange, selectedYear, selectedMonth]);
 
   /** 計算當週某代碼出現次數（週一～週日） */
   const getWeeklyCode = useCallback((empId, dk, code) => {
@@ -9508,7 +9527,12 @@ function Attendance({ phoneOnly = false }) {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
-    list = list.filter(e => !isLeaver(e));   // 離職者不會來上班，不列入點名
+    // 離職日之前仍要點名（可先登錄未來的離職日）；離職日當天起不再列出
+    {
+      const [ly, lm, ld] = attendDate.split('-').map(Number);
+      const ldk = dateKey(ly, lm, ld);
+      list = list.filter(e => activeOn(e, ldk));
+    }
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (selectedGroup) list = list.filter(e => e.shiftType === selectedGroup || e.group === selectedGroup);
     // 班表當日排休/例/國 → 不出現在點名名單，
@@ -9657,7 +9681,7 @@ function Attendance({ phoneOnly = false }) {
       ? employees.filter(e => currentUser.vendors.includes(e.vendor))
       : employees.filter(e => e.vendor && e.vendor.trim() !== '');
     list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea)
-      .filter(e => !isLeaver(e) && !onList.has(e.id));
+      .filter(e => activeOn(e, dk) && !onList.has(e.id));
     return list
       .map(e => ({ ...e, todayCode: schedule[e.id]?.[dk] ?? '' }))
       .sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) ||
@@ -9708,7 +9732,7 @@ function Attendance({ phoneOnly = false }) {
     if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
     if (group) list = list.filter(e => e.shiftType === group || e.group === group);
     return list.filter(e =>
-      !isLeaver(e) && inServiceOn(e, dk) &&
+      activeOn(e, dk) &&
       !recs[e.id]?._excluded &&
       // 排休／例／國者不列入，但若當日已有到班或簽到紀錄仍須列出
       (!ABSENT_CODES.has(schedule[e.id]?.[dk]) || hasAttendActivity(recs[e.id])));
@@ -12471,7 +12495,7 @@ function StationBoard() {
     if (layout?.group)    list = list.filter(e => e.group === layout.group || e.shiftType === layout.group);
     if (layout?.workArea) list = list.filter(e => normName(e.workArea) === normName(layout.workArea));
     const longs = list
-      .filter(e => !isLeaver(e) && inServiceOn(e, dk) && (schedule[e.id]?.[dk] ?? 'V') === 'V')
+      .filter(e => activeOn(e, dk) && (schedule[e.id]?.[dk] ?? 'V') === 'V')
       .map(e => ({ id: e.id, name: e.name, empId: e.empId, vendor: e.vendor, temp: false }));
 
     // 臨時人力：僅依組別區分，不分作業區
