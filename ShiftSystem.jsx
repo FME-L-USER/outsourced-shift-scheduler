@@ -1413,8 +1413,13 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
           ? '登入失敗次數過多，帳號已鎖定 15 分鐘'
           : (data.error ?? `帳號或密碼錯誤（已失敗 ${rf.count}/5 次）`));
                 return;
-      } catch {
-        setError('伺服器連線失敗，請稍後再試');
+      } catch (e) {
+        // 這裡只會在「連不到伺服器」時觸發（帳密錯誤是 401，不會進來）。
+        // 常見原因：開發預覽伺服器已關閉、網路中斷、或開到舊分頁。
+        console.error('登入連線失敗:', e);
+        setError(`伺服器連線失敗（${e?.message || '無法連線'}）。` +
+                 `請確認網路，或重新整理頁面（Ctrl+F5）後再試；` +
+                 `若是從開發預覽網址（localhost）開啟，請改用正式網址。`);
                 return;
       }
     }
