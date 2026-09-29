@@ -1387,7 +1387,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
             ? (data.user.vendors ?? [])
             : vendors.map(v => v.name);
           onLogin({
-            id: `api_${data.user.id}`, username: data.user.username, name: data.user.username,
+            id: `api_${data.user.id}`, username: data.user.username,
+            name: data.user.display_name || data.user.name || data.user.username,
             role: apiRole, vendors: apiVendors,
             permissions: buildPermsFromPagePerms(apiRole, data.user.page_perms, data.user.allowedWarehouses),
             allowedWarehouses: data.user.allowedWarehouses || [],
@@ -14261,15 +14262,23 @@ function AccountManagement() {
   const [savingRoleFor,  setSavingRoleFor]  = useState(null);
   const [vendorSearch,   setVendorSearch]   = useState('');
 
+  // 取不到資料庫帳號時會退回本機的種子清單（只有 4 筆），看起來像「帳號不見了」，
+  // 因此改為記錄失敗原因並在畫面上明確提示，而不是默默吞掉。
+  const [apiUsersError, setApiUsersError] = useState('');
   const refreshApiUsers = useCallback(() => {
-    if (!currentUser?._apiAuth) return;
     const token = localStorage.getItem(JWT_KEY);
-    if (!token) return;
+    if (!token) { setApiUsersError('尚未取得登入權杖，請重新登入'); return; }
     fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) { setApiUsers(data); setApiUsersLoaded(true); } })
-      .catch(() => {});
-  }, [currentUser]);
+      .then(async r => {
+        if (!r.ok) throw new Error(r.status === 401 ? '登入已逾時，請重新登入' : `HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        if (!Array.isArray(data)) throw new Error('回傳格式不正確');
+        setApiUsers(data); setApiUsersLoaded(true); setApiUsersError('');
+      })
+      .catch(e => { setApiUsersLoaded(false); setApiUsersError(e.message || '連線失敗'); });
+  }, []);
 
   useEffect(() => { refreshApiUsers(); }, [refreshApiUsers]);
 
@@ -15120,6 +15129,20 @@ function AccountManagement() {
       })()}
 
       {/* 清單表頭（員工 / 廠商 tab） */}
+      {!apiUsersLoaded && apiUsersError && (
+        <div className="px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900
+                        flex flex-wrap items-center gap-2">
+          <span>
+            ⚠ <strong>目前顯示的是離線備援清單</strong>，未能取得資料庫上的帳號（{apiUsersError}）。
+            實際帳號並未消失，請按「重新整理」重新取得；若仍失敗請重新登入。
+          </span>
+          <button onClick={refreshApiUsers}
+            className="ml-auto px-3 py-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600">
+            重新整理
+          </button>
+        </div>
+      )}
+
       {/* ── 員工帳號 Tab：AD 員工清單（API mode） ── */}
       {activeTab === 'staff' && apiUsersLoaded && (
         <div className="border border-[#DDD9D0] rounded-xl overflow-hidden">
