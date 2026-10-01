@@ -1834,7 +1834,10 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
     delete rest.vendorCompanyNames; // 廠商公司抬頭
     delete rest.unlockPwd;          // 快速解鎖密碼（僅管理員可設定）
     delete rest.vendors;            // 廠商主檔
+    delete rest.users;              // 帳號清單（帳號管理僅管理員可操作）
   }
+  // 帳號清單：送出空清單視為尚未載入，不可清空既有帳號
+  if (Array.isArray(rest.users) && rest.users.length === 0) delete rest.users;
   // 空的 schedule 一律移除，絕對不可寫入。
   // 最後的寫入是 `data = app_state.data || $1::jsonb`，jsonb 的 || 是「整個 key 取代」，
   // 送 {} 會把整份班表清空。前端只送異動格子時，沒有異動就會送出 {}，故在此把關。
@@ -1850,7 +1853,8 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
       (Array.isArray(rest.warehouses) && rest.warehouses.length > 0) ||
       rest.deptLocks || rest.deptRanges || rest.deptSegments ||
       rest.attendData || rest.extras || rest.dailyDemand || rest.shiftTypesByWh ||
-      rest.stationBoard || rest.stationLayouts) {
+      rest.stationBoard || rest.stationLayouts ||
+      (Array.isArray(rest.users) && rest.users.length > 0)) {
     try {
       const { rows: curRows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
       const cur = curRows[0]?.data ?? {};
@@ -1866,6 +1870,22 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
       if (rest.workerPwds) {
         // 伺服器現值優先：本人剛設定的密碼不可被他人的舊快照覆蓋
         rest.workerPwds = { ...rest.workerPwds, ...(cur.workerPwds ?? {}) };
+      }
+      // users：以帳號名稱逐筆合併。原本整份覆蓋，管理員剛核准的廠商帳號，
+      // 會被其他還開著舊頁面的瀏覽器存檔時用舊清單洗掉，導致帳號可登入
+      // 卻不在「廠商帳號」分頁上。
+      // 作法：來源有的以來源為準；伺服器現值有、來源沒有的，只要資料庫帳號表
+      // 仍有此帳號就保留（刪除帳號時會一併刪除資料庫那筆，故刪除語意不受影響）。
+      if (Array.isArray(rest.users) && rest.users.length > 0) {
+        const uname = u => String(u?.username ?? '').trim();
+        const incomingNames = new Set(rest.users.map(uname));
+        const missing = (cur.users ?? []).filter(u => uname(u) && !incomingNames.has(uname(u)));
+        if (missing.length > 0) {
+          const { rows: dbRows } = await pool.query(
+            'SELECT username FROM users WHERE username = ANY($1)', [missing.map(uname)]);
+          const inDb = new Set(dbRows.map(r => r.username));
+          rest.users = [...rest.users, ...missing.filter(u => inDb.has(uname(u)))];
+        }
       }
       // warehouses：日翊(area)僅能異動自己 allowed_warehouses 內的倉別，其餘沿用伺服器現值，
       // 且不得新增或刪除倉別。前端已做收斂，但伺服器端原本未區分 admin/area，

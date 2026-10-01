@@ -14224,6 +14224,30 @@ function AccountManagement() {
     }
   }, [users, employees, warehouses, currentUser]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * 資料庫已核准、本機清單卻沒有的廠商帳號自動補回。
+   * 核准後若被其他瀏覽器的舊清單覆蓋掉，帳號仍可登入，但不會出現在分頁上、也無法管理。
+   */
+  useEffect(() => {
+    if (currentUser?.role !== ROLES.ADMIN || !apiUsersLoaded) return;
+    const have = new Set(users.map(u => u.username));
+    const missing = apiUsers.filter(a => a.role === ROLES.VENDOR && a.approved && !have.has(a.username));
+    if (missing.length === 0) return;
+    setUsers(prev => [...prev, ...missing
+      .filter(a => !prev.some(x => x.username === a.username))
+      .map(a => ({
+        id: a.id,
+        username: a.username,
+        name: a.name || a.username,
+        role: ROLES.VENDOR,
+        approved: true,
+        vendors: a.vendors ?? [],
+        allowedWarehouses: a.allowedWarehouses ?? [],
+        permissions: getDefaultPermissions(ROLES.VENDOR),
+        mustChangePassword: false,
+      }))]);
+  }, [apiUsers, apiUsersLoaded, users, currentUser]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleUpgradeToVendor = async (emp) => {
     if (upgradedEmpIds.has(emp.id)) { toast('此員工已有委外幹部帳號', 'warn'); return; }
     const hashed = await hashPwd(emp.empId);
