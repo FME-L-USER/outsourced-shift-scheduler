@@ -8832,10 +8832,288 @@ function WorkerSelfCheck() {
   );
 }
 
+// ── 手機控管：開放點選模式（日翊帳號登入的共用裝置，由人員自行點選登記）──
+// 組別 → 廠商 → 姓名 → 簽到／手機控管，畫面全螢幕鎖定，離開須輸入解鎖密碼，
+// 避免路過者藉由這台已登入的裝置進入系統其他功能。
+const KIOSK_FLAG = 'sms_phone_kiosk';
+const KIOSK_IDLE_MS = 30 * 1000;   // 登記卡片停留太久自動回首頁，避免下一位誤點到上一位
+// 第 1 步組別顯示順序（比對時忽略空白與連字號，「日班-出貨組」＝「日班出貨組」）
+const KIOSK_GROUP_ORDER = ['日班出貨組', '日班理貨組', '中班理貨組', '運務組日班', '運務組夜班'];
+
+function KioskToggle({ rec, field, label, tone, onSet }) {
+  const on = !!rec[field];
+  const nowTimeStr = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+  const TONES = {
+    teal:    'bg-teal-600 border-teal-600',
+    slate:   'bg-slate-600 border-slate-600',
+    indigo:  'bg-indigo-600 border-indigo-600',
+    orange:  'bg-orange-500 border-orange-500',
+    amber:   'bg-amber-500 border-amber-500',
+    emerald: 'bg-emerald-600 border-emerald-600',
+  };
+  return (
+    <button type="button"
+      onClick={() => onSet({
+        [field]: !on,
+        [field + 'At']: !on ? nowTimeStr() : '',
+        ...(!on ? { [PHONE_OPPOSITE[field] ?? '_']: false } : {}),
+      })}
+      className={`flex-1 min-w-[120px] rounded-2xl border-2 px-4 py-4 text-lg font-bold transition-colors
+        ${on ? `${TONES[tone]} text-white` : 'bg-white border-slate-200 text-slate-600 hover:border-slate-400'}`}>
+      {on ? '✓ ' : ''}{label}
+      {on && rec[field + 'At'] && <span className="block text-sm font-normal opacity-90">{rec[field + 'At']}</span>}
+    </button>
+  );
+}
+
+// people 含長期人員與當日臨時人力（_temp）；兩者紀錄存放位置不同，由呼叫端的 getRecord／setRecord 分流
+function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayStr, unlockPwd, onExit }) {
+  const [group, setGroup]   = useState(null);
+  const [vendor, setVendor] = useState(null);
+  const [empId, setEmpId]   = useState(null);
+  const [kw, setKw]         = useState('');
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitPwd, setExitPwd]   = useState('');
+  const [exitErr, setExitErr]   = useState('');
+  const [savedTip, setSavedTip] = useState(false);
+
+  const goHome = () => { setGroup(null); setVendor(null); setEmpId(null); setKw(''); };
+
+  // 停在登記卡片一段時間沒有操作就回首頁
+  const lastTouchRef = useRef(Date.now());
+  useEffect(() => {
+    if (!empId) return;
+    lastTouchRef.current = Date.now();
+    const t = setInterval(() => {
+      if (Date.now() - lastTouchRef.current > KIOSK_IDLE_MS) goHome();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [empId]);
+
+  const groupOf = e => e.group || e.shiftType || '未分組';
+  const groups = useMemo(() => {
+    const m = new Map();
+    people.forEach(e => m.set(groupOf(e), (m.get(groupOf(e)) ?? 0) + 1));
+    // 依現場動線排序；不在清單上的組別排在後面
+    const rank = g => {
+      const i = KIOSK_GROUP_ORDER.indexOf(String(g).replace(/[\s\-－]/g, ''));
+      return i < 0 ? KIOSK_GROUP_ORDER.length : i;
+    };
+    return [...m.entries()].sort((a, b) => (rank(a[0]) - rank(b[0])) || a[0].localeCompare(b[0], 'zh-Hant'));
+  }, [people]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const vendorsInGroup = useMemo(() => {
+    const m = new Map();
+    people.filter(e => groupOf(e) === group).forEach(e => m.set(e.vendor, (m.get(e.vendor) ?? 0) + 1));
+    return sortVendorNames([...m.keys()]).map(v => [v, m.get(v)]);
+  }, [people, group]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const names = useMemo(() => {
+    const q = kw.trim().toLowerCase();
+    // 有輸入關鍵字時跨組別、廠商搜尋，方便直接找人
+    const base = q ? people : people.filter(e => groupOf(e) === group && e.vendor === vendor);
+    return base
+      .filter(e => !q || `${e.name ?? ''} ${e.empId ?? ''}`.toLowerCase().includes(q))
+      // 長期人員依員編在前，臨時人力（無員編）依姓名排在後面
+      .sort((a, b) => (!!a._temp - !!b._temp)
+        || String(a.empId ?? '').localeCompare(String(b.empId ?? ''))
+        || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'zh-Hant'));
+  }, [people, group, vendor, kw]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const emp = empId ? people.find(e => e.id === empId) : null;
+  const rec = emp ? getRecord(emp) : {};
+  const onSet = patch => {
+    lastTouchRef.current = Date.now();
+    setRecord(emp, patch);
+    setSavedTip(true);
+    setTimeout(() => setSavedTip(false), 1500);
+  };
+
+  const tryExit = async () => {
+    if (unlockPwd) {
+      if (!(await verifyPwd(exitPwd, unlockPwd))) { setExitErr('密碼錯誤'); return; }
+    }
+    onExit();
+  };
+
+  const step = emp ? 4 : (kw.trim() || vendor) ? 3 : group ? 2 : 1;
+  const crumb = (label, active) => (
+    <span className={`px-4 py-1.5 rounded-full border text-sm
+      ${active ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-slate-200 text-slate-400'}`}>
+      {label}
+    </span>
+  );
+  const card = (key, title, sub, onClick, icon) => (
+    <button key={key} onClick={onClick}
+      className="bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-2xl
+                 py-6 px-3 text-center transition-colors">
+      {icon && <div className="text-2xl mb-1">{icon}</div>}
+      <div className="text-xl md:text-2xl font-bold text-slate-800">{title}</div>
+      {sub && <div className="text-sm text-slate-500 mt-1">{sub}</div>}
+    </button>
+  );
+  const back = () => {
+    if (emp) setEmpId(null);
+    else if (kw.trim()) setKw('');
+    else if (vendor) setVendor(null);
+    else setGroup(null);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9000] bg-[#F1F4F9] flex flex-col overflow-hidden">
+      {/* 頂列 */}
+      <div className="flex items-center gap-3 px-4 md:px-8 py-3 bg-white border-b border-slate-200">
+        <span className="text-lg md:text-xl font-bold text-slate-700">📱 手機控管登記</span>
+        <span className="text-xs md:text-sm text-slate-400">{todayStr}{scopeLabel ? `・${scopeLabel}` : ''}</span>
+        <button onClick={() => { setExitOpen(true); setExitPwd(''); setExitErr(''); }}
+          className="ml-auto px-3 py-1.5 text-xs text-slate-400 border border-slate-200 rounded-lg hover:bg-slate-50">
+          離開點選模式
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5">
+        <div className="max-w-5xl mx-auto space-y-5">
+          {/* 標題列：上一步／步驟／搜尋 */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {step > 1 && (
+              <button onClick={back}
+                className="px-5 py-2.5 bg-white border border-slate-200 rounded-full text-slate-600 hover:bg-slate-50">
+                ← 上一步
+              </button>
+            )}
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-800">
+              {step === 1 && '第 1 步　選擇組別'}
+              {step === 2 && '第 2 步　選擇人力廠商'}
+              {step === 3 && '第 3 步　選擇姓名'}
+              {step === 4 && '簽到 / 手機控管'}
+            </h2>
+            {step < 4 && (
+              <input value={kw} onChange={e => setKw(e.target.value)}
+                placeholder="🔍 直接搜尋姓名或員編"
+                className="ml-auto w-full sm:w-64 border border-slate-200 rounded-full px-4 py-2.5 text-base bg-white" />
+            )}
+          </div>
+          {step < 4 && !kw.trim() && (
+            <div className="flex items-center gap-2 justify-center">
+              {crumb(group ?? '組別', !!group)}<span className="text-slate-300">›</span>
+              {crumb(vendor ?? '廠商', !!vendor)}<span className="text-slate-300">›</span>
+              {crumb('姓名', false)}
+            </div>
+          )}
+
+          {/* 內容 */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-4 md:p-6">
+            {step === 1 && (groups.length === 0
+              ? <p className="text-center text-slate-400 py-10">目前沒有可登記的人員</p>
+              : <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {groups.map(([g, n]) => card(g, g, `${n} 人`, () => setGroup(g), '🗂️'))}
+                </div>)}
+
+            {step === 2 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {vendorsInGroup.map(([v, n]) => card(v, v, `${n} 人`, () => setVendor(v), '🏢'))}
+              </div>
+            )}
+
+            {step === 3 && (names.length === 0
+              ? <p className="text-center text-slate-400 py-10">找不到符合的人員</p>
+              : <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {names.map(e => {
+                    const r = getRecord(e);
+                    return card(e.id, e.name,
+                      <span className="font-mono">
+                        {e._temp
+                          ? <span className="font-sans text-xs px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">臨時人力</span>
+                          : e.empId}
+                        {kw.trim() && <span className="block font-sans text-xs text-slate-400">{e.vendor}・{groupOf(e)}</span>}
+                        {(r.signedIn || r.phoneSubmitted) && (
+                          <span className="block font-sans text-xs text-teal-600 mt-0.5">
+                            {r.signedIn ? '已簽到' : ''}{r.signedIn && r.phoneSubmitted ? '・' : ''}{r.phoneSubmitted ? '已繳手機' : ''}
+                          </span>
+                        )}
+                      </span>,
+                      () => setEmpId(e.id));
+                  })}
+                </div>)}
+
+            {step === 4 && emp && (
+              <div className="max-w-xl mx-auto space-y-5">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-slate-800">{emp.name}</div>
+                  <div className="text-base text-slate-500 mt-1">
+                    {emp._temp ? '臨時人力' : <span className="font-mono">{emp.empId}</span>}・{emp.vendor}・{groupOf(emp)}
+                  </div>
+                  {lockerOf(emp) && (
+                    <p className="mt-3 inline-block px-4 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200
+                                  text-indigo-700 text-lg font-semibold">
+                      🔐 {lockerLabel(lockerOf(emp))}
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <KioskToggle rec={rec} field="signedIn"  label="簽到" tone="teal"  onSet={onSet} />
+                  <KioskToggle rec={rec} field="signedOut" label="簽退" tone="slate" onSet={onSet} />
+                </div>
+                <div className="flex gap-3 border-t border-slate-100 pt-5">
+                  <KioskToggle rec={rec} field="phoneSubmitted"    label="上班繳交手機" tone="indigo" onSet={onSet} />
+                  <KioskToggle rec={rec} field="phoneNotSubmitted" label="手機未交"     tone="orange" onSet={onSet} />
+                </div>
+                <div className="space-y-3 border-t border-slate-100 pt-5">
+                  {WORKER_PHONE_SLOTS.map(slot => (
+                    <div key={slot.key} className="flex items-center gap-3">
+                      <span className="w-12 flex-shrink-0 text-right text-base font-medium text-slate-500">{slot.label}</span>
+                      <KioskToggle rec={rec} field={`${slot.key}Taken`}    label="領取" tone="amber"   onSet={onSet} />
+                      <KioskToggle rec={rec} field={`${slot.key}Returned`} label="歸還" tone="emerald" onSet={onSet} />
+                    </div>
+                  ))}
+                </div>
+                <button onClick={goHome}
+                  className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xl font-bold">
+                  完成，回首頁
+                </button>
+                <p className="text-center text-xs text-slate-400">
+                  {savedTip ? '✓ 已登記' : `${KIOSK_IDLE_MS / 1000} 秒未操作會自動回首頁`}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 離開確認：須輸入解鎖密碼 */}
+      {exitOpen && (
+        <div className="fixed inset-0 z-[9001] bg-black/40 flex items-center justify-center px-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm space-y-3">
+            <h3 className="text-lg font-bold text-slate-800">離開點選模式</h3>
+            {unlockPwd ? (
+              <>
+                <p className="text-sm text-slate-500">請輸入解鎖密碼（與班表解鎖密碼相同）</p>
+                <input type="password" autoFocus value={exitPwd}
+                  onChange={e => { setExitPwd(e.target.value); setExitErr(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') tryExit(); }}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                {exitErr && <p className="text-sm text-rose-600">{exitErr}</p>}
+              </>
+            ) : (
+              <p className="text-sm text-amber-700">
+                尚未設定解鎖密碼，任何人都能離開此模式。建議由管理員至系統設定設定解鎖密碼。
+              </p>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button onClick={() => setExitOpen(false)}
+                className="px-4 py-2 text-sm border border-slate-200 rounded-lg">取消</button>
+              <button onClick={tryExit}
+                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg">確認離開</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // phoneOnly：作為左側主選單的獨立分頁「手機控管」使用，
 // 沿用本元件既有的人員／出勤資料邏輯，僅隱藏其他子分頁
 function Attendance({ phoneOnly = false }) {
-  const { employees, setEmployees, warehouses, setWarehouses, vendors: _allVendors, setVendors, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, selectedWorkArea, setSelectedGroup, selectedVendor, currentUser, schedule, applyRemoteSchedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh } = useApp();
+  const { employees, setEmployees, warehouses, setWarehouses, vendors: _allVendors, setVendors, selectedWarehouse, setSelectedWarehouse, selectedDept, setSelectedDept, selectedGroup, selectedWorkArea, setSelectedGroup, selectedVendor, currentUser, schedule, applyRemoteSchedule, attendData, setAttendData, extras, setExtras, attendSettings, setAttendSettings, lockerAssign, setLockerAssign, hasUnsavedChanges, shiftTypesByWh, unlockPwd } = useApp();
   const toast = useToast();
 
   // 手機控管為大肚倉的作業，進入此分頁時預設切到大肚倉（之後仍可自行切換倉別）
@@ -8869,6 +9147,20 @@ function Attendance({ phoneOnly = false }) {
   const [addModal, setAddModal] = useState(false);
   const [phoneOnlyIncomplete, setPhoneOnlyIncomplete] = useState(false);
   const [phoneScope, setPhoneScope] = useState('all');   // all | long | temp
+  // 開放點選模式：重新整理後仍維持，避免藉由重新整理跳出鎖定畫面
+  const canKiosk = currentUser.role === ROLES.ADMIN || currentUser.role === ROLES.AREA;
+  const [kioskOpen, setKioskOpen] = useState(() => {
+    try { return phoneOnly && sessionStorage.getItem(KIOSK_FLAG) === '1'; } catch { return false; }
+  });
+  const openKiosk = () => {
+    setAttendDate(todayStr);   // 點選模式一律登記當日
+    try { sessionStorage.setItem(KIOSK_FLAG, '1'); } catch {}
+    setKioskOpen(true);
+  };
+  const closeKiosk = () => {
+    try { sessionStorage.removeItem(KIOSK_FLAG); } catch {}
+    setKioskOpen(false);
+  };
   const [addForm, setAddForm] = useState({ kind: 'long', keyword: '', name: '', vendor: '', group: '', note: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
@@ -9844,6 +10136,17 @@ function Attendance({ phoneOnly = false }) {
     <div className="space-y-4">
       {lockerPreviewModal}
       {lockerSheetModal}
+      {kioskOpen && canKiosk && (
+        <PhoneKiosk
+          people={attendDate === todayStr
+            ? [...scopedEmps, ...dateExtras.map(e => ({ ...e, _temp: true }))]
+            : []}
+          getRecord={p => (p._temp ? (dateExtras.find(e => e.id === p.id) ?? p) : getRecord(p.id))}
+          setRecord={(p, patch) => (p._temp ? setExtraRecord(p.id, patch) : setRecord(p.id, patch))}
+          lockerOf={p => (p._temp ? p.locker : lockerAssign?.[p.id]) ?? null}
+          scopeLabel={warehouses.find(w => w.id === selectedWarehouse)?.name ?? ''}
+          todayStr={todayStr} unlockPwd={unlockPwd} onExit={closeKiosk} />
+      )}
 
       {/* 長期／臨時切換：兩者人數與作業節奏不同，分開檢視較好核對 */}
       <div className="flex gap-1 border-b border-[#DDD9D0]">
@@ -9900,6 +10203,13 @@ function Attendance({ phoneOnly = false }) {
                      hover:bg-[#F5F2EC] flex items-center gap-1">
           📋 櫃號總表
         </button>
+        {canKiosk && (
+          <button onClick={openKiosk}
+            title="全螢幕開放給人員自行點選：組別 → 廠商 → 姓名 → 登記。依目前上方的倉別／課別／組別範圍列出人員，離開須輸入解鎖密碼。"
+            className="px-3 py-2 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700 flex items-center gap-1">
+            🖐 開放點選模式
+          </button>
+        )}
         <div className="ml-auto text-sm text-slate-500">
           已繳交手機 <span className="font-bold text-indigo-700">{phoneSubmittedCount}</span>/{phoneTotalCount}人
         </div>
