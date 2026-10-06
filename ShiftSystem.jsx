@@ -223,7 +223,93 @@ const TEMP_WAREHOUSE = '大肚倉';
 const JWT_KEY = 'sms_jwt';
 // 前端版本：隨寫入請求送出，伺服器據此擋下舊分頁的覆蓋。
 // 有破壞性的資料格式或寫入邏輯變更時才需要調高（要同步調整伺服器的 MIN_CLIENT_VERSION）。
-const APP_VERSION = '2026-09-12';
+const APP_VERSION = '2026-10-06';
+
+/*
+ * 出勤資料（attendData／extras）的同步基準。
+ *
+ * 原本每台裝置存檔都送出整份出勤資料，伺服器逐人整筆取代；背景同步時又一律
+ * 以本機為準。結果是：A 裝置（例如開放點選模式）登記的簽到，B 裝置（本人手機）
+ * 永遠看不到，B 一存檔還會用自己的舊資料把 A 的登記蓋掉。
+ *
+ * 作法：記住每一筆紀錄「最後一次與伺服器一致」的內容（快照）。
+ *   - 存檔只送與快照不同的紀錄（本機真正改過的），不再送整份
+ *   - 背景同步時，本機沒改過的紀錄一律採用伺服器版本；本機改過、尚未送出的才保留
+ * 臨時人力（extras）是每日清單，以 id 逐筆比對，刪除另外送出 id。
+ */
+const syncKey = v => JSON.stringify(v ?? null);
+
+function mergeServerAttend(prev, server, snap) {
+  const next = { ...prev };
+  for (const [date, sDay] of Object.entries(server ?? {})) {
+    if (!sDay || typeof sDay !== 'object') continue;
+    const lDay = prev[date] ?? {};
+    const sn = (snap[date] ??= {});
+    const out = { ...lDay };
+    for (const [id, rec] of Object.entries(sDay)) {
+      const local = lDay[id];
+      const dirty = local !== undefined && sn[id] !== undefined && syncKey(local) !== sn[id];
+      if (!dirty) { out[id] = rec; sn[id] = syncKey(rec); }
+    }
+    next[date] = out;
+  }
+  return next;
+}
+
+function mergeServerExtras(prev, server, snap) {
+  const next = { ...prev };
+  for (const [date, sList] of Object.entries(server ?? {})) {
+    if (!Array.isArray(sList)) continue;
+    const lList = prev[date] ?? [];
+    const lById = new Map(lList.map(e => [e?.id, e]));
+    const sIds = new Set(sList.map(e => e?.id));
+    const sn = (snap[date] ??= {});
+    const out = [];
+    for (const rec of sList) {
+      const local = lById.get(rec?.id);
+      if (local === undefined) {
+        if (sn[rec?.id] !== undefined) continue;   // 本機已刪除、尚未送出
+        out.push(rec); sn[rec?.id] = syncKey(rec); continue;
+      }
+      const dirty = sn[rec.id] !== undefined && syncKey(local) !== sn[rec.id];
+      if (dirty) out.push(local);
+      else { out.push(rec); sn[rec.id] = syncKey(rec); }
+    }
+    for (const local of lList) {
+      if (sIds.has(local?.id)) continue;
+      if (sn[local?.id] === undefined) out.push(local);   // 本機新增、尚未送出
+      else delete sn[local.id];                          // 已被他人刪除
+    }
+    next[date] = out;
+  }
+  return next;
+}
+
+// 本機改過、與快照不同的出勤紀錄
+function diffAttend(local, snap) {
+  const out = {};
+  for (const [date, day] of Object.entries(local ?? {})) {
+    for (const [id, rec] of Object.entries(day ?? {})) {
+      if (syncKey(rec) !== snap[date]?.[id]) (out[date] ??= {})[id] = rec;
+    }
+  }
+  return out;
+}
+
+// 臨時人力：每日的新增／修改（upsert）與刪除（remove）
+function diffExtras(local, snap) {
+  const out = {};
+  const dates = new Set([...Object.keys(local ?? {}), ...Object.keys(snap ?? {})]);
+  for (const date of dates) {
+    const list = local?.[date] ?? [];
+    const sn = snap[date] ?? {};
+    const upsert = list.filter(e => e?.id && syncKey(e) !== sn[e.id]);
+    const ids = new Set(list.map(e => e?.id));
+    const remove = Object.keys(sn).filter(id => !ids.has(id));
+    if (upsert.length || remove.length) out[date] = { upsert, remove };
+  }
+  return out;
+}
 
 // 代碼一律用黑字：彩色文字在淺色底上對比不足，現場列印或光線不佳時難以辨識
 const SHIFT_CODES = {
@@ -15403,6 +15489,14 @@ export default function App() {
   const [selectedYear,  setSelectedYear]  = useState(() => LS.get('sms_year',       today.getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(() => LS.get('sms_month',      today.getMonth() + 1));
   const [attendData, setAttendData] = useState(() => LS.get('sms_attendance', {}));
+  // 出勤資料與伺服器一致的快照（見 mergeServerAttend 說明）
+  const attendSnapRef = useRef({ att: {}, ex: {} });
+  const applyServerAttend = useCallback((att, ex) => {
+    if (att && Object.keys(att).length > 0)
+      setAttendData(prev => mergeServerAttend(prev, att, attendSnapRef.current.att));
+    if (ex && Object.keys(ex).length > 0)
+      setExtras(prev => mergeServerExtras(prev, ex, attendSnapRef.current.ex));
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const [extras,     setExtras]     = useState(() => LS.get('sms_attend_extras', {}));
   const [attendSettings, setAttendSettings] = useState(() => LS.get('sms_attend_settings', DEFAULT_ATTEND_SETTINGS));
 
@@ -15690,7 +15784,7 @@ export default function App() {
         }
         if (ra.ok) {
           const att = await ra.json();
-          if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
+          applyServerAttend(att?.attendData, null);
         }
         // worker 可自助簽到/手機控管（PUT /api/attendance，後端已限縮只能寫自己），啟用 auto-save
         serverSyncedRef.current = true;
@@ -15727,8 +15821,7 @@ export default function App() {
         }
         if (ra.ok) {
           const att = await ra.json();
-          if (att?.attendData && Object.keys(att.attendData).length > 0) setAttendData(att.attendData);
-          if (att?.extras    && Object.keys(att.extras).length > 0)    setExtras(att.extras);
+          applyServerAttend(att?.attendData, att?.extras);
         }
         // vendor auto-save 只涉及 /api/attendance，允許啟用
         serverSyncedRef.current = true;
@@ -15765,21 +15858,7 @@ export default function App() {
         if (state?.vendorRestOpen != null)    setVendorRestOpen(state.vendorRestOpen);
         if (state?.workerRestOpen != null)    setWorkerRestOpen(state.workerRestOpen);
         if (state?.vendorCompanyNames)     setVendorCompanyNames(state.vendorCompanyNames);
-        if (state?.attendData && Object.keys(state.attendData).length > 0) setAttendData(prev => {
-          const merged = { ...prev };
-          for (const [date, dayMap] of Object.entries(state.attendData)) {
-            if (Object.keys(dayMap).length > 0)
-              merged[date] = { ...(prev[date] ?? {}), ...dayMap };
-          }
-          return merged;
-        });
-        if (state?.extras && Object.keys(state.extras).length > 0) setExtras(prev => {
-          const merged = { ...prev };
-          for (const [date, list] of Object.entries(state.extras)) {
-            if (list?.length > 0) merged[date] = list;
-          }
-          return merged;
-        });
+        applyServerAttend(state?.attendData, state?.extras);
         if (state?.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
         if (state?.shiftCodeRows?.length > 0)          setShiftCodeRows(state.shiftCodeRows);
         if (state?.shiftCodeHeaders?.length > 0)       setShiftCodeHeaders(state.shiftCodeHeaders);
@@ -15850,9 +15929,8 @@ export default function App() {
         .then(r => r.ok ? r.json() : null)
         .then(att => {
           if (!att) return;
-          // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
-          if (att.attendData && Object.keys(att.attendData).length > 0)
-            setAttendData(prev => ({ ...att.attendData, ...prev }));
+          // 本機沒改過的紀錄採用伺服器版本（含他人在點選模式等其他裝置的登記）
+          applyServerAttend(att.attendData, null);
         }).catch(() => {});
     } else if (role === ROLES.VENDOR) {
       fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
@@ -15861,11 +15939,7 @@ export default function App() {
         .then(r => r.ok ? r.json() : null)
         .then(att => {
           if (!att) return;
-          // merge：本地未存的舊日期從 server 補齊，本地有的（可能含未存的今日勾選）不被覆蓋
-          if (att.attendData && Object.keys(att.attendData).length > 0)
-            setAttendData(prev => ({ ...att.attendData, ...prev }));
-          if (att.extras    && Object.keys(att.extras).length > 0)
-            setExtras(prev => ({ ...att.extras, ...prev }));
+          applyServerAttend(att.attendData, att.extras);
         }).catch(() => {});
     } else {
       fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
@@ -15873,18 +15947,8 @@ export default function App() {
         .then(state => {
           if (!state) return;
           applySchedule(state);
-          // 本地已有的出勤勾選優先（避免前景切換觸發的同步覆蓋尚未存檔的勾選）
-          if (state.attendData && Object.keys(state.attendData).length > 0)
-            setAttendData(prev => {
-              const merged = { ...prev };
-              for (const [date, dayMap] of Object.entries(state.attendData)) {
-                if (Object.keys(dayMap).length > 0)
-                  merged[date] = { ...dayMap, ...(prev[date] ?? {}) };
-              }
-              return merged;
-            });
-          if (state.extras && Object.keys(state.extras).length > 0)
-            setExtras(prev => ({ ...state.extras, ...prev }));
+          // 本機尚未送出的出勤異動保留，其餘採用伺服器版本
+          applyServerAttend(state.attendData, state.extras);
           if (state.vendorCompanyNames) setVendorCompanyNames(state.vendorCompanyNames);
           if (state.shiftTypesByWh && Object.keys(state.shiftTypesByWh).length > 0) setShiftTypesByWh(state.shiftTypesByWh);
           if (Array.isArray(state.users) && state.users.length > 0) setUsers(state.users);
@@ -16088,20 +16152,34 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
-    const body = JSON.stringify({ attendData, extras });
     const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
+    // 只送本機改過的紀錄，避免用舊資料蓋掉其他裝置剛登記的內容
+    const send = (label) => {
+      const snap = attendSnapRef.current;
+      const dirtyAtt = diffAttend(attendData, snap.att);
+      const extrasPatch = role === ROLES.WORKER ? {} : diffExtras(extras, snap.ex);
+      if (Object.keys(dirtyAtt).length === 0 && Object.keys(extrasPatch).length === 0) return;
+      fetch('/api/attendance', { method: 'PUT', headers,
+        body: JSON.stringify({ attendData: dirtyAtt, extras: {}, extrasPatch }) })
+        .then(r => {
+          if (!r.ok) { console.warn(`出勤${label}失敗 HTTP`, r.status); return; }
+          // 已送達的內容即為新的一致基準；送出後又改過的紀錄仍會與快照不同，下次再送
+          for (const [date, day] of Object.entries(dirtyAtt))
+            for (const [id, rec] of Object.entries(day)) (snap.att[date] ??= {})[id] = syncKey(rec);
+          for (const [date, { upsert, remove }] of Object.entries(extrasPatch)) {
+            const sn = (snap.ex[date] ??= {});
+            upsert.forEach(e => { sn[e.id] = syncKey(e); });
+            remove.forEach(id => { delete sn[id]; });
+          }
+        })
+        .catch(e => console.warn(`出勤${label}失敗:`, e.message));
+    };
     if (forceSaveRef.current) {
       forceSaveRef.current = false;
-      fetch('/api/attendance', { method: 'PUT', headers, body })
-        .then(r => { if (!r.ok) console.warn('出勤立即存檔失敗 HTTP', r.status); })
-        .catch(e => console.warn('出勤立即存檔失敗:', e.message));
+      send('立即存檔');
       return;
     }
-    vendorAttendDebRef.current = setTimeout(() => {
-      fetch('/api/attendance', { method: 'PUT', headers, body })
-        .then(r => { if (!r.ok) console.warn('出勤自動存檔失敗 HTTP', r.status); })
-        .catch(e => console.warn('出勤自動存檔失敗:', e.message));
-    }, 2000);
+    vendorAttendDebRef.current = setTimeout(() => send('自動存檔'), 2000);
   }, [attendData, extras, currentUser]);
 
   const handleLogout = useCallback(() => {

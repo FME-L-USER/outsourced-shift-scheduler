@@ -1717,7 +1717,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
 // 舊版前端送的是整份快照，會把別人新存的內容蓋回舊值 —— 這正是「今天排好、
 // 明天不見」的其中一條路徑。故要求寫入請求帶上前端版本，低於下限一律拒絕，
 // 並請使用者重新整理換到新版。讀取不受影響，舊分頁仍看得到資料。
-const MIN_CLIENT_VERSION = process.env.MIN_CLIENT_VERSION ?? '2026-09-12';
+const MIN_CLIENT_VERSION = process.env.MIN_CLIENT_VERSION ?? '2026-10-06';
 function requireClientVersion(req, res, next) {
   const v = String(req.headers['x-app-version'] ?? '');
   if (v && v >= MIN_CLIENT_VERSION) return next();
@@ -2205,9 +2205,11 @@ app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) =
   if (!['admin','area','vendor','worker'].includes(role))
     return res.status(403).json({ error: '無存取權限' });
 
-  let { attendData, extras } = req.body ?? {};
+  let { attendData, extras, extrasPatch } = req.body ?? {};
   attendData = attendData ?? {};
   extras     = extras     ?? {};
+  // 臨時人力逐筆異動：{ 日期: { upsert: [紀錄], remove: [id] } }
+  extrasPatch = (extrasPatch && typeof extrasPatch === 'object') ? extrasPatch : {};
 
   // worker scope：只允許寫入自己的紀錄，不可新增/修改臨時人員
   if (role === 'worker') {
@@ -2218,6 +2220,7 @@ app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) =
     }
     attendData = filteredAttend;
     extras = {};
+    extrasPatch = {};
   }
 
   // vendor scope：只允許寫入自己廠商員工的資料
@@ -2254,7 +2257,8 @@ app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) =
   }
 
   // 空 attendData → 不覆蓋 DB（避免桌機初始化時把空物件寫進 DB，導致其他裝置 init 被清空）
-  if (Object.keys(attendData).length === 0 && Object.keys(extras).length === 0)
+  if (Object.keys(attendData).length === 0 && Object.keys(extras).length === 0
+      && Object.keys(extrasPatch).length === 0)
     return res.json({ ok: true });
 
   // 逐日期、逐員工合併，且合併由資料庫在同一句 UPDATE 內完成。
@@ -2295,6 +2299,47 @@ app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) =
             WHERE id='main'`,
           [String(date), JSON.stringify(next)]
         );
+      }
+    }
+
+    // 臨時人力逐筆合併：只動送上來的那幾筆，其他裝置或本人掃碼簽到的紀錄不受影響。
+    // 廠商只能新增、修改、刪除自己廠商的臨時人力。
+    const patchDates = Object.keys(extrasPatch).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    if (patchDates.length > 0) {
+      const allowedVendorSet = role === 'vendor' ? new Set(req.user.vendors ?? []) : null;
+      const mine = e => !allowedVendorSet || allowedVendorSet.has(e?.vendor);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: exRows } = await client.query(
+          "SELECT data->'extras' AS ex FROM app_state WHERE id='main' FOR UPDATE");
+        const curExtras = exRows[0]?.ex ?? {};
+        for (const date of patchDates) {
+          const { upsert, remove } = extrasPatch[date] ?? {};
+          const removeIds = new Set((Array.isArray(remove) ? remove : []).map(String));
+          const ups = (Array.isArray(upsert) ? upsert : []).filter(e => e?.id && mine(e));
+          const upById = new Map(ups.map(e => [String(e.id), e]));
+          const list = (curExtras[date] ?? [])
+            .filter(e => !(removeIds.has(String(e?.id)) && mine(e)))
+            .map(e => {
+              const u = upById.get(String(e?.id));
+              if (!u) return e;
+              // 不論是否可改，同 id 都不可再新增一筆（避免廠商以他廠 id 塞入重複紀錄）
+              upById.delete(String(e.id));
+              return mine(e) ? u : e;
+            });
+          list.push(...upById.values());
+          await client.query(
+            `UPDATE app_state SET data = jsonb_set(data, ARRAY['extras', $1], $2::jsonb), updated_at = NOW()
+              WHERE id='main'`,
+            [date, JSON.stringify(list)]);
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
       }
     }
   } catch (e) {
