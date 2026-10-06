@@ -8968,6 +8968,12 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
           離開點選模式
         </button>
       </div>
+      {/* 警語：每一步都顯示，避免代他人登記 */}
+      <div className="flex items-center justify-center gap-x-6 gap-y-1 flex-wrap px-4 py-2.5
+                      bg-rose-50 border-b border-rose-200 text-rose-700 text-sm md:text-base font-semibold text-center">
+        <span>⚠️ 請勿代他人操作，違者將依理貨評核 3-7「代打出勤卡」獎懲方式執行</span>
+        <span className="whitespace-nowrap">📹 監視錄影中</span>
+      </div>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5">
         <div className="max-w-5xl mx-auto space-y-5">
