@@ -8685,6 +8685,159 @@ function WorkerSelfField({ rec, field, label, checkboxClass, textClass, onSet })
   );
 }
 
+// ── 職業安全衛生、廠區重點規範 宣導告知單 ──
+// 委外人員、臨時人力每天簽到前須閱讀並勾選確認（確認時間與版次記在當日出勤紀錄）。
+// 告知單改版時調整 version，所有人當天須重新確認新版內容。
+const SAFETY_NOTICE = {
+  version: '1131015',
+  title: '職業安全衛生、廠區重點規範 宣導告知單',
+  sections: [
+    {
+      title: '一、日常重點管理規範',
+      note: '如有違反之事實，『當天』視情節輕重採取各項適當處份',
+      items: [
+        '進出廠區／午休結束／下班離開樓層作業區，須將個人隨身物品自動出示，由幹部／警衛以目視方式確認。',
+        '廠區嚴禁代打卡、拍照或錄影、辱罵、施暴、聚眾打架滋事、喝酒或含有酒精之飲料、吃檳榔之行為。',
+      ],
+    },
+    {
+      title: '二、『棧板、物流箱、籠車、烏龜車』使用注意事項',
+      items: [
+        '棧板、物流箱：『雙手』拿至地面才可放開（若作業困難可雙人進行），不可單手作業和直接重摔至地面。',
+        '物流箱：以『6高』為上限，移動前先以膠帶或膠膜綑綁。',
+        '棧板：拿取『第4層』以上時請旁人協助，不可直立擺放及不當堆疊，破損棧板請勿使用。',
+        { text: '籠車：', subs: [
+          '擺放標準：貨物不可超過籠車高度，需從上層貨件拿取，不可從下層抽取貨件。',
+          '使用前：已裝貨物，籠車門須確實關上。移動空籠車，門卡扣要固定扣牢。',
+          '使用中／停放中：不可攀爬、站立於或坐在籠車上。',
+          '停放時：請踩腳輪煞車，避免籠車自行移動，發生碰撞。',
+        ] },
+        '烏龜車：使用時，放置地面時請輕放；未使用，請放置黃色小籠車內。',
+      ],
+      remind: '使用／移動／搬運，請注意周圍狀況，防止『貨物倒塌、碰撞、砸傷、壓傷、絆倒人員』。',
+    },
+    {
+      title: '三、『輸送帶』作業注意事項',
+      items: [
+        '設備運轉中：禁止將手部放到輸送皮帶上，輸送設備尚未停止前，人員禁止進入。',
+        '夾貨狀況：處理三步驟『(1)按緊急按鈕／立即通知幹部 → (2)確認輸送帶停止 → (3)小心拿取商品』。',
+      ],
+      remind: '嚴禁自行手動排除；頭髮過肩需綁起，以及勿穿太過寬鬆衣物，防止發生夾入輸送帶。',
+    },
+    {
+      title: '四、『用電與防火』須知注意事項',
+      items: [
+        { text: '用電須知：', subs: [
+          '使用中：插頭確實插入插座，電線無破損／裸露、無綑綁、無重物壓住。',
+          '不使用：將插頭取下，勿用拉扯線頭，養成隨手拔掉插頭、收納電線。',
+          '異常狀況：電線裸露，電動拖板車銅線外露，請通報幹部。',
+          '嚴禁在廠區私接個人手機或行動電源進行充電，以及使用個人電風扇。',
+        ] },
+        { text: '防火須知：', subs: [
+          '特定區域周圍（電器設備／理貨設備／電拖充電區／吸菸區），不可放置雜物及易燃物品。',
+          '消防設施設備紅框內或鐵捲門下嚴禁遮擋。',
+        ] },
+        { text: '罰則處置：', subs: [
+          '廠房內部吸菸者：每一件事件罰款10萬元（未稅）／次，並取消派任。',
+          '非指定吸菸區吸菸者：每一件事件罰款3萬元（未稅）／次（第二次罰款並取消派任）。',
+          '亂丟菸蒂（未丟入菸灰缸／筒）：每一事件罰款3千元（未稅）／次（第二次罰款並取消派任）。',
+        ] },
+      ],
+    },
+    {
+      title: '五、『合約宣導－機密資訊保密義務』',
+      items: [
+        '廠區環境、設備、作業事項、各項文件等，營運上之一切事項視為機密資訊應負擔保密義務。不得交付、告知、移轉或以任何方式洩漏第三人或對外發表，亦不得為自已或第三人所利用或使用，離職後亦同。',
+        '承前述，不得將日翊營運事項拍照／錄音錄像／傳真／影印等提供給第三方或教唆他人、匿名上傳或公開至社群網站、通訊軟體、個人網站等。',
+        '廠區內／外，任何有損日翊文化品牌形象或違法行為，本公司將保留相關法律責任追溯權。',
+      ],
+    },
+    {
+      title: '六、『法令宣導－業務侵占罪』',
+      items: [
+        '廠區物品／貨件／設備／文件等，擅自攜出廠區或任何轉賣行為，已屬『偷竊、盜取公司相關物品與商品之違法行為』，依刑法第336條業務侵占罪移法送辦。',
+      ],
+      remind: '【違反廠區規範者／觸犯法規行為者】公司除依合約處置外，再依法追究其『法律責任』以及『損害賠償』，以上未能詳列事項，得適時補充之，另應依相關法規規定辦理。',
+    },
+  ],
+};
+
+// 當日紀錄是否已確認目前版次的告知單
+const safetyAcked = rec => !!rec?.safetyAck && rec?.safetyAckVer === SAFETY_NOTICE.version;
+
+/**
+ * 宣導告知單：未確認時展開全文並要求勾選；確認後收合為一行，可再展開檢視。
+ * onAck(patch) 寫入 safetyAck／safetyAckAt／safetyAckVer；onActivity 供點選模式延長閒置計時。
+ */
+function SafetyNotice({ rec, onAck, large = false, onActivity }) {
+  const acked = safetyAcked(rec);
+  const [open, setOpen] = useState(false);
+  const nowTimeStr = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+  const txt = large ? 'text-base' : 'text-sm';
+
+  if (acked && !open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className={`w-full flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200
+                    text-emerald-700 ${txt} text-left`}>
+        <span>✓ 已確認宣導告知單</span>
+        <span className="text-xs text-emerald-600">{rec.safetyAckAt}・版次 {SAFETY_NOTICE.version}</span>
+        <span className="ml-auto text-xs underline">檢視內容</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className={`rounded-xl border-2 ${acked ? 'border-emerald-200' : 'border-amber-300'} bg-white overflow-hidden`}>
+      <div className={`px-4 py-2.5 ${acked ? 'bg-emerald-50' : 'bg-amber-50'} flex items-center gap-2`}>
+        <span className={`font-bold ${large ? 'text-lg' : 'text-base'} text-slate-800`}>📋 {SAFETY_NOTICE.title}</span>
+        {acked && (
+          <button type="button" onClick={() => setOpen(false)} className="ml-auto text-xs text-slate-500 underline">收合</button>
+        )}
+      </div>
+      {!acked && (
+        <p className={`px-4 pt-2 ${large ? 'text-sm' : 'text-xs'} text-amber-800`}>
+          請閱讀以下宣導事項，勾選確認後才能簽到與登記手機。
+        </p>
+      )}
+      <div onScroll={onActivity} onPointerDown={onActivity}
+        className={`px-4 py-3 space-y-3 overflow-y-auto ${large ? 'max-h-[45vh]' : 'max-h-[50vh]'} ${txt} text-slate-700 leading-relaxed`}>
+        {SAFETY_NOTICE.sections.map(sec => (
+          <div key={sec.title}>
+            <div className="font-bold text-slate-800">{sec.title}</div>
+            {sec.note && <div className="text-xs text-rose-700 mb-1">（{sec.note}）</div>}
+            <ol className="list-decimal pl-5 space-y-1">
+              {sec.items.map((it, i) => typeof it === 'string'
+                ? <li key={i}>{it}</li>
+                : (
+                  <li key={i}>
+                    {it.text}
+                    <ol className="list-[lower-alpha] pl-5 space-y-0.5">
+                      {it.subs.map((sub, j) => <li key={j}>{sub}</li>)}
+                    </ol>
+                  </li>
+                ))}
+            </ol>
+            {sec.remind && (
+              <div className="mt-1 text-xs text-rose-700 bg-rose-50 rounded-lg px-2 py-1">【安全提醒】{sec.remind}</div>
+            )}
+          </div>
+        ))}
+        <div className="text-right text-xs text-slate-400">版次 {SAFETY_NOTICE.version}</div>
+      </div>
+      {!acked && (
+        <label className={`flex items-center gap-3 px-4 py-3 border-t border-amber-200 bg-amber-50 cursor-pointer select-none
+                           ${large ? 'text-lg' : 'text-base'} font-semibold text-slate-800`}>
+          <input type="checkbox" checked={false}
+            onChange={() => onAck({ safetyAck: true, safetyAckAt: nowTimeStr(), safetyAckVer: SAFETY_NOTICE.version })}
+            className="w-6 h-6 accent-emerald-600 cursor-pointer" />
+          我已閱讀並了解以上宣導事項
+        </label>
+      )}
+    </div>
+  );
+}
+
 // ── 臨時人力自助簽到／手機控管（畫面 2）──
 // 臨時人力無帳號，資料寫入當日 extras，透過公開端點 /api/attendance/temp 送出。
 function TempSelfCheck({ onLogout }) {
@@ -8730,7 +8883,7 @@ function TempSelfCheck({ onLogout }) {
         if (!alive) return;
         setStatus(r.ok ? 'ready' : 'failed');
         setInitError(r.ok ? '' : r.error);
-        if (r.ok) { setLocker(r.entry?.locker ?? null); setUnlisted(!!r.entry?._unlisted); }
+        if (r.ok) { setLocker(r.entry?.locker ?? null); setUnlisted(!!r.entry?._unlisted); setLocalRec(r.entry ?? {}); }
       });
     return () => { alive = false; };
   }, [push, currentUser, retryTick]);
@@ -8802,8 +8955,10 @@ function TempSelfCheck({ onLogout }) {
           </div>
         )}
 
+        {status === 'ready' && <SafetyNotice rec={rec} onAck={setRec} />}
+
         <div className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4
-                        ${status === 'ready' ? '' : 'opacity-50 pointer-events-none'}`}>
+                        ${status === 'ready' && safetyAcked(rec) ? '' : 'opacity-50 pointer-events-none'}`}>
           <div className="flex items-center gap-6 justify-center">
             <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
             <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
@@ -8895,7 +9050,10 @@ function WorkerSelfCheck() {
         )}
       </div>
 
-      <div className="bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4">
+      <SafetyNotice rec={rec} onAck={setRec} />
+
+      <div className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4
+                      ${safetyAcked(rec) ? '' : 'opacity-50 pointer-events-none'}`}>
         <div className="flex items-center gap-6 justify-center">
           <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
           <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
@@ -9140,6 +9298,9 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                     </p>
                   )}
                 </div>
+                <SafetyNotice key={emp.id} rec={rec} onAck={onSet} large
+                  onActivity={() => { lastTouchRef.current = Date.now(); }} />
+                <div className={`space-y-5 ${safetyAcked(rec) ? '' : 'opacity-40 pointer-events-none'}`}>
                 <div className="flex gap-3">
                   <KioskToggle rec={rec} field="signedIn"  label="簽到" tone="teal"  onSet={onSet} />
                   <KioskToggle rec={rec} field="signedOut" label="簽退" tone="slate" onSet={onSet} />
@@ -9156,6 +9317,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                       <KioskToggle rec={rec} field={`${slot.key}Returned`} label="歸還" tone="emerald" onSet={onSet} />
                     </div>
                   ))}
+                </div>
                 </div>
                 <button onClick={goHome}
                   className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xl font-bold">

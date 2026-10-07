@@ -2463,6 +2463,7 @@ app.put('/api/auth/vendor-password', requireAuth, async (req, res) => {
 const TEMP_ALLOWED_FIELDS = new Set([
   'name', 'vendor', 'group', 'warehouse', 'note', 'present', 'signedIn', 'signedOut',
   'phoneSubmitted', 'phoneNotSubmitted',
+  'safetyAck', 'safetyAckVer',   // 宣導告知單確認（safetyAckAt 隨 isTempField 一併接受）
   ...['morning', 'noon', 'afternoon', 'ot'].flatMap(k => [`${k}Taken`, `${k}Returned`]),
 ]);
 // 時間戳欄位（xxxAt）一律隨對應布林欄位一起接受
