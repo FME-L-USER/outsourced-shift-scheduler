@@ -8826,7 +8826,12 @@ function SafetyNotice({ rec, onAck, large = false, onActivity }) {
         <div className="text-right text-xs text-slate-400">版次 {SAFETY_NOTICE.version}</div>
       </div>
       {!acked && (
-        <label className={`flex items-center gap-3 px-4 py-3 border-t border-amber-200 bg-amber-50 cursor-pointer select-none
+        <p className={`px-4 pt-3 border-t border-amber-200 bg-amber-50 ${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
+          本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
+        </p>
+      )}
+      {!acked && (
+        <label className={`flex items-center gap-3 px-4 py-3 bg-amber-50 cursor-pointer select-none
                            ${large ? 'text-lg' : 'text-base'} font-semibold text-slate-800`}>
           <input type="checkbox" checked={false}
             onChange={() => onAck({ safetyAck: true, safetyAckAt: nowTimeStr(), safetyAckVer: SAFETY_NOTICE.version })}
