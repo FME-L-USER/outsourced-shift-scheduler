@@ -9245,7 +9245,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
       {/* 警語：每一步都顯示，避免代他人登記 */}
       <div className="flex items-center justify-center gap-x-6 gap-y-1 flex-wrap px-4 py-2.5
                       bg-rose-50 border-b border-rose-200 text-rose-700 text-sm md:text-base font-semibold text-center">
-        <span>⚠️ 請勿代他人操作，違者將依理貨評核 3-7「代打出勤卡」獎懲方式執行</span>
+        <span>⚠️ 請勿代他人操作，違者將依廠區規範「代打出勤卡」處分</span>
         <span className="whitespace-nowrap">📹 監視錄影中</span>
       </div>
 
