@@ -124,6 +124,22 @@ async function initDB() {
   // 原本只在 users 表累加 login_count，但委外人員本來就不在帳號表，
   // 是靠 upsert 臨時建列，失敗時被吞掉，畫面就永遠顯示 0。
   // 改為獨立紀錄，次數由實際筆數算出，不依賴帳號表是否建得起來。
+  // 宣導告知單電子簽名：每人每日每版次一筆。簽名影像不放進 app_state，
+  // 避免共用資料隨每日數百張簽名膨脹、拖慢所有裝置的同步。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS safety_signs (
+      sign_date   TEXT        NOT NULL,
+      person_id   TEXT        NOT NULL,
+      version     TEXT        NOT NULL,
+      person_name TEXT,
+      image       TEXT        NOT NULL,
+      signed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      signer_role TEXT,
+      signer_user TEXT,
+      ip          TEXT,
+      PRIMARY KEY (sign_date, person_id, version)
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_audit (
       id       BIGSERIAL   PRIMARY KEY,
@@ -2463,7 +2479,7 @@ app.put('/api/auth/vendor-password', requireAuth, async (req, res) => {
 const TEMP_ALLOWED_FIELDS = new Set([
   'name', 'vendor', 'group', 'warehouse', 'note', 'present', 'signedIn', 'signedOut',
   'phoneSubmitted', 'phoneNotSubmitted',
-  'safetyAck', 'safetyAckVer',   // 宣導告知單確認（safetyAckAt 隨 isTempField 一併接受）
+  'safetyAck', 'safetyAckVer', 'safetySigned',   // 宣導告知單確認（safetyAckAt 隨 isTempField 一併接受）
   ...['morning', 'noon', 'afternoon', 'ot'].flatMap(k => [`${k}Taken`, `${k}Returned`]),
 ]);
 // 時間戳欄位（xxxAt）一律隨對應布林欄位一起接受
@@ -2499,6 +2515,84 @@ function sanitizeTempPatch(patch) {
   }
   return out;
 }
+
+// ── 宣導告知單電子簽名 ────────────────────────────────────
+// 簽名影像為 PNG dataURL（畫布 480×150，一般數 KB），上限 120KB。
+const SIGN_MAX_LEN = 120000;
+function checkSignBody(b) {
+  const date = String(b?.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '日期格式錯誤';
+  const diffDays = Math.abs(Date.now() - Date.parse(`${date}T00:00:00Z`)) / 86400000;
+  if (!(diffDays < 2)) return '僅能簽署當日告知單';
+  if (!/^[0-9A-Za-z._-]{1,20}$/.test(String(b?.version ?? ''))) return '版次格式錯誤';
+  const image = String(b?.image ?? '');
+  if (!image.startsWith('data:image/png;base64,') || image.length > SIGN_MAX_LEN) return '簽名格式錯誤';
+  return null;
+}
+async function saveSafetySign({ date, personId, name, version, image, role, username, ip }) {
+  await pool.query(
+    `INSERT INTO safety_signs (sign_date, person_id, version, person_name, image, signer_role, signer_user, ip)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (sign_date, person_id, version) DO UPDATE
+       SET person_name = EXCLUDED.person_name, image = EXCLUDED.image, signed_at = NOW(),
+           signer_role = EXCLUDED.signer_role, signer_user = EXCLUDED.signer_user, ip = EXCLUDED.ip`,
+    [date, personId, version, name, image, role, username, ip]);
+}
+
+// 已登入者：委外人員只能簽自己；廠商幹部限自己廠商的人員；管理員／日翊（開放點選模式）不限
+app.post('/api/safety-sign', requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  const bad = checkSignBody(req.body);
+  if (bad) return res.status(400).json({ error: bad });
+  const personId = String(req.body.personId ?? '').slice(0, 80);
+  if (!personId) return res.status(400).json({ error: '缺少人員' });
+  try {
+    if (role === 'worker') {
+      if (personId !== req.user.employeeId) return res.status(403).json({ error: '只能簽署本人的告知單' });
+    } else if (role === 'vendor') {
+      const { rows } = await pool.query("SELECT data->'employees' AS emps FROM app_state WHERE id='main'");
+      const emp = (rows[0]?.emps ?? []).find(e => e?.id === personId);
+      const mine = new Set((req.user.vendors ?? []).map(normNameSrv));
+      if (!emp || !mine.has(normNameSrv(emp.vendor))) return res.status(403).json({ error: '無權簽署此人員的告知單' });
+    } else if (role !== 'admin' && role !== 'area') {
+      return res.status(403).json({ error: '無存取權限' });
+    }
+    await saveSafetySign({
+      date: req.body.date, personId, version: String(req.body.version),
+      name: String(req.body.name ?? '').slice(0, 50), image: String(req.body.image),
+      role, username: req.user?.username ?? '', ip: clientIp(req),
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/safety-sign error:', e.message);
+    res.status(500).json({ error: '儲存失敗' });
+  }
+});
+
+// 臨時人力（無帳號）：比照自助簽到端點，限當日、限已建檔的臨時人力 id
+app.post('/api/safety-sign/temp', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+  if (!hitRate(`sign:${ip}`, 60)) return res.status(429).json({ error: '操作過於頻繁，請稍後再試' });
+  const bad = checkSignBody(req.body);
+  if (bad) return res.status(400).json({ error: bad });
+  const id = String(req.body.id ?? '');
+  if (!/^temp_[A-Za-z0-9_-]{6,60}$/.test(id)) return res.status(400).json({ error: 'id 格式錯誤' });
+  try {
+    const { rows } = await pool.query("SELECT data->'extras'->$1 AS day FROM app_state WHERE id='main'",
+      [String(req.body.date)]);
+    const entry = (rows[0]?.day ?? []).find(e => e?.id === id || e?._claimId === id);
+    if (!entry) return res.status(404).json({ error: '尚未建檔，請重新整理後再試' });
+    await saveSafetySign({
+      date: req.body.date, personId: String(entry.id), version: String(req.body.version),
+      name: String(entry.name ?? '').slice(0, 50), image: String(req.body.image),
+      role: 'temp', username: id, ip,
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/safety-sign/temp error:', e.message);
+    res.status(500).json({ error: '儲存失敗' });
+  }
+});
 
 app.post('/api/attendance/temp', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';

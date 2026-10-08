@@ -8787,25 +8787,138 @@ const SAFETY_NOTICE = {
   ],
 };
 
-// 當日紀錄是否已確認目前版次的告知單
-const safetyAcked = rec => !!rec?.safetyAck && rec?.safetyAckVer === SAFETY_NOTICE.version;
+// 當日紀錄是否已確認並簽署目前版次的告知單
+const safetyAcked = rec =>
+  !!rec?.safetyAck && rec?.safetyAckVer === SAFETY_NOTICE.version && !!rec?.safetySigned;
 
 /**
- * 宣導告知單：未確認時展開全文並要求勾選；確認後收合為一行，可再展開檢視。
- * onAck(patch) 寫入 safetyAck／safetyAckAt／safetyAckVer；onActivity 供點選模式延長閒置計時。
+ * 送出告知單電子簽名。簽名影像另存在伺服器的 safety_signs 資料表，
+ * 不放進出勤紀錄：每張簽名數 KB，放進共用資料會讓每台裝置的同步越來越慢。
+ * @returns 錯誤訊息；成功時回傳 null
  */
-function SafetyNotice({ rec, onAck, large = false, onActivity }) {
+async function postSafetySign(url, body) {
+  try {
+    const token = localStorage.getItem(JWT_KEY);
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 ...(url === '/api/safety-sign' && token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ ...body, version: SAFETY_NOTICE.version }),
+    });
+    if (r.ok) return null;
+    const d = await r.json().catch(() => ({}));
+    return d.error ?? `伺服器回應 ${r.status}`;
+  } catch {
+    return '無法連線，請確認網路';
+  }
+}
+
+/** 告知單由未簽署變成已簽署時，捲動到簽到區塊 */
+function useJumpWhenAcked(acked) {
+  const ref = useRef(null);
+  const prevRef = useRef(acked);
+  useEffect(() => {
+    if (acked && !prevRef.current)
+      setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    prevRef.current = acked;
+  }, [acked]);
+  return ref;
+}
+
+/** 電子簽名板：滑鼠或觸控手寫，輸出 PNG dataURL（畫布刻意維持小尺寸，避免影像過大） */
+function SignaturePad({ onChange, large = false }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef(null);
+  const [empty, setEmpty] = useState(true);
+
+  const posOf = (e) => {
+    const r = canvasRef.current.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (canvasRef.current.width / r.width),
+             y: (e.clientY - r.top) * (canvasRef.current.height / r.height) };
+  };
+  const start = (e) => {
+    e.preventDefault();
+    drawingRef.current = true;
+    lastRef.current = posOf(e);
+    canvasRef.current.setPointerCapture?.(e.pointerId);
+  };
+  const move = (e) => {
+    if (!drawingRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const pt = posOf(e);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastRef.current.x, lastRef.current.y);
+    ctx.lineTo(pt.x, pt.y);
+    ctx.stroke();
+    lastRef.current = pt;
+    if (empty) setEmpty(false);
+  };
+  const end = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    onChange?.(canvasRef.current.toDataURL('image/png'));
+  };
+  const clear = () => {
+    const cv = canvasRef.current;
+    cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    setEmpty(true);
+    onChange?.('');
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`${large ? 'text-base' : 'text-sm'} font-semibold text-slate-700`}>✍️ 請於框內簽名</span>
+        {empty
+          ? <span className="text-xs text-amber-600">尚未簽名</span>
+          : <button type="button" onClick={clear} className="text-xs text-blue-600 underline">清除重簽</button>}
+      </div>
+      <canvas ref={canvasRef} width={480} height={150}
+        onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end}
+        className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
+                    ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
+        style={{ aspectRatio: '480 / 150' }} />
+    </div>
+  );
+}
+
+/**
+ * 宣導告知單：未簽署時展開全文，勾選允諾並完成電子簽名後才算確認；
+ * 確認後收合為一行，可再展開檢視。
+ *   onSign(image) 送出簽名，回傳錯誤訊息或 null
+ *   onAck(patch)  簽名成功後寫入 safetyAck／safetyAckAt／safetyAckVer／safetySigned
+ *   onActivity    供點選模式延長閒置計時
+ */
+function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
   const acked = safetyAcked(rec);
   const [open, setOpen] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [sign, setSign] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const nowTimeStr = () => new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
   const txt = large ? 'text-base' : 'text-sm';
+
+  const submit = async () => {
+    if (!agreed || !sign || busy) return;
+    setBusy(true); setErr('');
+    const e = await onSign(sign);
+    setBusy(false);
+    if (e) { setErr(`簽名未送出：${e}`); return; }
+    onAck({ safetyAck: true, safetyAckAt: nowTimeStr(), safetyAckVer: SAFETY_NOTICE.version, safetySigned: true });
+  };
 
   if (acked && !open) {
     return (
       <button type="button" onClick={() => setOpen(true)}
         className={`w-full flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200
                     text-emerald-700 ${txt} text-left`}>
-        <span>✓ 已確認宣導告知單</span>
+        <span>✓ 已簽署宣導告知單</span>
         <span className="text-xs text-emerald-600">{rec.safetyAckAt}・版次 {SAFETY_NOTICE.version}</span>
         <span className="ml-auto text-xs underline">檢視內容</span>
       </button>
@@ -8822,11 +8935,11 @@ function SafetyNotice({ rec, onAck, large = false, onActivity }) {
       </div>
       {!acked && (
         <p className={`px-4 pt-2 ${large ? 'text-sm' : 'text-xs'} text-amber-800`}>
-          請閱讀以下宣導事項，勾選確認後才能簽到與登記手機。
+          請閱讀以下宣導事項，勾選並完成電子簽名後才能簽到與登記手機。
         </p>
       )}
       <div onScroll={onActivity} onPointerDown={onActivity}
-        className={`px-4 py-3 space-y-3 overflow-y-auto ${large ? 'max-h-[45vh]' : 'max-h-[50vh]'} ${txt} text-slate-700 leading-relaxed`}>
+        className={`px-4 py-3 space-y-3 overflow-y-auto ${large ? 'max-h-[40vh]' : 'max-h-[45vh]'} ${txt} text-slate-700 leading-relaxed`}>
         {SAFETY_NOTICE.sections.map(sec => (
           <div key={sec.title}>
             <div className="font-bold text-slate-800">{sec.title}</div>
@@ -8851,18 +8964,27 @@ function SafetyNotice({ rec, onAck, large = false, onActivity }) {
         <div className="text-right text-xs text-slate-400">版次 {SAFETY_NOTICE.version}</div>
       </div>
       {!acked && (
-        <p className={`px-4 pt-3 border-t border-amber-200 bg-amber-50 ${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
-          本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
-        </p>
-      )}
-      {!acked && (
-        <label className={`flex items-center gap-3 px-4 py-3 bg-amber-50 cursor-pointer select-none
-                           ${large ? 'text-lg' : 'text-base'} font-semibold text-slate-800`}>
-          <input type="checkbox" checked={false}
-            onChange={() => onAck({ safetyAck: true, safetyAckAt: nowTimeStr(), safetyAckVer: SAFETY_NOTICE.version })}
-            className="w-6 h-6 accent-emerald-600 cursor-pointer" />
-          我已閱讀並了解以上宣導事項
-        </label>
+        <div className="px-4 py-3 space-y-3 border-t border-amber-200 bg-amber-50"
+          onPointerDown={onActivity}>
+          <p className={`${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
+            本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
+          </p>
+          <label className={`flex items-center gap-3 cursor-pointer select-none
+                             ${large ? 'text-lg' : 'text-base'} font-semibold text-slate-800`}>
+            <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
+              className="w-6 h-6 accent-emerald-600 cursor-pointer" />
+            我已閱讀並了解以上宣導事項
+          </label>
+          <SignaturePad onChange={setSign} large={large} />
+          {err && <p className="text-sm text-rose-600">{err}</p>}
+          <button type="button" onClick={submit} disabled={!agreed || !sign || busy}
+            className={`w-full py-3 rounded-xl font-bold ${large ? 'text-xl' : 'text-lg'} transition-colors
+              ${agreed && sign && !busy
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+            {busy ? '送出中…' : !agreed ? '請先勾選上方確認' : !sign ? '請先完成簽名' : '確認簽名並前往簽到'}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -8881,6 +9003,7 @@ function TempSelfCheck({ onLogout }) {
   // 'init' 建檔中 / 'ready' 可填寫 / 'failed' 建檔失敗（此時不可勾選，避免誤以為已存檔）
   const [status, setStatus] = useState('init');
   const [retryTick, setRetryTick] = useState(0);
+  const jumpRef = useJumpWhenAcked(status === 'ready' && safetyAcked(rec));
 
   const push = useCallback(async (patch) => {
     try {
@@ -8985,10 +9108,14 @@ function TempSelfCheck({ onLogout }) {
           </div>
         )}
 
-        {status === 'ready' && <SafetyNotice rec={rec} onAck={setRec} />}
+        {status === 'ready' && (
+          <SafetyNotice rec={rec} onAck={setRec}
+            onSign={image => postSafetySign('/api/safety-sign/temp', { date: todayStr, id: currentUser.id, image })} />
+        )}
 
-        <div className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4
-                        ${status === 'ready' && safetyAcked(rec) ? '' : 'opacity-50 pointer-events-none'}`}>
+        {/* 告知單簽署完成前不顯示簽到區塊，簽署後自動捲到這裡 */}
+        <div ref={jumpRef} className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4 scroll-mt-4
+                        ${status === 'ready' && safetyAcked(rec) ? '' : 'hidden'}`}>
           <div className="flex items-center gap-6 justify-center">
             <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
             <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
@@ -9036,6 +9163,7 @@ function WorkerSelfCheck() {
   })();
 
   const rec = attendData[todayStr]?.[empId] ?? {};
+  const jumpRef = useJumpWhenAcked(safetyAcked(rec));
   const setRec = patch => {
     const newRecord = { ...rec, ...patch };
     setAttendData(prev => ({
@@ -9080,10 +9208,12 @@ function WorkerSelfCheck() {
         )}
       </div>
 
-      <SafetyNotice rec={rec} onAck={setRec} />
+      <SafetyNotice rec={rec} onAck={setRec}
+        onSign={image => postSafetySign('/api/safety-sign', { date: todayStr, personId: empId, name: emp.name, image })} />
 
-      <div className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4
-                      ${safetyAcked(rec) ? '' : 'opacity-50 pointer-events-none'}`}>
+      {/* 告知單簽署完成前不顯示簽到區塊，簽署後自動捲到這裡 */}
+      <div ref={jumpRef} className={`bg-white border border-[#DDD9D0] rounded-xl p-5 space-y-4 scroll-mt-4
+                      ${safetyAcked(rec) ? '' : 'hidden'}`}>
         <div className="flex items-center gap-6 justify-center">
           <WorkerSelfField rec={rec} field="signedIn" label="簽到" checkboxClass="accent-teal-600" textClass="text-teal-600" onSet={setRec} />
           <WorkerSelfField rec={rec} field="signedOut" label="簽退" checkboxClass="accent-slate-600" textClass="text-slate-600" onSet={setRec} />
@@ -9194,6 +9324,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
 
   const emp = empId ? people.find(e => e.id === empId) : null;
   const rec = emp ? getRecord(emp) : {};
+  const jumpRef = useJumpWhenAcked(!!emp && safetyAcked(rec));
   const onSet = patch => {
     lastTouchRef.current = Date.now();
     setRecord(emp, patch);
@@ -9329,8 +9460,11 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                   )}
                 </div>
                 <SafetyNotice key={emp.id} rec={rec} onAck={onSet} large
+                  onSign={image => postSafetySign('/api/safety-sign',
+                    { date: todayStr, personId: emp.id, name: emp.name, image })}
                   onActivity={() => { lastTouchRef.current = Date.now(); }} />
-                <div className={`space-y-5 ${safetyAcked(rec) ? '' : 'opacity-40 pointer-events-none'}`}>
+                {/* 告知單簽署完成前不顯示登記按鈕，簽署後自動捲到這裡 */}
+                <div ref={jumpRef} className={`space-y-5 scroll-mt-4 ${safetyAcked(rec) ? '' : 'hidden'}`}>
                 <div className="flex gap-3">
                   <KioskToggle rec={rec} field="signedIn"  label="簽到" tone="teal"  onSet={onSet} />
                   <KioskToggle rec={rec} field="signedOut" label="簽退" tone="slate" onSet={onSet} />
