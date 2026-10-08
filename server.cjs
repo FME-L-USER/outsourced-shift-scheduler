@@ -2517,7 +2517,7 @@ function sanitizeTempPatch(patch) {
 }
 
 // ── 宣導告知單電子簽名 ────────────────────────────────────
-// 簽名影像為 PNG dataURL（畫布 480×150，一般數 KB），上限 120KB。
+// 簽名影像為 PNG dataURL（畫布 600×300，一般 10～30KB），上限 120KB。
 const SIGN_MAX_LEN = 120000;
 function checkSignBody(b) {
   const date = String(b?.date ?? '');

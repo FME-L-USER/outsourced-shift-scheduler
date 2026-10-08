@@ -8848,7 +8848,7 @@ function SignaturePad({ onChange, large = false }) {
     const ctx = canvasRef.current.getContext('2d');
     const pt = posOf(e);
     ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 2.6;
+    ctx.lineWidth = 3.4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -8878,11 +8878,11 @@ function SignaturePad({ onChange, large = false }) {
           ? <span className="text-xs text-amber-600">尚未簽名</span>
           : <button type="button" onClick={clear} className="text-xs text-blue-600 underline">清除重簽</button>}
       </div>
-      <canvas ref={canvasRef} width={480} height={150}
+      <canvas ref={canvasRef} width={600} height={300}
         onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end}
         className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
                     ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
-        style={{ aspectRatio: '480 / 150' }} />
+        style={{ aspectRatio: '2 / 1' }} />
     </div>
   );
 }
