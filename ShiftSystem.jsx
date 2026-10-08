@@ -8876,7 +8876,11 @@ function SignaturePad({ onChange, large = false }) {
         <span className={`${large ? 'text-base' : 'text-sm'} font-semibold text-slate-700`}>✍️ 請於框內簽名</span>
         {empty
           ? <span className="text-xs text-amber-600">尚未簽名</span>
-          : <button type="button" onClick={clear} className="text-xs text-blue-600 underline">清除重簽</button>}
+          : <button type="button" onClick={clear}
+              className={`ml-auto px-3 py-1 rounded-lg border border-red-300 bg-red-50 hover:bg-red-100
+                          text-red-600 font-semibold ${large ? 'text-lg' : 'text-base'}`}>
+              清除簽名
+            </button>}
       </div>
       <canvas ref={canvasRef} width={600} height={300}
         onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end}
