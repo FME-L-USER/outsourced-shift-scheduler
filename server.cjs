@@ -1649,6 +1649,105 @@ app.post('/api/maintenance/restore', requireAuth, requireAdmin, async (req, res)
   }
 });
 
+// ── 整份還原（僅管理員）──────────────────────────────────
+// 把整份共用資料（人員清冊、班表、出勤、手機控管、設定…）換回指定備份。
+// 預覽只比對、不異動；執行前一律先備份現況，必要時可再從這份備份還原回來。
+// 帳號（users 資料表）與告知單簽名（safety_signs）不在共用資料內，不受影響。
+async function buildFullRestorePreview(backupId) {
+  const { rows: bk } = await pool.query(
+    'SELECT id, note, created_at, data FROM app_state_backup WHERE id=$1', [backupId]);
+  if (!bk[0]) return { error: '找不到指定的備份' };
+  const bak = bk[0].data ?? {};
+  const { rows: cr } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const cur = cr[0]?.data ?? {};
+  const J = v => JSON.stringify(v ?? null);
+  const person = e => ({ id: e.id, empNo: e.empId ?? '', name: e.name ?? '', vendor: e.vendor ?? '',
+                         group: e.group ?? '', status: e.status ?? '' });
+
+  const bEmps = bak.employees ?? [], cEmps = cur.employees ?? [];
+  const bById = new Map(bEmps.map(e => [e.id, e])), cById = new Map(cEmps.map(e => [e.id, e]));
+  const willReturn = bEmps.filter(e => !cById.has(e.id)).map(person);
+  const willVanish = cEmps.filter(e => !bById.has(e.id)).map(person);
+  const changed = bEmps.filter(e => cById.has(e.id) && J(e) !== J(cById.get(e.id))).length;
+
+  let scheduleCells = 0;
+  const bS = bak.schedule ?? {}, cS = cur.schedule ?? {};
+  for (const id of new Set([...Object.keys(bS), ...Object.keys(cS)])) {
+    const b = bS[id] ?? {}, c = cS[id] ?? {};
+    for (const dk of new Set([...Object.keys(b), ...Object.keys(c)]))
+      if ((b[dk] ?? null) !== (c[dk] ?? null)) scheduleCells++;
+  }
+
+  // 出勤／手機控管：還原後會回到備份當時狀態的紀錄（含備份之後才登記的）
+  const attendDates = [];
+  const bA = bak.attendData ?? {}, cA = cur.attendData ?? {};
+  for (const date of Object.keys(cA)) {
+    const n = Object.entries(cA[date] ?? {}).filter(([id, rec]) => J(rec) !== J(bA[date]?.[id])).length;
+    if (n > 0) attendDates.push({ date, count: n });
+  }
+  let extrasChanged = 0;
+  const bX = bak.extras ?? {}, cX = cur.extras ?? {};
+  for (const date of Object.keys(cX)) {
+    const bm = new Map((bX[date] ?? []).map(e => [e?.id, e]));
+    extrasChanged += (cX[date] ?? []).filter(e => J(e) !== J(bm.get(e?.id))).length;
+  }
+  attendDates.sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    backup: { id: bk[0].id, note: bk[0].note, created_at: bk[0].created_at },
+    employees: { backup: bEmps.length, current: cEmps.length, changed,
+                 willReturn: willReturn.slice(0, 300), willReturnCount: willReturn.length,
+                 willVanish: willVanish.slice(0, 300), willVanishCount: willVanish.length },
+    scheduleCells,
+    attendance: { records: attendDates.reduce((a, d) => a + d.count, 0), dates: attendDates.slice(0, 14) },
+    extrasChanged,
+  };
+}
+
+app.get('/api/maintenance/full-restore-preview', requireAuth, requireAdmin, async (req, res) => {
+  const backupId = Number(req.query?.backupId);
+  if (!backupId) return res.status(400).json({ error: '請選擇備份時間點' });
+  try {
+    const d = await buildFullRestorePreview(backupId);
+    if (d.error) return res.status(404).json({ error: d.error });
+    res.json({ ok: true, ...d });
+  } catch (e) {
+    console.error('full restore preview error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+app.post('/api/maintenance/full-restore', requireAuth, requireAdmin, async (req, res) => {
+  const backupId = Number(req.body?.backupId);
+  if (!backupId) return res.status(400).json({ error: '請選擇備份時間點' });
+  if (req.body?.confirm !== '確認還原') return res.status(400).json({ error: '請輸入「確認還原」' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: cr } = await client.query("SELECT data FROM app_state WHERE id='main' FOR UPDATE");
+    const { rows: bk } = await client.query(
+      'SELECT id, created_at, data FROM app_state_backup WHERE id=$1', [backupId]);
+    if (!bk[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到指定的備份' }); }
+    const when = new Date(bk[0].created_at).toISOString();
+    const { rows: pre } = await client.query(
+      'INSERT INTO app_state_backup (data, note) VALUES ($1, $2) RETURNING id',
+      [cr[0]?.data ?? {}, `整份還原前備份（還原至 #${backupId} ${when}，by ${req.user?.username}）`]);
+    const epoch = Date.now();
+    await client.query(
+      "UPDATE app_state SET data = $1::jsonb, updated_at = NOW() WHERE id='main'",
+      [JSON.stringify({ ...(bk[0].data ?? {}), _restoreEpoch: epoch })]);
+    await client.query('COMMIT');
+    console.log(`整份還原：還原至備份 #${backupId}（${when}），還原前備份 #${pre[0].id}（by ${req.user?.username}）`);
+    res.json({ ok: true, epoch, preBackupId: pre[0].id });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('full restore error:', e.message);
+    res.status(500).json({ error: '伺服器錯誤' });
+  } finally {
+    client.release();
+  }
+});
+
 // 登入紀錄彙總：帳號 → 次數與最後登入時間。供帳號與權限頁顯示。
 app.get('/api/audit/login/summary', requireAuth, requireManagerOrAdmin, async (_req, res) => {
   try {
@@ -1697,6 +1796,7 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
   const data = rows[0]?.data ?? {};
   res.json({
+    _restoreEpoch:   data._restoreEpoch   ?? 0,
     schedule:        data.schedule        ?? {},
     scheduleRange:   data.scheduleRange   ?? {},
     openHolidays:    data.openHolidays    ?? [],
@@ -1744,14 +1844,36 @@ function requireClientVersion(req, res, next) {
   });
 }
 
-app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
+// ── 資料還原版本 ─────────────────────────────────────────
+// 管理員整份還原後，app_state._restoreEpoch 會換成新的值。各裝置寫入時帶上
+// 自己載入資料時的版本（X-Data-Epoch），不同就拒收（409），前端會清除本機
+// 快取並重新載入。否則任何一台還開著的頁面一存檔，就會把還原前的資料寫回去。
+async function currentDataEpoch() {
+  const { rows } = await pool.query("SELECT data->'_restoreEpoch' AS ep FROM app_state WHERE id='main'");
+  return Number(rows[0]?.ep) || 0;
+}
+async function requireDataEpoch(req, res, next) {
+  let cur = 0;
+  try { cur = await currentDataEpoch(); } catch { return next(); }
+  if (!cur || Number(req.headers['x-data-epoch']) === cur) return next();
+  console.warn(`拒絕還原前的資料寫入：user=${req.user?.username} epoch=${req.headers['x-data-epoch'] ?? '(無)'}`);
+  return res.status(409).json({
+    error: '系統資料已由管理員從備份還原，請重新整理頁面後再操作。', code: 'data_restored', epoch: cur,
+  });
+}
+app.get('/api/data-epoch', requireAuth, async (_req, res) => {
+  try { res.json({ epoch: await currentDataEpoch() }); }
+  catch { res.status(503).json({ error: 'db_unavailable' }); }
+});
+
+app.put('/api/state', requireAuth, requireClientVersion, requireDataEpoch, async (req, res) => {
   dailyBackupTick();   // 整夜休眠後的第一個請求會在此補做前一日備份
   const role = req.user?.role;
   if (role !== 'admin' && role !== 'area' && role !== 'vendor' && role !== 'worker')
     return res.status(403).json({ error: '無存取權限' });
   const incoming = req.body;
   // 移除 attendData / extras，避免覆蓋 vendor 透過 /api/attendance 存入的出勤紀錄
-  const { attendData: _a, extras: _e, ...rest } = incoming;
+  const { attendData: _a, extras: _e, _restoreEpoch: _ep, ...rest } = incoming;
   // vendor/worker 僅允許寫入 schedule（班表），避免覆蓋系統設定
   if (role === 'vendor' || role === 'worker') {
     const { schedule } = rest;
@@ -1963,8 +2085,14 @@ app.put('/api/state', requireAuth, requireClientVersion, async (req, res) => {
           console.warn(`PUT /api/state 一次要求刪除 ${explicitDeletes.length} 位，超過上限，已忽略（user=${req.user?.username}）`);
         } else {
           for (const id of explicitDeletes) tomb[id] = now;
-          if (explicitDeletes.length > 0)
-            console.log(`PUT /api/state 刪除 ${explicitDeletes.length} 位人員並記錄墓碑（user=${req.user?.username}）`);
+          if (explicitDeletes.length > 0) {
+            // 記下被刪的是誰，事後才查得出是哪個帳號、何時把人從清冊移除
+            const who = explicitDeletes.map(id => {
+              const e = curById.get(id);
+              return e ? `${e.empId ?? ''} ${e.name ?? ''}`.trim() : id;
+            }).join('、');
+            console.log(`PUT /api/state 刪除 ${explicitDeletes.length} 位人員並記錄墓碑（user=${req.user?.username}）：${who}`);
+          }
         }
         // 沒被明確刪除、但這次名單裡缺少的人一律保留
         const missing = curEmps.filter(e => !incomingIds.has(e.id) && !tomb[e.id]);
@@ -2210,13 +2338,13 @@ app.get('/api/attendance', requireAuth, async (req, res) => {
     for (const [date, dayMap] of Object.entries(data.attendData ?? {})) {
       if (dayMap?.[empId]) filtered[date] = { [empId]: dayMap[empId] };
     }
-    return res.json({ attendData: filtered, extras: {} });
+    return res.json({ attendData: filtered, extras: {}, _restoreEpoch: data._restoreEpoch ?? 0 });
   }
-  res.json({ attendData: data.attendData ?? {}, extras: data.extras ?? {} });
+  res.json({ attendData: data.attendData ?? {}, extras: data.extras ?? {}, _restoreEpoch: data._restoreEpoch ?? 0 });
 });
 
 // ── PUT /api/attendance （admin / area / vendor / worker 可寫）─────
-app.put('/api/attendance', requireAuth, requireClientVersion, async (req, res) => {
+app.put('/api/attendance', requireAuth, requireClientVersion, requireDataEpoch, async (req, res) => {
   const role = req.user?.role;
   if (!['admin','area','vendor','worker'].includes(role))
     return res.status(403).json({ error: '無存取權限' });

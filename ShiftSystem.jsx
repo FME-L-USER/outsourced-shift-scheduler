@@ -232,6 +232,43 @@ const ROLES   = { ADMIN: 'admin', AREA: 'area', VENDOR: 'vendor', WORKER: 'worke
 // 臨時人力自助簽到僅開放給手機控管實際使用的倉別
 const TEMP_WAREHOUSE = '大肚倉';
 const JWT_KEY = 'sms_jwt';
+
+/*
+ * 資料還原版本：管理員整份還原後伺服器會換一個新版本號。
+ * 本機持有的資料（含 localStorage 快取）若是舊版本，必須全部丟棄後重新載入，
+ * 否則下一次存檔就會把還原前的內容寫回伺服器。
+ */
+const DATA_EPOCH_KEY = 'sms_data_epoch';
+const KEEP_ON_RESTORE = new Set([JWT_KEY, DATA_EPOCH_KEY,
+  'sms_sel_wh', 'sms_sel_dept', 'sms_sel_grp', 'sms_sel_area', 'sms_year', 'sms_month']);
+let heldDataEpoch = (() => { try { return Number(localStorage.getItem(DATA_EPOCH_KEY)) || 0; } catch { return 0; } })();
+let dataReloading = false;
+function onDataRestored(serverEpoch) {
+  if (dataReloading) return;
+  dataReloading = true;
+  try {
+    for (const k of Object.keys(localStorage))
+      if (k.startsWith('sms_') && !KEEP_ON_RESTORE.has(k)) localStorage.removeItem(k);
+    localStorage.setItem(DATA_EPOCH_KEY, String(Number(serverEpoch) || 0));
+  } catch { /* 無法存取 localStorage 時仍重新載入 */ }
+  window.location.reload();
+}
+/** 伺服器的還原版本與本機不同時清除快取並重新載入；回傳 true 表示已觸發重新載入 */
+function checkDataEpoch(serverEpoch) {
+  const sv = Number(serverEpoch) || 0;
+  if (sv === heldDataEpoch) return false;
+  onDataRestored(sv);
+  return true;
+}
+/** 寫入被以 409 拒收時，向伺服器確認目前版本 */
+function recheckDataEpoch() {
+  const token = localStorage.getItem(JWT_KEY);
+  if (!token) return;
+  fetch('/api/data-epoch', { headers: { Authorization: `Bearer ${token}` } })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => { if (d) checkDataEpoch(d.epoch); })
+    .catch(() => {});
+}
 // 前端版本：隨寫入請求送出，伺服器據此擋下舊分頁的覆蓋。
 // 有破壞性的資料格式或寫入邏輯變更時才需要調高（要同步調整伺服器的 MIN_CLIENT_VERSION）。
 const APP_VERSION = '2026-10-06';
@@ -2997,6 +3034,36 @@ function RestoreDrawer() {
   const rows = diff?.rows ?? [];
   const chosen = rows.filter(r => picked.has(r.empId));
 
+  // ── 整份還原 ──
+  const [fullPrev, setFullPrev] = useState(null);
+  const [fullConfirm, setFullConfirm] = useState('');
+  const loadFullPreview = async () => {
+    if (!pointId) { setErr('請先選擇備份時間點'); return; }
+    setBusy(true); setErr(''); setFullPrev(null); setFullConfirm('');
+    try {
+      const d = await call('/api/maintenance/full-restore-preview?backupId=' + encodeURIComponent(pointId));
+      if (d) setFullPrev(d);
+    } finally { setBusy(false); }
+  };
+  const doFullRestore = async () => {
+    if (!fullPrev || fullConfirm !== '確認還原') return;
+    if (!await askConfirm(
+      `將把「全部資料」換回 ${fmt(fullPrev.backup.created_at)} 的備份。\n\n` +
+      `． 人員清冊：${fullPrev.employees.willReturnCount} 位回到清冊、${fullPrev.employees.willVanishCount} 位消失\n` +
+      `． 班表：${fullPrev.scheduleCells} 格回到備份當時的值\n` +
+      `． 出勤／手機控管：${fullPrev.attendance.records} 筆、臨時人力 ${fullPrev.extrasChanged} 筆回到備份當時\n\n` +
+      '執行前會先備份現況。所有開著的頁面都會被要求重新載入。確定執行？')) return;
+    setBusy(true); setErr('');
+    let d = null;
+    try {
+      d = await call('/api/maintenance/full-restore', 'POST', { backupId: Number(pointId), confirm: fullConfirm });
+    } finally { setBusy(false); }
+    if (d?.ok) {
+      toast(`已整份還原；還原前的資料另存為備份 #${d.preBackupId}`, 'success');
+      setTimeout(() => onDataRestored(d.epoch), 1500);
+    }
+  };
+
   const doRestore = async () => {
     if (chosen.length === 0) return;
     const cells = chosen.reduce((a, r) => a + r.count, 0);
@@ -3089,6 +3156,70 @@ function RestoreDrawer() {
                   className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm" />
               </label>
             </div>
+          </div>
+
+          {/* 整份還原：把全部資料換回所選備份 */}
+          <div className="mb-4 border-2 border-red-200 rounded-xl p-3 bg-red-50/40">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-red-700">⚠ 整份還原（全部資料）</span>
+              <button onClick={loadFullPreview} disabled={busy || !pointId}
+                className="ml-auto px-3 py-1.5 border border-red-300 bg-white text-red-700 rounded-lg text-sm hover:bg-red-50 disabled:opacity-40">
+                {busy ? '處理中…' : '預覽整份還原的影響'}
+              </button>
+            </div>
+            <p className="text-[11px] text-red-700/80 mt-1 leading-relaxed">
+              人員清冊、班表、出勤、手機控管、設定全部換回所選時間點。帳號與告知單簽名不受影響。
+              執行前自動備份現況，必要時可再從那份備份還原回來。
+            </p>
+            {fullPrev && (
+              <div className="mt-3 space-y-2 text-xs">
+                <div className="text-slate-700">
+                  還原至：<b>{fmt(fullPrev.backup.created_at)}</b>
+                  <span className="text-slate-400">（{fullPrev.backup.note}）</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-white border border-emerald-200 rounded-lg p-2">
+                    <div className="font-semibold text-emerald-700">回到人員清冊：{fullPrev.employees.willReturnCount} 位</div>
+                    <div className="mt-1 max-h-40 overflow-y-auto text-slate-600 leading-relaxed">
+                      {fullPrev.employees.willReturn.map(pp => (
+                        <div key={pp.id}>{pp.name} <span className="font-mono text-slate-400">{pp.empNo}</span>
+                          <span className="text-slate-400">・{pp.vendor}・{pp.group}{pp.status ? `・${pp.status}` : ''}</span></div>
+                      ))}
+                      {fullPrev.employees.willReturnCount === 0 && <span className="text-slate-400">無</span>}
+                    </div>
+                  </div>
+                  <div className="bg-white border border-rose-200 rounded-lg p-2">
+                    <div className="font-semibold text-rose-700">從人員清冊消失：{fullPrev.employees.willVanishCount} 位</div>
+                    <div className="text-[11px] text-slate-400">（備份之後才新增的人）</div>
+                    <div className="mt-1 max-h-40 overflow-y-auto text-slate-600 leading-relaxed">
+                      {fullPrev.employees.willVanish.map(pp => (
+                        <div key={pp.id}>{pp.name} <span className="font-mono text-slate-400">{pp.empNo}</span>
+                          <span className="text-slate-400">・{pp.vendor}・{pp.group}</span></div>
+                      ))}
+                      {fullPrev.employees.willVanishCount === 0 && <span className="text-slate-400">無</span>}
+                    </div>
+                  </div>
+                </div>
+                <ul className="list-disc pl-5 text-slate-700 space-y-0.5">
+                  <li>人員清冊：備份 {fullPrev.employees.backup} 人／目前 {fullPrev.employees.current} 人，另有 {fullPrev.employees.changed} 人的資料會改回備份當時</li>
+                  <li>班表：<b>{fullPrev.scheduleCells}</b> 格會回到備份當時的值</li>
+                  <li>出勤／手機控管：<b>{fullPrev.attendance.records}</b> 筆會回到備份當時
+                    {fullPrev.attendance.dates.length > 0 && (
+                      <span className="text-slate-500">（{fullPrev.attendance.dates.map(d => `${d.date.slice(5)}：${d.count}`).join('、')}）</span>
+                    )}</li>
+                  <li>臨時人力：<b>{fullPrev.extrasChanged}</b> 筆會回到備份當時</li>
+                </ul>
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <input value={fullConfirm} onChange={e => setFullConfirm(e.target.value)}
+                    placeholder="請輸入「確認還原」"
+                    className="border border-red-300 rounded-lg px-2 py-1.5 text-sm w-40" />
+                  <button onClick={doFullRestore} disabled={busy || fullConfirm !== '確認還原'}
+                    className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-40">
+                    整份還原到此備份
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -9271,7 +9402,7 @@ function WorkerSelfCheck() {
     if (!token) return;
     fetch('/api/attendance', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, 'X-Data-Epoch': String(heldDataEpoch), Authorization: `Bearer ${token}` },
       body: JSON.stringify({ attendData: { [todayStr]: { [empId]: newRecord } }, extras: {} }),
     }).then(r => { if (!r.ok) toast('儲存失敗，請檢查網路後重新勾選', 'error'); })
       .catch(() => toast('儲存失敗，請檢查網路後重新勾選', 'error'));
@@ -16237,6 +16368,7 @@ export default function App() {
   const [saveIssue, setSaveIssue] = useState(null);   // { kind:'offline'|'outdated', since:number }
   const failSinceRef = useRef(0);
   const noteSaveResult = useCallback((ok, status) => {
+    if (status === 409) { recheckDataEpoch(); return; }
     if (status === 426) { setSaveIssue({ kind: 'outdated' }); return; }
     if (ok) { failSinceRef.current = 0; setSaveIssue(prev => (prev?.kind === 'outdated' ? prev : null)); return; }
     if (!failSinceRef.current) failSinceRef.current = Date.now();
@@ -16261,7 +16393,7 @@ export default function App() {
       fetch('/api/state', {
         method: 'PUT',
         keepalive: true,
-        headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, 'X-Data-Epoch': String(heldDataEpoch), Authorization: `Bearer ${token}` },
         body: JSON.stringify({ schedule: dirtySchedule }),
       }).then(r => {
         noteSaveResult(r.ok, r.status);
@@ -16422,6 +16554,7 @@ export default function App() {
         ]);
         if (r.ok) {
           const s = await r.json();
+          if (checkDataEpoch(s._restoreEpoch)) return;
           if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
           if (s.vendors?.length > 0)    setVendors(s.vendors);
           if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
@@ -16459,6 +16592,7 @@ export default function App() {
         ]);
         if (rs.ok) {
           const s = await rs.json();
+          if (checkDataEpoch(s._restoreEpoch)) return;
           if (Array.isArray(s.employees) && s.employees.length > 0) setEmployees(s.employees);
           if (s.vendors?.length > 0)    setVendors(s.vendors);
           if (s.warehouses?.length > 0) setWarehouses(s.warehouses);
@@ -16495,6 +16629,7 @@ export default function App() {
         const state = await r.json();
         // server 回傳 null 代表 DB 尚未初始化，不啟用 auto-save
         if (!state) return;
+        if (checkDataEpoch(state._restoreEpoch)) return;
 
         const serverEmps = Array.isArray(state?.employees) ? state.employees : [];
         const localEmps  = LS.get('sms_employees', []);
@@ -16587,7 +16722,8 @@ export default function App() {
     };
     if (role === ROLES.WORKER) {
       fetch('/api/schedule', { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+        .then(r => r.ok ? r.json() : null)
+        .then(s => { if (s && !checkDataEpoch(s._restoreEpoch)) applySchedule(s); }).catch(() => {});
       fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null)
         .then(att => {
@@ -16597,7 +16733,8 @@ export default function App() {
         }).catch(() => {});
     } else if (role === ROLES.VENDOR) {
       fetch('/api/schedule',   { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : null).then(applySchedule).catch(() => {});
+        .then(r => r.ok ? r.json() : null)
+        .then(s => { if (s && !checkDataEpoch(s._restoreEpoch)) applySchedule(s); }).catch(() => {});
       fetch('/api/attendance', { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null)
         .then(att => {
@@ -16608,7 +16745,7 @@ export default function App() {
       fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null)
         .then(state => {
-          if (!state) return;
+          if (!state || checkDataEpoch(state._restoreEpoch)) return;
           applySchedule(state);
           // 本機尚未送出的出勤異動保留，其餘採用伺服器版本
           applyServerAttend(state.attendData, state.extras);
@@ -16719,7 +16856,7 @@ export default function App() {
     const sentCells = [...dirtyCellsRef.current];
     fetch('/api/state', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, 'X-Data-Epoch': String(heldDataEpoch), Authorization: `Bearer ${token}` },
       body: JSON.stringify((() => {
         const { schedule: _full, ...rest } = latestStateRef.current;
         const d = buildDirtySchedule(sentCells, scheduleRef.current);
@@ -16772,7 +16909,7 @@ export default function App() {
       ...(Object.keys(dirtySchedule).length > 0 ? { schedule: dirtySchedule } : {}),
       ...(deletedEmpsRef.current.size > 0 ? { deletedEmployees: [...deletedEmpsRef.current] } : {}),
     });
-    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
+    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, 'X-Data-Epoch': String(heldDataEpoch), Authorization: `Bearer ${token}` };
     dirtyRef.current = true;
     const done = ok => { if (ok) { dirtyRef.current = false; clearSent(); } };
     if (forceSaveRef.current) {
@@ -16815,7 +16952,7 @@ export default function App() {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     if (vendorAttendDebRef.current) clearTimeout(vendorAttendDebRef.current);
-    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}` };
+    const headers = { 'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, 'X-Data-Epoch': String(heldDataEpoch), Authorization: `Bearer ${token}` };
     // 只送本機改過的紀錄，避免用舊資料蓋掉其他裝置剛登記的內容
     const send = (label) => {
       const snap = attendSnapRef.current;
@@ -16825,7 +16962,7 @@ export default function App() {
       fetch('/api/attendance', { method: 'PUT', headers,
         body: JSON.stringify({ attendData: dirtyAtt, extras: {}, extrasPatch }) })
         .then(r => {
-          if (!r.ok) { console.warn(`出勤${label}失敗 HTTP`, r.status); return; }
+          if (!r.ok) { if (r.status === 409) recheckDataEpoch(); console.warn(`出勤${label}失敗 HTTP`, r.status); return; }
           // 已送達的內容即為新的一致基準；送出後又改過的紀錄仍會與快照不同，下次再送
           for (const [date, day] of Object.entries(dirtyAtt))
             for (const [id, rec] of Object.entries(day)) (snap.att[date] ??= {})[id] = syncKey(rec);
