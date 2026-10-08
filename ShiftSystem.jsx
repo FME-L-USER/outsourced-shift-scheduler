@@ -8974,9 +8974,9 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
             本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
           </p>
           <label className={`flex items-center gap-3 cursor-pointer select-none
-                             ${large ? 'text-lg' : 'text-base'} font-semibold text-slate-800`}>
+                             ${large ? 'text-2xl' : 'text-xl'} font-bold text-blue-700`}>
             <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
-              className="w-6 h-6 accent-emerald-600 cursor-pointer" />
+              className="w-7 h-7 flex-shrink-0 accent-blue-600 cursor-pointer" />
             我已閱讀並了解以上宣導事項
           </label>
           <SignaturePad onChange={setSign} large={large} />
