@@ -8830,6 +8830,7 @@ function SignaturePad({ onChange, large = false }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastRef = useRef(null);
+  const inkRef = useRef(0);   // 已畫的筆畫段數：只點一下不算簽名，避免送出空白簽名
   const [empty, setEmpty] = useState(true);
 
   const posOf = (e) => {
@@ -8856,16 +8857,18 @@ function SignaturePad({ onChange, large = false }) {
     ctx.lineTo(pt.x, pt.y);
     ctx.stroke();
     lastRef.current = pt;
-    if (empty) setEmpty(false);
+    inkRef.current += 1;
+    if (empty && inkRef.current >= 3) setEmpty(false);
   };
   const end = () => {
     if (!drawingRef.current) return;
     drawingRef.current = false;
-    onChange?.(canvasRef.current.toDataURL('image/png'));
+    onChange?.(inkRef.current >= 3 ? canvasRef.current.toDataURL('image/png') : '');
   };
   const clear = () => {
     const cv = canvasRef.current;
     cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    inkRef.current = 0;
     setEmpty(true);
     onChange?.('');
   };
@@ -8886,7 +8889,8 @@ function SignaturePad({ onChange, large = false }) {
         onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end}
         className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
                     ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
-        style={{ aspectRatio: '2 / 1' }} />
+        // 點選模式在矮的螢幕上限制簽名框高度（維持 2:1），確保「確認」按鈕不被擠出畫面
+        style={{ aspectRatio: '2 / 1', ...(large ? { maxWidth: 'max(220px, calc((100dvh - 545px) * 2))', marginInline: 'auto', display: 'block' } : {}) }} />
     </div>
   );
 }
@@ -8929,66 +8933,90 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
     );
   }
 
+  const bodyEl = (
+    <div onScroll={onActivity} onPointerDown={onActivity}
+      className={`px-4 py-3 space-y-3 overflow-y-auto ${txt} text-slate-700 leading-relaxed
+        ${large ? 'max-h-[40vh] md:max-h-none md:flex-1 md:min-h-0' : 'max-h-[45vh]'}`}>
+      {SAFETY_NOTICE.sections.map(sec => (
+        <div key={sec.title}>
+          <div className="font-bold text-slate-800">{sec.title}</div>
+          {sec.note && <div className="text-xs text-rose-700 mb-1">（{sec.note}）</div>}
+          <ol className="list-decimal pl-5 space-y-1">
+            {sec.items.map((it, i) => typeof it === 'string'
+              ? <li key={i}>{it}</li>
+              : (
+                <li key={i}>
+                  {it.text}
+                  <ol className="list-[lower-alpha] pl-5 space-y-0.5">
+                    {it.subs.map((sub, j) => <li key={j}>{sub}</li>)}
+                  </ol>
+                </li>
+              ))}
+          </ol>
+          {sec.remind && (
+            <div className="mt-1 text-xs text-rose-700 bg-rose-50 rounded-lg px-2 py-1">【安全提醒】{sec.remind}</div>
+          )}
+        </div>
+      ))}
+      <div className="text-right text-xs text-slate-400">版次 {SAFETY_NOTICE.version}</div>
+    </div>
+  );
+
+  const footerEl = !acked && (
+    <div className={`px-4 py-3 bg-amber-50 flex flex-col gap-3
+                     ${large ? 'md:gap-2 border-t md:border-t-0 md:border-l border-amber-200 md:justify-center' : 'border-t border-amber-200'}`}
+      onPointerDown={onActivity}>
+      <p className={`${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
+        本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
+      </p>
+      <label className={`flex items-center gap-3 cursor-pointer select-none
+                         ${large ? 'text-2xl' : 'text-xl'} font-bold text-blue-700`}>
+        <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
+          className="w-7 h-7 flex-shrink-0 accent-blue-600 cursor-pointer" />
+        我已閱讀並了解以上宣導事項
+      </label>
+      <SignaturePad onChange={setSign} large={large} />
+      {err && <p className="text-sm text-rose-600">{err}</p>}
+      <button type="button" onClick={submit} disabled={!agreed || !sign || busy}
+        className={`w-full py-3 rounded-xl font-bold ${large ? 'text-xl' : 'text-lg'} transition-colors
+          ${agreed && sign && !busy
+            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+            : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+        {busy ? '送出中…' : !agreed ? '請先勾選上方確認' : !sign ? '請先完成簽名' : '確認簽名並前往簽到'}
+      </button>
+    </div>
+  );
+
   return (
-    <div className={`rounded-xl border-2 ${acked ? 'border-emerald-200' : 'border-amber-300'} bg-white overflow-hidden`}>
-      <div className={`px-4 py-2.5 ${acked ? 'bg-emerald-50' : 'bg-amber-50'} flex items-center gap-2`}>
+    <div className={`rounded-xl border-2 ${acked ? 'border-emerald-200' : 'border-amber-300'} bg-white overflow-hidden
+                     ${large && !acked ? 'md:flex md:flex-col md:h-[calc(100dvh-285px)] md:min-h-[360px]' : ''}`}>
+      <div className={`px-4 py-2.5 ${acked ? 'bg-emerald-50' : 'bg-amber-50'} flex items-center gap-2 flex-shrink-0`}>
         <span className={`font-bold ${large ? 'text-lg' : 'text-base'} text-slate-800`}>📋 {SAFETY_NOTICE.title}</span>
         {acked && (
           <button type="button" onClick={() => setOpen(false)} className="ml-auto text-xs text-slate-500 underline">收合</button>
         )}
       </div>
-      {!acked && (
-        <p className={`px-4 pt-2 ${large ? 'text-sm' : 'text-xs'} text-amber-800`}>
-          請閱讀以下宣導事項，勾選並完成電子簽名後才能簽到與登記手機。
-        </p>
-      )}
-      <div onScroll={onActivity} onPointerDown={onActivity}
-        className={`px-4 py-3 space-y-3 overflow-y-auto ${large ? 'max-h-[40vh]' : 'max-h-[45vh]'} ${txt} text-slate-700 leading-relaxed`}>
-        {SAFETY_NOTICE.sections.map(sec => (
-          <div key={sec.title}>
-            <div className="font-bold text-slate-800">{sec.title}</div>
-            {sec.note && <div className="text-xs text-rose-700 mb-1">（{sec.note}）</div>}
-            <ol className="list-decimal pl-5 space-y-1">
-              {sec.items.map((it, i) => typeof it === 'string'
-                ? <li key={i}>{it}</li>
-                : (
-                  <li key={i}>
-                    {it.text}
-                    <ol className="list-[lower-alpha] pl-5 space-y-0.5">
-                      {it.subs.map((sub, j) => <li key={j}>{sub}</li>)}
-                    </ol>
-                  </li>
-                ))}
-            </ol>
-            {sec.remind && (
-              <div className="mt-1 text-xs text-rose-700 bg-rose-50 rounded-lg px-2 py-1">【安全提醒】{sec.remind}</div>
-            )}
+      {large && !acked ? (
+        // 電腦／iPad（點選模式）：左側告知單內文捲動、右側勾選與簽名，整個畫面一頁看完
+        <div className="flex flex-col md:flex-row md:flex-1 md:min-h-0">
+          <div className="flex flex-col md:flex-[1.15] md:min-w-0 md:min-h-0">
+            <p className="px-4 pt-2 text-sm text-amber-800 flex-shrink-0">
+              請閱讀以下宣導事項，勾選並完成電子簽名後才能簽到與登記手機。
+            </p>
+            {bodyEl}
           </div>
-        ))}
-        <div className="text-right text-xs text-slate-400">版次 {SAFETY_NOTICE.version}</div>
-      </div>
-      {!acked && (
-        <div className="px-4 py-3 space-y-3 border-t border-amber-200 bg-amber-50"
-          onPointerDown={onActivity}>
-          <p className={`${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
-            本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
-          </p>
-          <label className={`flex items-center gap-3 cursor-pointer select-none
-                             ${large ? 'text-2xl' : 'text-xl'} font-bold text-blue-700`}>
-            <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
-              className="w-7 h-7 flex-shrink-0 accent-blue-600 cursor-pointer" />
-            我已閱讀並了解以上宣導事項
-          </label>
-          <SignaturePad onChange={setSign} large={large} />
-          {err && <p className="text-sm text-rose-600">{err}</p>}
-          <button type="button" onClick={submit} disabled={!agreed || !sign || busy}
-            className={`w-full py-3 rounded-xl font-bold ${large ? 'text-xl' : 'text-lg'} transition-colors
-              ${agreed && sign && !busy
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-            {busy ? '送出中…' : !agreed ? '請先勾選上方確認' : !sign ? '請先完成簽名' : '確認簽名並前往簽到'}
-          </button>
+          <div className="md:flex-1 md:min-w-0 md:overflow-y-auto flex flex-col">{footerEl}</div>
         </div>
+      ) : (
+        <>
+          {!acked && (
+            <p className={`px-4 pt-2 ${large ? 'text-sm' : 'text-xs'} text-amber-800`}>
+              請閱讀以下宣導事項，勾選並完成電子簽名後才能簽到與登記手機。
+            </p>
+          )}
+          {bodyEl}
+          {footerEl}
+        </>
       )}
     </div>
   );
@@ -9448,8 +9476,8 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
         <span className="whitespace-nowrap">📹 監視錄影中</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5">
-        <div className="max-w-5xl mx-auto space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-3">
+        <div className="max-w-5xl mx-auto space-y-5 md:space-y-3">
           {/* 標題列：上一步／步驟／搜尋 */}
           <div className="flex items-center gap-3 flex-wrap">
             {step > 1 && (
@@ -9479,7 +9507,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
           )}
 
           {/* 內容 */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-4 md:p-6">
+          <div className="bg-white rounded-3xl border border-slate-200 p-4 md:p-5">
             {step === 1 && (groups.length === 0
               ? <p className="text-center text-slate-400 py-10">目前沒有可登記的人員</p>
               : <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -9514,14 +9542,15 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                 </div>)}
 
             {step === 4 && emp && (
-              <div className="max-w-xl mx-auto space-y-5">
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-slate-800">{emp.name}</div>
-                  <div className="text-base text-slate-500 mt-1">
+              <div className="space-y-5 md:space-y-3">
+                {/* 電腦／iPad：姓名、員編、櫃號排成一列，留更多高度給告知單 */}
+                <div className="text-center md:flex md:items-center md:justify-center md:gap-4">
+                  <div className="text-3xl md:text-2xl font-bold text-slate-800">{emp.name}</div>
+                  <div className="text-base text-slate-500 mt-1 md:mt-0">
                     {emp._temp ? '臨時人力' : <span className="font-mono">{emp.empId}</span>}・{emp.vendor}・{groupOf(emp)}
                   </div>
                   {lockerOf(emp) && (
-                    <p className="mt-3 inline-block px-4 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200
+                    <p className="mt-3 md:mt-0 inline-block px-4 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200
                                   text-indigo-700 text-lg font-semibold">
                       🔐 {lockerLabel(lockerOf(emp))}
                     </p>
@@ -9532,7 +9561,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                     { date: todayStr, personId: emp.id, name: emp.name, image })}
                   onActivity={() => { lastTouchRef.current = Date.now(); }} />
                 {/* 告知單簽署完成前不顯示登記按鈕，簽署後自動捲到這裡 */}
-                <div ref={jumpRef} className={`space-y-5 scroll-mt-4 ${safetyAcked(rec) ? '' : 'hidden'}`}>
+                <div ref={jumpRef} className={`max-w-xl mx-auto space-y-5 scroll-mt-4 ${safetyAcked(rec) ? '' : 'hidden'}`}>
                 <div className="flex gap-3">
                   <KioskToggle rec={rec} field="signedIn"  label="簽到" tone="teal"  onSet={onSet} />
                   <KioskToggle rec={rec} field="signedOut" label="簽退" tone="slate" onSet={onSet} />
@@ -9551,13 +9580,18 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                   ))}
                 </div>
                 </div>
-                <button onClick={goHome}
-                  className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xl font-bold">
-                  完成，回首頁
-                </button>
-                <p className="text-center text-xs text-slate-400">
-                  {savedTip ? '✓ 已登記' : `${KIOSK_IDLE_MS / 1000} 秒未操作會自動回首頁`}
-                </p>
+                {/* 告知單簽署前不需要，先隱藏，讓告知單與簽名框一頁看完 */}
+                {safetyAcked(rec) && (
+                  <>
+                    <button onClick={goHome}
+                      className="block w-full max-w-xl mx-auto py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xl font-bold">
+                      完成，回首頁
+                    </button>
+                    <p className="text-center text-xs text-slate-400">
+                      {savedTip ? '✓ 已登記' : `${KIOSK_IDLE_MS / 1000} 秒未操作會自動回首頁`}
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
