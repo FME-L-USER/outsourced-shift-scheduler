@@ -8990,6 +8990,70 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
   );
 }
 
+// 簽署者身分：用來辨識是本人手機簽的，還是在點選模式（共用裝置）簽的
+const SIGNER_ROLE_LABEL = {
+  worker: '本人手機', temp: '臨時人力本人', vendor: '廠商幹部帳號',
+  admin: '點選模式（管理員帳號）', area: '點選模式（日翊帳號）',
+};
+const signTimeStr = iso => (iso ? new Date(iso).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }) : '');
+const escHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function fetchSafetySigns(date, withImage = false) {
+  const token = localStorage.getItem(JWT_KEY);
+  const r = await fetch(`/api/safety-sign/list?date=${encodeURIComponent(date)}${withImage ? '&images=1' : ''}`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+
+/** 單一人員的簽名調閱視窗 */
+function SafetySignViewer({ date, person, onClose }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    const token = localStorage.getItem(JWT_KEY);
+    const q = new URLSearchParams({ date, personId: person.id, version: SAFETY_NOTICE.version });
+    fetch(`/api/safety-sign/image?${q}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`); return r.json(); })
+      .then(setData)
+      .catch(e => setErr(e.message));
+  }, [date, person.id]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-md p-5 space-y-3" onClick={ev => ev.stopPropagation()}>
+        <div>
+          <h3 className="font-bold text-slate-800">✍️ 宣導告知單簽名</h3>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {person.name}{person.empId ? `（${person.empId}）` : '（臨時人力）'}・{date}・版次 {SAFETY_NOTICE.version}
+          </p>
+        </div>
+        {err && <p className="text-sm text-rose-600">讀取失敗：{err}</p>}
+        {!err && !data && <p className="text-sm text-slate-400 py-8 text-center">讀取中…</p>}
+        {data && (
+          <>
+            <img src={data.image} alt={`${person.name} 的簽名`}
+              className="w-full border border-slate-200 rounded-lg bg-white" />
+            <dl className="grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
+              <dt className="text-slate-400">簽署時間</dt>
+              <dd className="text-slate-700">{new Date(data.signed_at).toLocaleString('zh-TW', { hour12: false })}</dd>
+              <dt className="text-slate-400">簽署方式</dt>
+              <dd className="text-slate-700">{SIGNER_ROLE_LABEL[data.signer_role] ?? data.signer_role}</dd>
+              <dt className="text-slate-400">操作帳號</dt>
+              <dd className="text-slate-700 break-all">{data.signer_user || '—'}</dd>
+              <dt className="text-slate-400">IP</dt>
+              <dd className="text-slate-700">{data.ip || '—'}</dd>
+            </dl>
+          </>
+        )}
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">關閉</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 臨時人力自助簽到／手機控管（畫面 2）──
 // 臨時人力無帳號，資料寫入當日 extras，透過公開端點 /api/attendance/temp 送出。
 function TempSelfCheck({ onLogout }) {
@@ -10362,6 +10426,198 @@ function Attendance({ phoneOnly = false }) {
     toast(`櫃號已套用：共 ${Object.keys(lockerPreview.assign).length} 人`, 'success');
   };
 
+  // ── 宣導告知單簽署：調閱（管理員／日翊）──
+  // 以伺服器的簽名資料表為準（出勤紀錄上的 safetySigned 只是畫面用的旗標）
+  const canViewSigns = phoneOnly && (currentUser.role === ROLES.ADMIN || currentUser.role === ROLES.AREA);
+  const [signRows, setSignRows] = useState({});          // person_id → 簽署資料（目前版次）
+  const [signErr, setSignErr] = useState('');
+  const [signViewer, setSignViewer] = useState(null);    // 調閱單一簽名：{ id, name, empId }
+  const [signSheetOpen, setSignSheetOpen] = useState(false);
+  const [signSheetFilter, setSignSheetFilter] = useState('all');   // all | signed | unsigned
+  const loadSigns = useCallback(() => {
+    if (!canViewSigns) return;
+    fetchSafetySigns(attendDate)
+      .then(rows => {
+        setSignRows(Object.fromEntries(rows
+          .filter(r => r.version === SAFETY_NOTICE.version).map(r => [r.person_id, r])));
+        setSignErr('');
+      })
+      .catch(e => setSignErr(e.message));
+  }, [canViewSigns, attendDate]);
+  useEffect(() => {
+    loadSigns();
+    if (!canViewSigns) return;
+    const t = setInterval(loadSigns, 60000);   // 現場陸續簽署，每分鐘更新一次
+    return () => clearInterval(t);
+  }, [loadSigns, canViewSigns]);
+
+  /** 簽署紀錄表：目前上方範圍內的長期人員與臨時人力 */
+  const signPeople = useMemo(() => [
+    ...scopedEmps.map(e => ({ id: e.id, name: e.name, empId: e.empId, vendor: e.vendor, group: e.group || e.shiftType || '' })),
+    ...dateExtras.map(e => ({ id: e.id, name: e.name, empId: '', vendor: e.vendor, group: e.group || '', temp: true })),
+  ].sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor)
+      || String(a.group).localeCompare(String(b.group), 'zh-Hant')
+      || (!!a.temp - !!b.temp)
+      || String(a.empId || a.name).localeCompare(String(b.empId || b.name), 'zh-Hant')),
+  [scopedEmps, dateExtras]);
+  const signedCount = signPeople.filter(pp => signRows[pp.id]).length;
+  const signSheetList = signPeople.filter(pp =>
+    signSheetFilter === 'all' || (signSheetFilter === 'signed' ? !!signRows[pp.id] : !signRows[pp.id]));
+
+  const exportSignSheet = () => {
+    const header = ['日期', '版次', '廠商', '組別', '員工編號', '姓名', '身分', '簽署狀態', '簽署時間', '簽署方式', '操作帳號'];
+    const rows = signSheetList.map(pp => {
+      const r = signRows[pp.id];
+      return [attendDate, SAFETY_NOTICE.version, pp.vendor, pp.group, pp.empId, pp.name, pp.temp ? '臨時人力' : '長期人員',
+              r ? '已簽' : '未簽', r ? new Date(r.signed_at).toLocaleString('zh-TW', { hour12: false }) : '',
+              r ? (SIGNER_ROLE_LABEL[r.signer_role] ?? r.signer_role) : '', r?.signer_user ?? ''];
+    });
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = [10, 9, 10, 14, 13, 10, 9, 9, 20, 22, 18].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '告知單簽署紀錄');
+    XLSX.writeFile(wb, `宣導告知單簽署紀錄_${attendDate}.xlsx`);
+  };
+
+  // 列印（含簽名影像）：先同步開窗避免被瀏覽器擋下，取回簽名後再寫入內容
+  const printSignSheet = async () => {
+    const w = window.open('', '_blank');
+    if (!w) { toast('瀏覽器擋下了列印視窗，請允許此網站開啟彈出式視窗', 'error'); return; }
+    w.document.write('<p style="font-family:sans-serif">讀取簽名中…</p>');
+    let imgs = {};
+    try {
+      const rows = await fetchSafetySigns(attendDate, true);
+      imgs = Object.fromEntries(rows.filter(r => r.version === SAFETY_NOTICE.version).map(r => [r.person_id, r]));
+    } catch (e) {
+      w.document.body.innerHTML = `<p style="font-family:sans-serif;color:#b91c1c">讀取簽名失敗：${escHtml(e.message)}</p>`;
+      return;
+    }
+    const scope = [warehouses.find(x => x.id === selectedWarehouse)?.name, attendDeptName, selectedGroup, selectedVendor]
+      .filter(Boolean).join('・');
+    const body = signSheetList.map((pp, i) => {
+      const r = imgs[pp.id];
+      return `<tr><td>${i + 1}</td><td>${escHtml(pp.vendor)}</td><td>${escHtml(pp.group)}</td>
+        <td>${escHtml(pp.empId || '臨時人力')}</td><td>${escHtml(pp.name)}</td>
+        <td>${r ? escHtml(new Date(r.signed_at).toLocaleTimeString('zh-TW', { hour12: false })) : '<span class="no">未簽</span>'}</td>
+        <td class="sig">${r ? `<img src="${escHtml(r.image)}">` : ''}</td></tr>`;
+    }).join('');
+    w.document.open();
+    w.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+      <title>宣導告知單簽署紀錄_${escHtml(attendDate)}</title>
+      <style>
+        body{font-family:"Microsoft JhengHei",sans-serif;margin:16px;color:#1e293b}
+        h1{font-size:18px;margin:0 0 4px} p{margin:0 0 10px;font-size:12px;color:#475569}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th,td{border:1px solid #94a3b8;padding:3px 6px;text-align:left;vertical-align:middle}
+        th{background:#f1f5f9} tr{page-break-inside:avoid}
+        td.sig{width:180px;height:52px;padding:2px} td.sig img{max-width:176px;max-height:50px;display:block}
+        .no{color:#b91c1c}
+      </style></head><body>
+      <h1>${escHtml(SAFETY_NOTICE.title)}　簽署紀錄</h1>
+      <p>日期：${escHtml(attendDate)}　版次：${escHtml(SAFETY_NOTICE.version)}　範圍：${escHtml(scope || '全部')}
+         　已簽 ${signSheetList.filter(pp => imgs[pp.id]).length}／${signSheetList.length} 人</p>
+      <table><thead><tr><th>#</th><th>廠商</th><th>組別</th><th>員工編號</th><th>姓名</th><th>簽署時間</th><th>簽名</th></tr></thead>
+      <tbody>${body}</tbody></table>
+      <script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script>
+      </body></html>`);
+    w.document.close();
+  };
+
+  const signSheetModal = signSheetOpen && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+         onClick={() => setSignSheetOpen(false)}>
+      <div className="bg-white rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+           onClick={ev => ev.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-[#DDD9D0] flex items-start gap-3 flex-wrap">
+          <div className="min-w-0">
+            <h3 className="font-bold text-slate-800">📋 宣導告知單簽署紀錄</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {attendDate}・版次 {SAFETY_NOTICE.version}・依上方倉別／課別／組別／廠商範圍・
+              已簽 <b className="text-emerald-700">{signedCount}</b>／{signPeople.length} 人，
+              未簽 <b className={signPeople.length - signedCount > 0 ? 'text-rose-600' : 'text-slate-500'}>{signPeople.length - signedCount}</b> 人
+            </p>
+            {signErr && <p className="text-xs text-rose-600 mt-1">簽署資料讀取失敗：{signErr}</p>}
+          </div>
+          <div className="ml-auto flex gap-2 flex-wrap">
+            <button onClick={loadSigns}
+              className="px-3 py-1.5 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">🔄 重新整理</button>
+            <button onClick={exportSignSheet}
+              className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">📊 匯出 Excel</button>
+            <button onClick={printSignSheet}
+              className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">🖨 列印（含簽名）</button>
+          </div>
+        </div>
+        <div className="px-5 pt-3 flex gap-1">
+          {[['all', '全部', signPeople.length], ['signed', '已簽', signedCount], ['unsigned', '未簽', signPeople.length - signedCount]]
+            .map(([k, label, n]) => (
+              <button key={k} onClick={() => setSignSheetFilter(k)}
+                className={`px-3 py-1 rounded-full text-xs border
+                  ${signSheetFilter === k ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+                {label} {n}
+              </button>
+            ))}
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 pt-3">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                <th className="py-1.5 pr-2">廠商</th><th className="py-1.5 pr-2">組別</th>
+                <th className="py-1.5 pr-2">員工編號</th><th className="py-1.5 pr-2">姓名</th>
+                <th className="py-1.5 pr-2">狀態</th><th className="py-1.5 pr-2">簽署時間</th><th className="py-1.5">簽署方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signSheetList.map(pp => {
+                const r = signRows[pp.id];
+                return (
+                  <tr key={pp.id} className="border-b border-slate-100">
+                    <td className="py-1.5 pr-2 text-slate-600">{pp.vendor}</td>
+                    <td className="py-1.5 pr-2 text-slate-600">{pp.group}</td>
+                    <td className="py-1.5 pr-2 text-slate-500 font-mono text-xs">{pp.empId || <span className="font-sans text-amber-700">臨時人力</span>}</td>
+                    <td className="py-1.5 pr-2 font-medium text-slate-800">{pp.name}</td>
+                    <td className="py-1.5 pr-2">
+                      {r
+                        ? <button onClick={() => setSignViewer(pp)}
+                            className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs hover:bg-emerald-100">
+                            ✍️ 已簽・檢視
+                          </button>
+                        : <span className="px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-600 text-xs">未簽</span>}
+                    </td>
+                    <td className="py-1.5 pr-2 text-slate-600 tabular-nums">{r ? signTimeStr(r.signed_at) : ''}</td>
+                    <td className="py-1.5 text-xs text-slate-500">{r ? (SIGNER_ROLE_LABEL[r.signer_role] ?? r.signer_role) : ''}</td>
+                  </tr>
+                );
+              })}
+              {signSheetList.length === 0 && (
+                <tr><td colSpan={7} className="py-8 text-center text-slate-400">此條件下沒有人員</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-5 py-3 border-t border-[#DDD9D0] flex justify-end">
+          <button onClick={() => setSignSheetOpen(false)}
+            className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">關閉</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /** 名單上的簽署標記：已簽可點開調閱，未簽顯示提醒 */
+  const signBadge = (pp) => {
+    if (!canViewSigns) return null;
+    const r = signRows[pp.id];
+    return r
+      ? <button onClick={() => setSignViewer(pp)}
+          className="mt-0.5 block px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700
+                     text-xs font-semibold whitespace-nowrap hover:bg-emerald-100">
+          ✍️ 已簽 {signTimeStr(r.signed_at)}
+        </button>
+      : <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-400
+                        text-xs whitespace-nowrap">
+          告知單未簽
+        </div>;
+  };
+
   // ── 手機櫃號總表：依鐵櫃列出全部 75 格的佔用狀況 ──
   const [lockerSheetOpen, setLockerSheetOpen] = useState(false);
 
@@ -10559,6 +10815,8 @@ function Attendance({ phoneOnly = false }) {
     <div className="space-y-4">
       {lockerPreviewModal}
       {lockerSheetModal}
+      {signSheetModal}
+      {signViewer && <SafetySignViewer date={attendDate} person={signViewer} onClose={() => setSignViewer(null)} />}
       {kioskOpen && canKiosk && (
         <PhoneKiosk
           people={attendDate === todayStr
@@ -10626,6 +10884,18 @@ function Attendance({ phoneOnly = false }) {
                      hover:bg-[#F5F2EC] flex items-center gap-1">
           📋 櫃號總表
         </button>
+        {canViewSigns && (
+          <button onClick={() => { loadSigns(); setSignSheetOpen(true); }}
+            title="依上方範圍列出當日宣導告知單的已簽／未簽人員，可調閱簽名、匯出 Excel、列印"
+            className="px-3 py-2 bg-white border border-[#DDD9D0] text-slate-700 rounded-lg text-sm
+                       hover:bg-[#F5F2EC] flex items-center gap-1">
+            ✍️ 告知單簽署紀錄
+            <span className={`text-xs px-1.5 rounded-full ${signedCount === signPeople.length && signPeople.length > 0
+              ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+              {signedCount}/{signPeople.length}
+            </span>
+          </button>
+        )}
         {canKiosk && (
           <button onClick={openKiosk}
             title="全螢幕開放給人員自行點選：組別 → 廠商 → 姓名 → 登記。依目前上方的倉別／課別／組別範圍列出人員，離開須輸入解鎖密碼。"
@@ -10685,6 +10955,7 @@ function Attendance({ phoneOnly = false }) {
                                 🔐 {lockerLabel(lockerAssign[emp.id])}
                               </div>
                             )}
+                            {signBadge({ id: emp.id, name: emp.name, empId: emp.empId })}
                           </div>
                           <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                             <div className="flex items-center gap-4 flex-wrap">
@@ -10729,6 +11000,7 @@ function Attendance({ phoneOnly = false }) {
                               🔐 {lockerLabel(e.locker)}
                             </div>
                           )}
+                          {signBadge({ id: e.id, name: e.name, empId: '' })}
                         </div>
                         <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                           <div className="flex items-center gap-4 flex-wrap">

@@ -2569,6 +2569,43 @@ app.post('/api/safety-sign', requireAuth, async (req, res) => {
   }
 });
 
+// 調閱（管理員／日翊）：當日簽署清單；images=1 時連同簽名影像（列印用）
+app.get('/api/safety-sign/list', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const date = String(req.query.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式錯誤' });
+  const withImage = req.query.images === '1';
+  try {
+    const { rows } = await pool.query(
+      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip
+              ${withImage ? ', image' : ''}
+         FROM safety_signs WHERE sign_date = $1 ORDER BY signed_at`, [date]);
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/safety-sign/list error:', e.message);
+    res.status(500).json({ error: '讀取失敗' });
+  }
+});
+
+// 調閱（管理員／日翊）：單一人員的簽名影像
+app.get('/api/safety-sign/image', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const date = String(req.query.date ?? '');
+  const personId = String(req.query.personId ?? '').slice(0, 80);
+  const version = String(req.query.version ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !personId || !/^[0-9A-Za-z._-]{1,20}$/.test(version))
+    return res.status(400).json({ error: '參數格式錯誤' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip, image
+         FROM safety_signs WHERE sign_date = $1 AND person_id = $2 AND version = $3`,
+      [date, personId, version]);
+    if (!rows[0]) return res.status(404).json({ error: '查無簽名' });
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('GET /api/safety-sign/image error:', e.message);
+    res.status(500).json({ error: '讀取失敗' });
+  }
+});
+
 // 臨時人力（無帳號）：比照自助簽到端點，限當日、限已建檔的臨時人力 id
 app.post('/api/safety-sign/temp', async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
