@@ -9021,7 +9021,7 @@ function SignaturePad({ onChange, large = false }) {
         className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
                     ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
         // 點選模式在矮的螢幕上限制簽名框高度（維持 2:1），確保「確認」按鈕不被擠出畫面
-        style={{ aspectRatio: '2 / 1', ...(large ? { maxWidth: 'max(220px, calc((100dvh - 545px) * 2))', marginInline: 'auto', display: 'block' } : {}) }} />
+        style={{ aspectRatio: '2 / 1', ...(large ? { maxWidth: 'max(220px, calc((100dvh - 600px) * 2))', marginInline: 'auto', display: 'block' } : {}) }} />
     </div>
   );
 }
@@ -9100,11 +9100,12 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
       <p className={`${large ? 'text-base' : 'text-sm'} font-semibold text-rose-700`}>
         本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。
       </p>
-      <label className={`flex items-center gap-3 cursor-pointer select-none
-                         ${large ? 'text-2xl' : 'text-xl'} font-bold text-blue-700`}>
+      {/* 同意聲明較長，勾選框對齊第一行、字級略縮，避免在點選模式把確認按鈕擠出畫面 */}
+      <label className={`flex items-start gap-3 cursor-pointer select-none leading-snug
+                         ${large ? 'text-xl' : 'text-lg'} font-bold text-blue-700`}>
         <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
-          className="w-7 h-7 flex-shrink-0 accent-blue-600 cursor-pointer" />
-        我已閱讀並了解以上宣導事項
+          className="w-7 h-7 mt-0.5 flex-shrink-0 accent-blue-600 cursor-pointer" />
+        本人已閱讀並了解本告知單，並同意以電子方式簽署；本次簽署為本人真意表示，公司得留存紀錄供查驗。
       </label>
       <SignaturePad onChange={setSign} large={large} />
       {err && <p className="text-sm text-rose-600">{err}</p>}
