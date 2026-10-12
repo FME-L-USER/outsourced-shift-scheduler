@@ -140,6 +140,8 @@ async function initDB() {
       PRIMARY KEY (sign_date, person_id, version)
     )
   `);
+  // 簽署當下勾選的同意聲明全文：聲明文字日後若再修改，列印的簽署文件仍呈現當時的內容
+  await pool.query(`ALTER TABLE safety_signs ADD COLUMN IF NOT EXISTS consent TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_audit (
       id       BIGSERIAL   PRIMARY KEY,
@@ -2673,14 +2675,15 @@ function checkSignBody(b) {
   if (!image.startsWith('data:image/png;base64,') || image.length > SIGN_MAX_LEN) return '簽名格式錯誤';
   return null;
 }
-async function saveSafetySign({ date, personId, name, version, image, role, username, ip }) {
+async function saveSafetySign({ date, personId, name, version, image, role, username, ip, consent }) {
   await pool.query(
-    `INSERT INTO safety_signs (sign_date, person_id, version, person_name, image, signer_role, signer_user, ip)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO safety_signs (sign_date, person_id, version, person_name, image, signer_role, signer_user, ip, consent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (sign_date, person_id, version) DO UPDATE
        SET person_name = EXCLUDED.person_name, image = EXCLUDED.image, signed_at = NOW(),
-           signer_role = EXCLUDED.signer_role, signer_user = EXCLUDED.signer_user, ip = EXCLUDED.ip`,
-    [date, personId, version, name, image, role, username, ip]);
+           signer_role = EXCLUDED.signer_role, signer_user = EXCLUDED.signer_user, ip = EXCLUDED.ip,
+           consent = EXCLUDED.consent`,
+    [date, personId, version, name, image, role, username, ip, consent || null]);
 }
 
 // 已登入者：委外人員只能簽自己；廠商幹部限自己廠商的人員；管理員／日翊（開放點選模式）不限
@@ -2705,6 +2708,7 @@ app.post('/api/safety-sign', requireAuth, async (req, res) => {
       date: req.body.date, personId, version: String(req.body.version),
       name: String(req.body.name ?? '').slice(0, 50), image: String(req.body.image),
       role, username: req.user?.username ?? '', ip: clientIp(req),
+      consent: String(req.body.consent ?? '').slice(0, 300),
     });
     res.json({ ok: true });
   } catch (e) {
@@ -2720,7 +2724,7 @@ app.get('/api/safety-sign/list', requireAuth, requireManagerOrAdmin, async (req,
   const withImage = req.query.images === '1';
   try {
     const { rows } = await pool.query(
-      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip
+      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip, consent
               ${withImage ? ', image' : ''}
          FROM safety_signs WHERE sign_date = $1 ORDER BY signed_at`, [date]);
     res.json(rows);
@@ -2739,7 +2743,7 @@ app.get('/api/safety-sign/image', requireAuth, requireManagerOrAdmin, async (req
     return res.status(400).json({ error: '參數格式錯誤' });
   try {
     const { rows } = await pool.query(
-      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip, image
+      `SELECT person_id, person_name, version, signed_at, signer_role, signer_user, ip, consent, image
          FROM safety_signs WHERE sign_date = $1 AND person_id = $2 AND version = $3`,
       [date, personId, version]);
     if (!rows[0]) return res.status(404).json({ error: '查無簽名' });
@@ -2767,6 +2771,7 @@ app.post('/api/safety-sign/temp', async (req, res) => {
       date: req.body.date, personId: String(entry.id), version: String(req.body.version),
       name: String(entry.name ?? '').slice(0, 50), image: String(req.body.image),
       role: 'temp', username: id, ip,
+      consent: String(req.body.consent ?? '').slice(0, 300),
     });
     res.json({ ok: true });
   } catch (e) {

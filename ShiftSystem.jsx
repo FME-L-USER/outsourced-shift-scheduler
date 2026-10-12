@@ -8918,6 +8918,11 @@ const SAFETY_NOTICE = {
   ],
 };
 
+// 勾選框的同意聲明。簽名時連同全文送到伺服器保存，列印簽署文件時呈現當時的內容。
+const SAFETY_CONSENT_TEXT = '本人已閱讀並了解本告知單，並同意以電子方式簽署；本次簽署為本人真意表示，公司得留存紀錄供查驗。';
+// 2026-10-12 前的簽名沒有保存聲明，當時畫面上的文字是這一句
+const SAFETY_CONSENT_LEGACY = '我已閱讀並了解以上宣導事項';
+
 // 當日紀錄是否已確認並簽署目前版次的告知單
 const safetyAcked = rec =>
   !!rec?.safetyAck && rec?.safetyAckVer === SAFETY_NOTICE.version && !!rec?.safetySigned;
@@ -8934,7 +8939,7 @@ async function postSafetySign(url, body) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json',
                  ...(url === '/api/safety-sign' && token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ ...body, version: SAFETY_NOTICE.version }),
+      body: JSON.stringify({ ...body, version: SAFETY_NOTICE.version, consent: SAFETY_CONSENT_TEXT }),
     });
     if (r.ok) return null;
     const d = await r.json().catch(() => ({}));
@@ -9105,7 +9110,7 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
                          ${large ? 'text-xl' : 'text-lg'} font-bold text-blue-700`}>
         <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
           className="w-7 h-7 mt-0.5 flex-shrink-0 accent-blue-600 cursor-pointer" />
-        本人已閱讀並了解本告知單，並同意以電子方式簽署；本次簽署為本人真意表示，公司得留存紀錄供查驗。
+        {SAFETY_CONSENT_TEXT}
       </label>
       <SignaturePad onChange={setSign} large={large} />
       {err && <p className="text-sm text-rose-600">{err}</p>}
@@ -9170,6 +9175,78 @@ async function fetchSafetySigns(date, withImage = false) {
   return r.json();
 }
 
+/** 一份完整的簽署文件（一人一頁）：告知單全文、同意聲明、簽名與簽署資訊 */
+function signDocHtml(person, rec, date) {
+  const li = it => typeof it === 'string'
+    ? `<li>${escHtml(it)}</li>`
+    : `<li>${escHtml(it.text)}<ol type="a">${it.subs.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol></li>`;
+  const sections = SAFETY_NOTICE.sections.map(sec => `
+    <h3>${escHtml(sec.title)}</h3>
+    ${sec.note ? `<div class="note">（${escHtml(sec.note)}）</div>` : ''}
+    <ol>${sec.items.map(li).join('')}</ol>
+    ${sec.remind ? `<div class="remind">【安全提醒】${escHtml(sec.remind)}</div>` : ''}`).join('');
+  const who = [person.name, person.empId || '臨時人力', person.vendor, person.group].filter(Boolean).map(escHtml).join('・');
+  return `<section class="doc">
+    <h1>${escHtml(SAFETY_NOTICE.title)}</h1>
+    <div class="meta">版次 ${escHtml(SAFETY_NOTICE.version)}　簽署日期 ${escHtml(date)}　受宣導人：${who}</div>
+    <div class="body">${sections}</div>
+    <div class="sign">
+      <p class="commit">本告知單確實明瞭後，請於本頁欄位勾選並允諾確實遵守。</p>
+      <p class="consent">☑ ${escHtml(rec.consent || SAFETY_CONSENT_LEGACY)}</p>
+      <table><tr>
+        <td class="sigcell"><div class="lbl">簽名</div><img src="${escHtml(rec.image)}"></td>
+        <td class="info">
+          <div>簽署時間：${escHtml(new Date(rec.signed_at).toLocaleString('zh-TW', { hour12: false }))}</div>
+          <div>簽署方式：${escHtml(SIGNER_ROLE_LABEL[rec.signer_role] ?? rec.signer_role ?? '')}</div>
+          <div>操作帳號：${escHtml(rec.signer_user || '—')}</div>
+          <div>IP：${escHtml(rec.ip || '—')}</div>
+        </td>
+      </tr></table>
+    </div>
+  </section>`;
+}
+
+/**
+ * 開新視窗列印簽署文件。docs = [{ person, rec }]，rec 需含 image。
+ * 先同步開窗（避免被瀏覽器擋下），呼叫端取得資料後再傳入 docs 寫入內容。
+ */
+function openSignDocWindow() {
+  const w = window.open('', '_blank');
+  if (w) w.document.write('<p style="font-family:sans-serif">讀取簽署資料中…</p>');
+  return w;
+}
+function writeSignDocs(w, docs, date) {
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+    <title>宣導告知單簽署文件_${escHtml(date)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      body{font-family:"Microsoft JhengHei",sans-serif;color:#1e293b;margin:0}
+      .doc{page-break-after:always;padding:4px 2px}
+      .doc:last-child{page-break-after:auto}
+      h1{font-size:17px;text-align:center;margin:0 0 4px}
+      .meta{font-size:11px;color:#475569;text-align:center;margin-bottom:8px}
+      .body{font-size:11px;line-height:1.45}
+      h3{font-size:12px;margin:6px 0 2px}
+      ol{margin:0 0 2px;padding-left:20px} ol ol{padding-left:16px}
+      .note{font-size:10px;color:#be123c}
+      .remind{font-size:10px;color:#be123c;background:#fff1f2;padding:2px 4px;margin:2px 0}
+      .sign{border-top:1.5px solid #334155;margin-top:8px;padding-top:6px}
+      .commit{font-size:11px;color:#be123c;font-weight:bold;margin:0 0 4px}
+      .consent{font-size:12.5px;font-weight:bold;color:#1d4ed8;margin:0 0 6px}
+      table{width:100%;border-collapse:collapse}
+      td{vertical-align:top;font-size:11px}
+      .sigcell{width:55%;border:1px solid #94a3b8;padding:4px}
+      .sigcell img{max-width:100%;max-height:120px;display:block}
+      .lbl{font-size:10px;color:#64748b}
+      .info{padding-left:10px;line-height:1.7}
+    </style></head><body>
+    ${docs.length ? docs.map(d => signDocHtml(d.person, d.rec, date)).join('') : '<p>沒有已簽署的文件</p>'}
+    <script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script>
+    </body></html>`);
+  w.document.close();
+}
+
 /** 單一人員的簽名調閱視窗 */
 function SafetySignViewer({ date, person, onClose }) {
   const [data, setData] = useState(null);
@@ -9210,7 +9287,13 @@ function SafetySignViewer({ date, person, onClose }) {
             </dl>
           </>
         )}
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {data && (
+            <button onClick={() => { const w = openSignDocWindow(); if (w) writeSignDocs(w, [{ person, rec: data }], date); }}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+              🖨 列印簽署文件
+            </button>
+          )}
           <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm hover:bg-[#F5F2EC]">關閉</button>
         </div>
       </div>
@@ -10650,6 +10733,20 @@ function Attendance({ phoneOnly = false }) {
   };
 
   // 列印（含簽名影像）：先同步開窗避免被瀏覽器擋下，取回簽名後再寫入內容
+  // 列印目前清單中所有已簽者的完整簽署文件（一人一頁）
+  const printSignDocs = async () => {
+    const w = openSignDocWindow();
+    if (!w) { toast('瀏覽器擋下了列印視窗，請允許此網站開啟彈出式視窗', 'error'); return; }
+    try {
+      const rows = await fetchSafetySigns(attendDate, true);
+      const byId = Object.fromEntries(rows.filter(r => r.version === SAFETY_NOTICE.version).map(r => [r.person_id, r]));
+      const docs = signSheetList.filter(pp => byId[pp.id]).map(pp => ({ person: pp, rec: byId[pp.id] }));
+      writeSignDocs(w, docs, attendDate);
+    } catch (e) {
+      w.document.body.innerHTML = `<p style="font-family:sans-serif;color:#b91c1c">讀取簽署資料失敗：${escHtml(e.message)}</p>`;
+    }
+  };
+
   const printSignSheet = async () => {
     const w = window.open('', '_blank');
     if (!w) { toast('瀏覽器擋下了列印視窗，請允許此網站開啟彈出式視窗', 'error'); return; }
@@ -10714,7 +10811,10 @@ function Attendance({ phoneOnly = false }) {
             <button onClick={exportSignSheet}
               className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">📊 匯出 Excel</button>
             <button onClick={printSignSheet}
-              className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">🖨 列印（含簽名）</button>
+              className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">🖨 列印簽署總表</button>
+            <button onClick={printSignDocs}
+              title="每位已簽者一頁：告知單全文、同意聲明、簽名與簽署資訊"
+              className="px-3 py-1.5 bg-indigo-800 text-white rounded-lg text-sm hover:bg-indigo-900">🖨 列印簽署文件</button>
           </div>
         </div>
         <div className="px-5 pt-3 flex gap-1">
@@ -11125,7 +11225,7 @@ function Attendance({ phoneOnly = false }) {
                                 🔐 {lockerLabel(lockerAssign[emp.id])}
                               </div>
                             )}
-                            {signBadge({ id: emp.id, name: emp.name, empId: emp.empId })}
+                            {signBadge({ id: emp.id, name: emp.name, empId: emp.empId, vendor: emp.vendor, group: emp.group || emp.shiftType || '' })}
                           </div>
                           <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                             <div className="flex items-center gap-4 flex-wrap">
@@ -11170,7 +11270,7 @@ function Attendance({ phoneOnly = false }) {
                               🔐 {lockerLabel(e.locker)}
                             </div>
                           )}
-                          {signBadge({ id: e.id, name: e.name, empId: '' })}
+                          {signBadge({ id: e.id, name: e.name, empId: '', vendor: e.vendor, group: e.group || '' })}
                         </div>
                         <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
                           <div className="flex items-center gap-4 flex-wrap">
