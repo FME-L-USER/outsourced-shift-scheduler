@@ -8920,9 +8920,9 @@ const SAFETY_NOTICE = {
 
 // 勾選框的同意聲明。簽名時連同全文送到伺服器保存，列印簽署文件時呈現當時的內容。
 const SAFETY_CONSENT_TEXT = '本人已閱讀並了解本告知單，並同意以電子方式簽署；本次簽署為本人真意表示，公司得留存紀錄供查驗。';
-// 簽署文件自 2026-10-12 起改版（依日翊決定）：此日起的簽名一律呈現新版聲明；
+// 簽署文件自 2026-10-13 起改版（依日翊決定）：此日起的簽名一律呈現新版聲明；
 // 之前的簽名沒有保存聲明，呈現當時畫面上的文字
-const SAFETY_CONSENT_FROM = '2026-10-12';
+const SAFETY_CONSENT_FROM = '2026-10-13';
 const SAFETY_CONSENT_LEGACY = '我已閱讀並了解以上宣導事項';
 const consentForSign = (rec, date) =>
   rec?.consent || (String(date) >= SAFETY_CONSENT_FROM ? SAFETY_CONSENT_TEXT : SAFETY_CONSENT_LEGACY);
