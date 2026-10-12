@@ -1820,6 +1820,22 @@ app.get('/api/schedule', requireAuth, async (req, res) => {
     // 每期日期區間：委外幹部／人員的班表也要依同一週期分頁，
     // 未回傳時他們會退回「以月份檢視」，看到的期間與日翊端對不上。
     periodRange:  data.periodRange ?? null,
+    // 手機櫃號：委外人員的簽到頁要顯示自己的櫃號。原本沒回傳，只有剛好在本機
+    // 留有快取的裝置才看得到。依角色限縮，不讓人看到其他人的櫃號。
+    lockerAssign: (() => {
+      const all = data.lockerAssign ?? {};
+      const role = req.user?.role;
+      if (role === 'worker') {
+        const id = req.user?.employeeId;
+        return id && all[id] ? { [id]: all[id] } : {};
+      }
+      if (role === 'vendor') {
+        const mine = new Set((req.user?.vendors ?? []).map(normNameSrv));
+        const ids = new Set((data.employees ?? []).filter(e => mine.has(normNameSrv(e.vendor))).map(e => e.id));
+        return Object.fromEntries(Object.entries(all).filter(([id]) => ids.has(id)));
+      }
+      return all;
+    })(),
     vendorHolidayOpen: data.vendorHolidayOpen ?? false,
     vendorRestOpen:    data.vendorRestOpen ?? false,
     workerRestOpen:    data.workerRestOpen ?? false,
