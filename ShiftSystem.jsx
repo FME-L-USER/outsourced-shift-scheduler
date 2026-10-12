@@ -10687,6 +10687,9 @@ function Attendance({ phoneOnly = false }) {
   const [signViewer, setSignViewer] = useState(null);    // 調閱單一簽名：{ id, name, empId }
   const [signSheetOpen, setSignSheetOpen] = useState(false);
   const [signSheetFilter, setSignSheetFilter] = useState('all');   // all | signed | unsigned
+  const [signPicked, setSignPicked] = useState(() => new Set());   // 勾選要列印簽署文件的人員 id
+  // 換日期就清掉勾選，避免印到別天的人
+  useEffect(() => { setSignPicked(new Set()); }, [attendDate]);
   const loadSigns = useCallback(() => {
     if (!canViewSigns) return;
     fetchSafetySigns(attendDate)
@@ -10740,7 +10743,7 @@ function Attendance({ phoneOnly = false }) {
     try {
       const rows = await fetchSafetySigns(attendDate, true);
       const byId = Object.fromEntries(rows.filter(r => r.version === SAFETY_NOTICE.version).map(r => [r.person_id, r]));
-      const docs = signSheetList.filter(pp => byId[pp.id]).map(pp => ({ person: pp, rec: byId[pp.id] }));
+      const docs = signPeople.filter(pp => signPicked.has(pp.id) && byId[pp.id]).map(pp => ({ person: pp, rec: byId[pp.id] }));
       writeSignDocs(w, docs, attendDate);
     } catch (e) {
       w.document.body.innerHTML = `<p style="font-family:sans-serif;color:#b91c1c">讀取簽署資料失敗：${escHtml(e.message)}</p>`;
@@ -10812,9 +10815,11 @@ function Attendance({ phoneOnly = false }) {
               className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">📊 匯出 Excel</button>
             <button onClick={printSignSheet}
               className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">🖨 列印簽署總表</button>
-            <button onClick={printSignDocs}
-              title="每位已簽者一頁：告知單全文、同意聲明、簽名與簽署資訊"
-              className="px-3 py-1.5 bg-indigo-800 text-white rounded-lg text-sm hover:bg-indigo-900">🖨 列印簽署文件</button>
+            <button onClick={printSignDocs} disabled={signPicked.size === 0}
+              title="勾選下方已簽人員後列印，每人一頁：告知單全文、同意聲明、簽名與簽署資訊"
+              className="px-3 py-1.5 bg-indigo-800 text-white rounded-lg text-sm hover:bg-indigo-900 disabled:opacity-40 disabled:cursor-not-allowed">
+              🖨 列印勾選的簽署文件（{signPicked.size}）
+            </button>
           </div>
         </div>
         <div className="px-5 pt-3 flex gap-1">
@@ -10831,6 +10836,22 @@ function Attendance({ phoneOnly = false }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                <th className="py-1.5 pr-2 w-8">
+                  {(() => {
+                    const signedIds = signSheetList.filter(pp => signRows[pp.id]).map(pp => pp.id);
+                    const all = signedIds.length > 0 && signedIds.every(id => signPicked.has(id));
+                    return (
+                      <input type="checkbox" title="勾選／取消目前清單中所有已簽人員"
+                        checked={all} disabled={signedIds.length === 0}
+                        onChange={() => setSignPicked(prev => {
+                          const n = new Set(prev);
+                          signedIds.forEach(id => (all ? n.delete(id) : n.add(id)));
+                          return n;
+                        })}
+                        className="w-4 h-4 accent-indigo-600 cursor-pointer" />
+                    );
+                  })()}
+                </th>
                 <th className="py-1.5 pr-2">廠商</th><th className="py-1.5 pr-2">組別</th>
                 <th className="py-1.5 pr-2">員工編號</th><th className="py-1.5 pr-2">姓名</th>
                 <th className="py-1.5 pr-2">狀態</th><th className="py-1.5 pr-2">簽署時間</th><th className="py-1.5">簽署方式</th>
@@ -10840,7 +10861,17 @@ function Attendance({ phoneOnly = false }) {
               {signSheetList.map(pp => {
                 const r = signRows[pp.id];
                 return (
-                  <tr key={pp.id} className="border-b border-slate-100">
+                  <tr key={pp.id} className={`border-b border-slate-100 ${signPicked.has(pp.id) ? 'bg-indigo-50/60' : ''}`}>
+                    <td className="py-1.5 pr-2">
+                      <input type="checkbox" disabled={!r} checked={signPicked.has(pp.id)}
+                        title={r ? '勾選後可列印簽署文件' : '尚未簽署'}
+                        onChange={e => setSignPicked(prev => {
+                          const n = new Set(prev);
+                          if (e.target.checked) n.add(pp.id); else n.delete(pp.id);
+                          return n;
+                        })}
+                        className="w-4 h-4 accent-indigo-600 cursor-pointer disabled:cursor-not-allowed" />
+                    </td>
                     <td className="py-1.5 pr-2 text-slate-600">{pp.vendor}</td>
                     <td className="py-1.5 pr-2 text-slate-600">{pp.group}</td>
                     <td className="py-1.5 pr-2 text-slate-500 font-mono text-xs">{pp.empId || <span className="font-sans text-amber-700">臨時人力</span>}</td>
@@ -10859,7 +10890,7 @@ function Attendance({ phoneOnly = false }) {
                 );
               })}
               {signSheetList.length === 0 && (
-                <tr><td colSpan={7} className="py-8 text-center text-slate-400">此條件下沒有人員</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-slate-400">此條件下沒有人員</td></tr>
               )}
             </tbody>
           </table>
