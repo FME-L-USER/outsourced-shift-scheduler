@@ -2557,6 +2557,7 @@ const STATION_LAYOUTS = {
 };
 
 const NAV_ITEMS = [
+  { key: 'home',         label: '首頁',         icon: '🏠', roles: [ROLES.WORKER] },
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
@@ -9455,6 +9456,34 @@ function TempSelfCheck({ onLogout }) {
 }
 
 // ── 委外人員自助簽到／手機控管 ──
+// 委外人員登入後的首頁：大按鈕直接進「班表」或「手機控管／簽到」
+// （簽到頁會先顯示宣導告知單，簽署完才出現簽到區塊）
+function WorkerHome({ onNavigate }) {
+  const { employees, currentUser } = useApp();
+  const hasSelf = !!resolveSelfEmployee(currentUser, employees);
+  const tiles = [
+    { key: 'schedule',  icon: '📅', label: '班表',          sub: '查看與排休',          bg: 'linear-gradient(135deg,#2563EB,#1D4ED8)' },
+    hasSelf && { key: 'selfCheck', icon: '📱', label: '手機控管／簽到', sub: '宣導告知單簽署後簽到', bg: 'linear-gradient(135deg,#0D9488,#0F766E)' },
+  ].filter(Boolean);
+  return (
+    <div className="p-4 sm:p-8 max-w-3xl mx-auto">
+      <p className="text-center text-slate-500 text-sm sm:text-base mb-5">{currentUser.name}，您好</p>
+      <div className="grid grid-cols-2 gap-3 sm:gap-5">
+        {tiles.map(t => (
+          <button key={t.key} onClick={() => onNavigate(t.key)}
+            className="rounded-2xl text-white shadow-md hover:shadow-lg active:scale-[0.98] transition
+                       flex flex-col items-center justify-center gap-2 px-2 h-40 sm:h-52"
+            style={{ background: t.bg }}>
+            <span className="text-4xl sm:text-5xl leading-none">{t.icon}</span>
+            <span className="text-xl sm:text-3xl font-bold tracking-wide">{t.label}</span>
+            <span className="text-xs sm:text-sm text-white/80">{t.sub}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WorkerSelfCheck() {
   const { employees, currentUser, attendData, setAttendData, lockerAssign, schedule } = useApp();
   const toast = useToast();
@@ -17179,7 +17208,8 @@ export default function App() {
           allowedWarehouses: allowedWh,
           approved: true, _apiAuth: true,
         });
-        if (role === ROLES.VENDOR || role === ROLES.WORKER) setCurrentPage('schedule');
+        if (role === ROLES.WORKER) setCurrentPage('home');
+        else if (role === ROLES.VENDOR) setCurrentPage('schedule');
         if (allowedWh.length === 1) setSelectedWarehouse(allowedWh[0]);
         loadServerState(token, role);
       })
@@ -17196,7 +17226,8 @@ export default function App() {
     }
     if (user._apiAuth) {
       setCurrentUser(user);
-      if (user.role === ROLES.VENDOR || user.role === ROLES.WORKER) setCurrentPage('schedule');
+      if (user.role === ROLES.WORKER) setCurrentPage('home');
+      else if (user.role === ROLES.VENDOR) setCurrentPage('schedule');
       // 若只開放一個倉，登入後自動選取
       if ((user.allowedWarehouses ?? []).length === 1) {
         setSelectedWarehouse(user.allowedWarehouses[0]);
@@ -17206,7 +17237,8 @@ export default function App() {
     const updated = { ...user, loginCount: (user.loginCount ?? 0) + 1 };
     setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
     setCurrentUser(updated);
-    if (user.role === ROLES.VENDOR || user.role === ROLES.WORKER) setCurrentPage('schedule');
+    if (user.role === ROLES.WORKER) setCurrentPage('home');
+    else if (user.role === ROLES.VENDOR) setCurrentPage('schedule');
     if ((user.allowedWarehouses ?? []).length === 1) {
       setSelectedWarehouse(user.allowedWarehouses[0]);
     }
@@ -17267,6 +17299,7 @@ export default function App() {
     phoneControl: <Attendance phoneOnly />,
     station:    <StationBoard />,
     selfCheck:  <WorkerSelfCheck />,
+    home:       <WorkerHome onNavigate={setCurrentPage} />,
   };
 
   if (!currentUser) {
