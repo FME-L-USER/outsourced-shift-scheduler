@@ -5052,6 +5052,8 @@ function ScheduleTable() {
   })();
 
   const rangeMode = !!(viewPeriod.start && viewPeriod.end);
+  // 2026-10-5 → 2026-10-05（檔名用，排序與閱讀較一致）
+  const padDk = dk => String(dk).split('-').map((x, i) => (i === 0 ? x : x.padStart(2, '0'))).join('-');
   const viewRange = useMemo(() => {
     if (!rangeMode) return null;
     const s = parseLocal(viewPeriod.start);
@@ -5429,8 +5431,10 @@ function ScheduleTable() {
       ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, ...dayHeaders.map(() => ({ wch: 6 }))];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
-      const label = rangeMode
-        ? `${viewPeriod.start}~${viewPeriod.end}`
+      // 檔名用目前畫面上的那一期（viewRange）。viewPeriod 是系統設定的基準期，
+      // 切到其他期時不會跟著變，原本檔名因此一直停在基準期的日期
+      const label = rangeMode && viewRange
+        ? `${padDk(viewRange.start)}~${padDk(viewRange.end)}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表存檔_${label}.xlsx`);
       toast('班表存檔成功', 'success');
@@ -5467,8 +5471,10 @@ function ScheduleTable() {
       ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, ...dayHeaders.map(() => ({ wch: 5 })), { wch: 6 }, { wch: 6 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '班表');
-      const label = rangeMode
-        ? `${viewPeriod.start}~${viewPeriod.end}`
+      // 檔名用目前畫面上的那一期（viewRange）。viewPeriod 是系統設定的基準期，
+      // 切到其他期時不會跟著變，原本檔名因此一直停在基準期的日期
+      const label = rangeMode && viewRange
+        ? `${padDk(viewRange.start)}~${padDk(viewRange.end)}`
         : `${selectedYear}年${selectedMonth}月`;
       XLSX.writeFile(wb, `班表_${isMark ? '記號' : '代碼轉換'}_${label}.xlsx`);
       toast(`${isMark ? '記號' : '代碼轉換'}匯出成功`, 'success');
@@ -5497,8 +5503,11 @@ function ScheduleTable() {
         const isFormatA = h0 === '員工編號';
         const isFormatC = h0.includes('作業區') || headerRow[1] === '姓名';
 
-        const baseYear  = rangeMode ? parseInt(viewPeriod.start.split('-')[0]) : selectedYear;
-        const baseMonth = rangeMode ? parseInt(viewPeriod.start.split('-')[1]) : selectedMonth;
+        // 年份以「目前畫面上的那一期」推算，不能用系統設定的基準期：
+        // 基準期在 8 月時，切到隔年 2 月以後的期別匯入，月份會被誤判成今年
+        const baseStart = rangeMode && viewRange ? viewRange.start : null;
+        const baseYear  = baseStart ? parseInt(baseStart.split('-')[0]) : selectedYear;
+        const baseMonth = baseStart ? parseInt(baseStart.split('-')[1]) : selectedMonth;
         const getYear   = (month) => (month < baseMonth - 6 ? baseYear + 1 : baseYear);
 
         const mapVal = (v) => {
