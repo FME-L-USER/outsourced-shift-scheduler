@@ -2557,7 +2557,6 @@ const STATION_LAYOUTS = {
 };
 
 const NAV_ITEMS = [
-  { key: 'home',         label: '首頁',         icon: '🏠', roles: [ROLES.WORKER] },
   { key: 'dashboard',    label: '儀表板',       icon: '📊', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'schedule',     label: '班表管理',     icon: '📅', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR, ROLES.WORKER] },
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
@@ -17381,30 +17380,42 @@ export default function App() {
           </div>
         )}
         <div className="flex h-screen overflow-hidden" style={{background:'var(--sms-bg)'}}>
-          {/* Desktop sidebar */}
-          <div className="hidden md:flex">
+          {/* Desktop sidebar（委外人員改由首頁大按鈕進入各功能，不顯示功能列） */}
+          {currentUser.role !== ROLES.WORKER && <div className="hidden md:flex">
             <Sidebar
               currentPage={currentPage} onNavigate={setCurrentPage}
               currentUser={currentUser} onLogout={handleLogout}
               collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(p => !p)}
             />
-          </div>
+          </div>}
 
           {/* Mobile nav */}
-          <MobileNav
+          {currentUser.role !== ROLES.WORKER && <MobileNav
             currentPage={currentPage} onNavigate={setCurrentPage}
             currentUser={currentUser} onLogout={handleLogout}
             open={mobileNavOpen} onClose={() => setMobileNavOpen(false)}
-          />
+          />}
 
           {/* Main content */}
           <main className="flex-1 flex flex-col overflow-hidden">
-            {/* Mobile header */}
+            {currentUser.role === ROLES.WORKER ? (
+              <header className="flex items-center gap-3 px-4 py-3 bg-white border-b border-[#DDD9D0]">
+                {currentPage !== 'home'
+                  ? <button onClick={() => setCurrentPage('home')}
+                      className="px-3 py-1.5 rounded-full text-sm font-semibold text-white shrink-0"
+                      style={{ background: 'var(--sms-sidebar)' }}>🏠 首頁</button>
+                  : <span className="font-semibold text-slate-800 truncate">委外人力排班作業平台</span>}
+                <span className="ml-auto text-sm text-slate-500 truncate">{currentUser.name}</span>
+                <button onClick={handleLogout} className="text-sm text-red-500 hover:text-red-600 shrink-0">🚪 登出</button>
+              </header>
+            ) : (
+            /* Mobile header */
             <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-[#DDD9D0]" style={{fontFamily:'inherit'}}>
               <button onClick={() => setMobileNavOpen(true)} className="text-slate-600 text-2xl">☰</button>
               <span className="font-semibold text-slate-800">委外人力排班作業平台</span>
               <span className="text-sm text-slate-500">{currentUser.name}</span>
             </header>
+            )}
 
             {/* 全域倉別 / 課別選擇列 */}
             {currentUser.role !== ROLES.WORKER && <WarehouseDeptBar />}
