@@ -9461,8 +9461,8 @@ function WorkerHome({ onNavigate }) {
   const { employees, currentUser } = useApp();
   const hasSelf = !!resolveSelfEmployee(currentUser, employees);
   const tiles = [
-    { key: 'schedule',  icon: '📅', label: '班表',          sub: '查看與排休',          bg: 'linear-gradient(135deg,#2563EB,#1D4ED8)' },
-    hasSelf && { key: 'selfCheck', icon: '📱', label: '手機控管／簽到', sub: '宣導告知單簽署後簽到', bg: 'linear-gradient(135deg,#0D9488,#0F766E)' },
+    { key: 'schedule',  icon: '📅', label: '班表',          sub: '查看與排休',          bg: 'linear-gradient(135deg,#24407F,#1A2F5E)' },
+    hasSelf && { key: 'selfCheck', icon: '📱', label: '手機控管／簽到', sub: '宣導告知單簽署後簽到', bg: 'linear-gradient(135deg,#3C5C9E,#2A467F)' },
   ].filter(Boolean);
   return (
     <div className="p-4 sm:p-8 max-w-3xl mx-auto">
@@ -17403,7 +17403,7 @@ export default function App() {
                 {currentPage !== 'home'
                   ? <button onClick={() => setCurrentPage('home')}
                       className="px-3 py-1.5 rounded-full text-sm font-semibold text-white shrink-0"
-                      style={{ background: 'var(--sms-sidebar)' }}>🏠 首頁</button>
+                      style={{ background: '#1A2F5E' }}>🏠 首頁</button>
                   : <span className="font-semibold text-slate-800 truncate">委外人力排班作業平台</span>}
                 <span className="ml-auto text-sm text-slate-500 truncate">{currentUser.name}</span>
                 <button onClick={handleLogout} className="text-sm text-red-500 hover:text-red-600 shrink-0">🚪 登出</button>
