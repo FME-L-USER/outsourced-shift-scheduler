@@ -2854,6 +2854,55 @@ app.get('/api/review/vendor-pending', requireAuth, async (req, res) => {
   }
 });
 
+// 委外幹部：自己廠商的理貨評核紀錄與已完成約談單（查詢總表）。
+// 只回總表需要的欄位，不含簽名影像、簽名人、開立人與主管指示等內部資訊；作廢的不列出。
+app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: '僅限委外幹部' });
+  const vendors = req.user.vendors || [];
+  const from = isYmd(req.query.from) ? req.query.from : '1900-01-01';
+  const to   = isYmd(req.query.to)   ? req.query.to   : '2999-12-31';
+  try {
+    const { rows: recs } = await pool.query(
+      `SELECT * FROM review_records WHERE vendor = ANY($1::text[]) AND status <> 'void' AND work_date BETWEEN $2 AND $3 ORDER BY work_date, id`,
+      [vendors, from, to]);
+    const { rows: talks } = await pool.query(
+      `SELECT * FROM review_talks WHERE vendor = ANY($1::text[]) AND status <> 'void' AND (kind = 'review' OR status = 'done')
+         AND (status <> 'todo' OR kind = 'review') ORDER BY id`, [vendors]);
+    const byRec = new Map();
+    for (const t of talks) for (const id of t.record_ids || []) byRec.set(Number(id), t);
+    const stepOf = t => !t ? 'todo' : t.status === 'todo' ? 'todo' : t.status;
+    const records = recs.map(r => {
+      const t = byRec.get(Number(r.id));
+      return {
+        id: Number(r.id), workDate: fmtYmd(r.work_date), name: r.emp_name, empNo: r.emp_no, dept: r.dept, grp: r.grp, vendor: r.vendor,
+        code: r.item?.code ?? '', text: r.item?.text ?? '', points: r.points, nth: r.nth, penalty: r.penalty,
+        status: stepOf(t && t.status !== 'todo' ? t : null), talkDate: t && t.status !== 'todo' && t.talk_date ? fmtYmd(t.talk_date) : '',
+      };
+    });
+    const doneTalks = talks.filter(t => t.status === 'done' && t.talk_date && fmtYmd(t.talk_date) >= from && fmtYmd(t.talk_date) <= to);
+    // 約談單處理的紀錄可能早於期間，另外依編號取回
+    const ids = [...new Set(doneTalks.flatMap(t => (t.record_ids || []).map(Number)))];
+    const { rows: talkRecs } = ids.length ? await pool.query('SELECT id, item, points FROM review_records WHERE id = ANY($1::bigint[])', [ids]) : { rows: [] };
+    const recOf = id => talkRecs.find(r => Number(r.id) === Number(id));
+    const done = doneTalks.map(t => {
+      const c = t.content || {};
+      const tr = (t.record_ids || []).map(recOf).filter(Boolean);
+      const last = (t.mgrs || []).filter(m => m.at).map(m => m.at).sort().pop() || '';
+      return {
+        id: Number(t.id), kind: t.kind, no: t.no, talkDate: fmtYmd(t.talk_date), name: t.emp_name, empNo: t.emp_no, dept: t.dept, grp: t.grp, vendor: t.vendor,
+        codes: tr.map(r => r.item?.code).join('、'),
+        points: tr.reduce((a, r) => a + r.points, 0),
+        reason: t.kind === 'fm' ? (c.issue || '') : (c.reason || ''), result: t.kind === 'fm' ? (c.resolution || '') : (c.result || ''),
+        doneAt: last,
+      };
+    });
+    res.json({ records, talks: done });
+  } catch (e) {
+    console.error('review/vendor-list error:', e.message);
+    res.status(500).json({ error: '讀取理貨評核資料失敗' });
+  }
+});
+
 // 約談人／接談人可選名單：日翊（含管理員）帳號與其可用倉別；可用倉別空白＝全部倉別
 app.get('/api/review/staff', requireAuth, requireManagerOrAdmin, async (_req, res) => {
   const { rows } = await pool.query(

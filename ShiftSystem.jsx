@@ -2564,8 +2564,8 @@ const NAV_ITEMS = [
   { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'review',       label: '理貨評核',     icon: '📝', roles: [ROLES.ADMIN, ROLES.AREA] },
-  // 委外幹部補簽約談單（後送簽）；只看得到自己廠商的待簽核，不受分頁權限設定影響
-  { key: 'reviewSign',   label: '約談簽名',     icon: '✍️', roles: [ROLES.VENDOR], always: true },
+  // 委外幹部：補簽自己廠商的待簽核約談單（後送簽）與查詢總表；不受分頁權限設定影響
+  { key: 'reviewSign',   label: '理貨評核',     icon: '📝', roles: [ROLES.VENDOR], always: true },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -12644,10 +12644,13 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
   );
 }
 
-/** 委外幹部：自己廠商的待簽核約談單，登入後補簽（後送簽） */
+/** 委外幹部：理貨評核（待我簽名＝後送簽；查詢總表＝自己廠商的評核紀錄與已完成約談單，不含簽名的正式單據） */
 function ReviewVendorSign() {
-  const { currentUser } = useApp();
+  const {
+    currentUser, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor,
+  } = useApp();
   const toast = useToast();
+  const [tab, setTab] = useState('sign');
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null);
   const me = { user: currentUser?.username ?? '', name: currentUser?.name || currentUser?.username || '', admin: false };
@@ -12656,26 +12659,149 @@ function ReviewVendorSign() {
     catch (e) { toast(e.message, 'error'); setData({ talks: [], records: [], consent: REVIEW_CONSENT_DEFAULT }); }
   }, [toast]);
   useEffect(() => { load(); }, [load]);
+
+  // ── 查詢總表 ──
+  const [range, setRange] = useState(() => { const p = reviewPresets()[2]; return { from: p[1], to: p[2] }; });
+  const [preset, setPreset] = useState('今年');
+  const [list, setList] = useState(null);
+  const [kind, setKind] = useState('records');
+  const [st, setSt] = useState('');
+  const [kw, setKw] = useState('');
+  const loadList = useCallback(async () => {
+    try { setList(await reviewApi(`/api/review/vendor-list?from=${range.from}&to=${range.to}`)); }
+    catch (e) { toast(e.message, 'error'); setList({ records: [], talks: [] }); }
+  }, [range.from, range.to, toast]);
+  useEffect(() => { if (tab === 'list') loadList(); }, [tab, loadList]);
+  const scopeOk = x => (!selectedVendor || x.vendor === selectedVendor)
+    && filterByScope([{ dept: x.dept, group: x.grp, vendor: x.vendor }], warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea).length > 0;
+  const q = kw.trim().toLowerCase();
+  const hit = x => !q || [x.name, x.empNo, x.code, x.codes, x.no].some(v => String(v ?? '').toLowerCase().includes(q));
+  const recRows = (list?.records ?? []).filter(r => scopeOk(r) && hit(r) && (!st || r.status === st));
+  const talkRows = (list?.talks ?? []).filter(t => scopeOk(t) && hit(t));
+  const exportXlsx = () => {
+    const aoa = kind === 'records'
+      ? [['作業日', '姓名', '員編', '課別', '組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '狀態', '約談日'],
+         ...recRows.map(r => [r.workDate, r.name, r.empNo, r.dept, r.grp, r.code, reviewStrip(r.text), r.points, reviewNthLabel(r.nth), r.penalty, REVIEW_STATUS[r.status]?.[0] ?? '', r.talkDate])]
+      : [['約談日', '類型', '編號', '姓名', '員編', '課別', '組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'],
+         ...talkRows.map(t => [t.talkDate, t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談', t.no, t.name, t.empNo, t.dept, t.grp, t.codes, t.kind === 'fm' ? '' : t.points, t.reason, t.result, reviewFmtTime(t.doneAt).slice(0, 10)])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = aoa[0].map((_, i) => ({ wch: [10, 8, 12, 12, 12, 8, 40, 6, 12, 30, 10, 12][i] ?? 12 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, kind === 'records' ? '理貨評核紀錄' : '已完成約談單');
+    XLSX.writeFile(wb, `理貨評核_${kind === 'records' ? '評核紀錄' : '已完成約談單'}_${range.from}~${range.to}.xlsx`);
+  };
+  const pending = data?.talks ?? [];
+
   return (
-    <div className="p-6 space-y-4 max-w-4xl">
-      <h2 className="text-xl font-bold text-slate-800">約談簽名</h2>
-      <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
-      {!data ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
-        : data.talks.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">目前沒有需要您簽名的約談單</div>
-        : data.talks.map(t => {
-          const recs = data.records.filter(r => t.recordIds.includes(r.id));
-          return (
-            <div key={t.id} className="bg-white border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
-              <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談'}</span>
-              <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
-              <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
-              <span className="text-xs text-slate-500">{t.kind === 'fm' ? t.no : `約談 ${t.talkDate}・${recs.length} 筆`}</span>
-              <button onClick={() => setModal({ talk: t, records: recs })} className="ml-auto px-4 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 text-white">簽名</button>
+    <div className="p-6 space-y-4 max-w-6xl">
+      <h2 className="text-xl font-bold text-slate-800">理貨評核</h2>
+      <div className="flex gap-1 border-b border-[#DDD9D0] text-sm">
+        {[['sign', `✍️ 待我簽名${pending.length ? `（${pending.length}）` : ''}`], ['list', '📋 查詢總表']].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-2 rounded-t-lg ${tab === k ? '-mb-px border-b-2 border-blue-600 text-blue-700 font-semibold bg-white' : 'text-slate-500 hover:text-blue-600'}`}>{l}</button>
+        ))}
+      </div>
+
+      {tab === 'sign' && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
+          {!data ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
+            : pending.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">目前沒有需要您簽名的約談單</div>
+            : pending.map(t => {
+              const recs = data.records.filter(r => t.recordIds.includes(r.id));
+              return (
+                <div key={t.id} className="bg-white border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
+                  <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談'}</span>
+                  <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
+                  <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
+                  <span className="text-xs text-slate-500">{t.kind === 'fm' ? t.no : `約談 ${t.talkDate}・${recs.length} 筆`}</span>
+                  <button onClick={() => setModal({ talk: t, records: recs })} className="ml-auto px-4 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 text-white">簽名</button>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {tab === 'list' && (
+        <div className="space-y-3">
+          <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 space-y-2 text-sm">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-slate-700">期間</span>
+              <input type="date" value={range.from} onChange={e => { setPreset(''); setRange({ ...range, from: e.target.value }); }} className="border border-[#DDD9D0] rounded-lg px-2 py-1" />
+              <span className="text-slate-400">～</span>
+              <input type="date" value={range.to} onChange={e => { setPreset(''); setRange({ ...range, to: e.target.value }); }} className="border border-[#DDD9D0] rounded-lg px-2 py-1" />
+              {reviewPresets().map(([k, f, t]) => (
+                <button key={k} onClick={() => { setPreset(k); setRange({ from: f, to: t }); }}
+                  className={`px-3 py-1 rounded-full border ${preset === k ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>{k}</button>
+              ))}
+              <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、項目代號" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 w-52" />
             </div>
-          );
-        })}
+            <div className="flex items-center gap-2 flex-wrap border-t border-[#EFEBE3] pt-2">
+              {[['records', `理貨評核紀錄（${recRows.length}）`], ['talks', `已完成約談單（${talkRows.length}）`]].map(([k, l]) => (
+                <button key={k} onClick={() => setKind(k)} className={`px-3 py-1 rounded-lg text-sm ${kind === k ? 'bg-slate-800 text-white font-semibold' : 'bg-white border border-slate-200 text-slate-600'}`}>{l}</button>
+              ))}
+              {kind === 'records' && (
+                <select value={st} onChange={e => setSt(e.target.value)} className="border border-[#DDD9D0] rounded-lg px-2 py-1">
+                  <option value="">全部狀態</option>
+                  {['todo', 'pending', 'mgr', 'done'].map(k => <option key={k} value={k}>{REVIEW_STATUS[k][0]}</option>)}
+                </select>
+              )}
+              <span className="text-[11px] text-slate-400">課別、組別依上方篩選列；總表不含簽名，正式約談紀錄表由日翊列印</span>
+              <button onClick={exportXlsx} className="ml-auto px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold">📊 匯出 Excel</button>
+            </div>
+          </div>
+          <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
+            {!list ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div> : kind === 'records' ? (
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+                  {['作業日', '姓名', '課別／組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '狀態', '約談日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {recRows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
+                  {recRows.map(r => (
+                    <tr key={r.id} className="border-t border-[#EFEBE3]">
+                      <td className="px-3 py-2 tabular-nums">{r.workDate}</td>
+                      <td className="px-3 py-2"><b>{r.name}</b> <span className="font-mono text-xs text-slate-400">{r.empNo}</span></td>
+                      <td className="px-3 py-2"><ReviewUnitTags dept={r.dept} grp={r.grp} /></td>
+                      <td className="px-3 py-2 font-mono text-xs font-bold text-blue-700">{r.code}</td>
+                      <td className="px-3 py-2 max-w-xs truncate" title={reviewStrip(r.text)}>{reviewStrip(r.text)}</td>
+                      <td className="px-3 py-2 text-center font-bold text-rose-600">{r.points}</td>
+                      <td className="px-3 py-2 text-xs">{reviewNthLabel(r.nth)}</td>
+                      <td className="px-3 py-2 text-xs max-w-[14rem] truncate" title={r.penalty}>{r.penalty}</td>
+                      <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded-full border ${REVIEW_STATUS[r.status][1]}`}>{REVIEW_STATUS[r.status][0]}</span></td>
+                      <td className="px-3 py-2 tabular-nums text-xs">{r.talkDate || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+                  {['約談日', '類型', '姓名', '課別／組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {talkRows.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
+                  {talkRows.map(t => (
+                    <tr key={t.id} className="border-t border-[#EFEBE3]">
+                      <td className="px-3 py-2 tabular-nums">{t.talkDate}</td>
+                      <td className="px-3 py-2 text-xs">{t.kind === 'fm' ? `FM-193 ${t.no}` : '評核約談'}</td>
+                      <td className="px-3 py-2"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
+                      <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} /></td>
+                      <td className="px-3 py-2 font-mono text-xs text-blue-700">{t.codes || '—'}</td>
+                      <td className="px-3 py-2 text-center font-bold text-rose-600">{t.kind === 'fm' ? '—' : t.points}</td>
+                      <td className="px-3 py-2 max-w-xs truncate" title={t.reason}>{t.reason || '—'}</td>
+                      <td className="px-3 py-2 max-w-xs truncate" title={t.result}>{t.result || '—'}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs">{reviewFmtTime(t.doneAt).slice(0, 10)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
       {modal && <ReviewTalkModal mode="cosign" talk={modal.talk} person={modal.talk} records={modal.records} managers={[]} staff={[]} warehouses={[]}
-        consent={data.consent} me={me} vendorMode onClose={() => setModal(null)} reload={load} />}
+        consent={data.consent} me={me} vendorMode onClose={() => setModal(null)} reload={async () => { await load(); if (tab === 'list') await loadList(); }} />}
     </div>
   );
 }
