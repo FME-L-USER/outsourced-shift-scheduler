@@ -2822,7 +2822,8 @@ function fmtYmd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 // ── 開立編號 ─────────────────────────────────────
-// 前 2 碼英文（TE＝理貨評核、CR＝約談紀錄表）＋民國年月日 7 碼＋倉別 2 碼＋當日該倉別第幾張 4 碼（共 15 碼）
+// 只有兩種：TE＝理貨評核（開立即給號，約談沿用所處理紀錄的 TE 號）、CR＝FM-193 接談紀錄表（開立即給號）
+// 前 2 碼英文＋民國年月日 7 碼＋倉別 2 碼＋當日該倉別第幾張 4 碼（共 15 碼）
 // 例：TE1151015010001＝115/10/15 大溪倉第 1 張理貨評核
 const REVIEW_WH_CODE = [['大溪', '01'], ['岡山', '03'], ['大肚', '06']];
 const REVIEW_SEQ_DIGITS = 4;
@@ -2909,14 +2910,14 @@ app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
     const doneTalks = talks.filter(t => t.status === 'done' && t.talk_date && fmtYmd(t.talk_date) >= from && fmtYmd(t.talk_date) <= to);
     // 約談單處理的紀錄可能早於期間，另外依編號取回
     const ids = [...new Set(doneTalks.flatMap(t => (t.record_ids || []).map(Number)))];
-    const { rows: talkRecs } = ids.length ? await pool.query('SELECT id, item, points FROM review_records WHERE id = ANY($1::bigint[])', [ids]) : { rows: [] };
+    const { rows: talkRecs } = ids.length ? await pool.query('SELECT id, no, item, points FROM review_records WHERE id = ANY($1::bigint[])', [ids]) : { rows: [] };
     const recOf = id => talkRecs.find(r => Number(r.id) === Number(id));
     const done = doneTalks.map(t => {
       const c = t.content || {};
       const tr = (t.record_ids || []).map(recOf).filter(Boolean);
       const last = (t.mgrs || []).filter(m => m.at).map(m => m.at).sort().pop() || '';
       return {
-        id: Number(t.id), kind: t.kind, no: t.no, talkDate: fmtYmd(t.talk_date), name: t.emp_name, empNo: t.emp_no, dept: t.dept, grp: t.grp, vendor: t.vendor,
+        id: Number(t.id), kind: t.kind, no: t.kind === 'fm' ? t.no : tr.map(r => r.no).filter(Boolean).join('、'), talkDate: fmtYmd(t.talk_date), name: t.emp_name, empNo: t.emp_no, dept: t.dept, grp: t.grp, vendor: t.vendor,
         codes: tr.map(r => r.item?.code).join('、'),
         points: tr.reduce((a, r) => a + r.points, 0),
         reason: t.kind === 'fm' ? (c.issue || '') : (c.reason || ''), result: t.kind === 'fm' ? (c.resolution || '') : (c.result || ''),
@@ -3065,7 +3066,7 @@ app.post('/api/review/talks', requireAuth, requireManagerOrAdmin, requireClientV
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      // CR 編號：FM-193 開立時即配號；評核約談的草稿不佔號，第一次送出簽名時才配號
+      // CR 編號只給 FM-193（開立時）；理貨評核約談不另給號，沿用所處理評核紀錄的 TE 號
       const no = kind === 'fm' ? await reviewAllocNo(client, 'review_talks', 'CR', emp.dept, emp.vendor) : '';
       ({ rows } = await client.query(
         `INSERT INTO review_talks (kind, no, emp_id, emp_no, emp_name, vendor, dept, grp, talk_date, content, record_ids, created_by)
@@ -3206,10 +3207,9 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
     }
     if (!mgrs.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選送呈的主管' }); }
     const status = allSigned ? 'mgr' : 'pending';
-    const no = t.no || await reviewAllocNo(client, 'review_talks', 'CR', t.dept, t.vendor);
     const { rows: up } = await client.query(
-      `UPDATE review_talks SET no=$8, content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status, no]);
+      `UPDATE review_talks SET content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status]);
     if (t.kind === 'review' && t.status === 'todo') {
       await client.query(`UPDATE review_records SET status='talk' WHERE id = ANY($1::bigint[])`, [recordIds]);
     }

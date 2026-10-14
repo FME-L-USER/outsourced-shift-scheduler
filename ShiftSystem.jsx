@@ -11731,6 +11731,9 @@ function ReviewTalkerSelect({ options, value, onChange, className }) {
     </select>
   );
 }
+/** 約談單的單號：FM-193 用自己的 CR 號；理貨評核約談沿用所處理評核紀錄的 TE 號 */
+const reviewTalkNo = (t, records) => t.kind === 'fm' ? (t.no || '')
+  : records.filter(r => t.recordIds.includes(r.id)).map(r => r.no).filter(Boolean).join('、');
 const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vendor: p.vendor, dept: p.dept, grp: p.grp });
 
 // 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
@@ -11747,7 +11750,7 @@ function ReviewRecTable({ recs, picked, onToggle, total = true }) {
     <div className="border border-slate-200 rounded-lg overflow-x-auto text-sm">
      <div className="min-w-[38rem]">
       <div className={`${cols} px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400`}>
-        {pick && <span />}<span>開立編號</span><span>作業日</span><span>項目</span><span>評核內容</span>
+        {pick && <span />}<span>單號</span><span>作業日</span><span>項目</span><span>評核內容</span>
         <span className="text-right">點數</span><span className="text-right">第幾次</span>
       </div>
       {recs.length === 0 && <div className="px-3 py-3 text-center text-slate-400 border-t border-slate-100">沒有評核紀錄</div>}
@@ -11772,7 +11775,7 @@ function ReviewRecTable({ recs, picked, onToggle, total = true }) {
 }
 
 // 約談單清單（待我簽核、待我簽名共用）
-const REVIEW_TALK_COLS = 'grid grid-cols-[5.5rem_9.5rem_minmax(18rem,1fr)_5.5rem_6.5rem_4.5rem] items-center gap-3';
+const REVIEW_TALK_COLS = 'grid grid-cols-[5.5rem_10rem_minmax(18rem,1fr)_5.5rem_6.5rem_4.5rem] items-center gap-3';
 function ReviewTalkRows({ talks, records = [], info, action, onAction, actionCls }) {
   return (
     <div className="border border-slate-200 rounded-lg overflow-x-auto text-sm bg-white">
@@ -11783,7 +11786,7 @@ function ReviewTalkRows({ talks, records = [], info, action, onAction, actionCls
       {talks.map(t => (
         <div key={t.id} className={`${REVIEW_TALK_COLS} px-3 py-2 border-t border-slate-100`}>
           <span><span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193' : '評核約談'}</span></span>
-          <span className="font-mono text-xs text-slate-600 truncate">{t.no || '—'}</span>
+          <span className="font-mono text-xs text-slate-600 truncate" title={reviewTalkNo(t, records)}>{reviewTalkNo(t, records) || '—'}</span>
           <span className="flex items-center gap-2 min-w-0 whitespace-nowrap"><b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-400">{t.empNo}</span>
             <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} /></span>
           <span className="tabular-nums text-slate-500">{t.talkDate || '—'}</span>
@@ -12145,7 +12148,7 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
             </div>
           </section>
           <div className="p-4 bg-[#FAF8F4] rounded-b-2xl flex items-center gap-2">
-            <span className="text-xs text-slate-500">編號（CR＋民國年月日＋倉別碼＋序號）於開立時自動產生；記錄人＝開立者（{me.name}）</span>
+            <span className="text-xs text-slate-500">單號（CR＋民國年月日＋倉別碼＋序號）於開立時自動產生；記錄人＝開立者（{me.name}）</span>
             <button onClick={submitFm} disabled={busy} className="ml-auto px-6 py-2 bg-violet-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">開立</button>
           </div>
         </div>
@@ -12249,7 +12252,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
       <div className="bg-white rounded-2xl w-full max-w-3xl my-6 shadow-xl">
         <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
           <h2 className="text-lg font-bold text-slate-800">{kind === 'fm' ? 'FM-193 從業人員接談紀錄表' : '約談單'}</h2>
-          {talk?.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
+          {kind === 'fm' && talk?.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
           <span className="text-sm text-slate-600">{who.name}・<span className="font-mono text-xs">{who.empNo}</span></span>
           <ReviewUnitTags dept={who.dept} grp={who.grp} vendor={who.vendor} />
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600 text-xl">✕</button>
@@ -12286,7 +12289,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                 <span className="text-xs text-slate-400">{editable ? '（待約談時可修改；簽名送出後即鎖定）' : '（已送出簽名，內容已鎖定）'}</span></div>
               {editable ? (
                 <div className="grid sm:grid-cols-[7rem_1fr_7rem_1fr] gap-x-3 gap-y-2 items-center">
-                  {ro('編號', talk.no)}
+                  {ro('單號', talk.no)}
                   <span className="text-slate-400">接談類別</span>
                   <span className="flex items-center gap-3 flex-wrap">
                     {['初次接談', '非初次接談'].map(k => <label key={k} className="flex items-center gap-1"><input type="radio" checked={content.fmKind === k} onChange={() => setC({ fmKind: k, ref: k === '初次接談' ? '' : content.ref })} /> {k}</label>)}
@@ -12305,7 +12308,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                 </div>
               ) : (
                 <div className="grid sm:grid-cols-[7rem_1fr_7rem_1fr] gap-x-3 gap-y-1.5">
-                  {ro('編號', talk.no)}{ro('接談類別', base.fmKind + (base.ref ? `（調閱 ${base.ref}）` : ''))}
+                  {ro('單號', talk.no)}{ro('接談類別', base.fmKind + (base.ref ? `（調閱 ${base.ref}）` : ''))}
                   {ro('職務職位', base.title)}{ro('接談日期', talk.talkDate)}{ro('接談地點', base.place)}{ro('接談人', base.talker)}
                   {ro('主訴問題／事件內容', base.issue, true)}{ro('約定／決議事項', base.resolution, true)}{ro('記錄人', base.recorder, true)}
                 </div>
@@ -12447,7 +12450,7 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
       <div className="bg-white rounded-2xl w-full max-w-2xl my-8 shadow-xl">
         <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
           <h2 className="text-lg font-bold text-slate-800">主管簽核</h2>
-          {talk.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
+          {talk.kind === 'fm' && talk.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
           <span className="text-sm text-slate-600">{talk.name}・<span className="font-mono text-xs">{talk.empNo}</span></span>
           <ReviewUnitTags dept={talk.dept} grp={talk.grp} vendor={talk.vendor} />
           <button onClick={onClose} className="ml-auto text-slate-400 text-xl">✕</button>
@@ -12483,7 +12486,7 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
             </>
           ) : (
             <div className="grid grid-cols-[7rem_1fr] gap-y-1 text-slate-700 border border-violet-200 rounded-lg p-3">
-              <span className="text-slate-400">編號</span><span>{talk.no}</span>
+              <span className="text-slate-400">單號</span><span>{talk.no}</span>
               <span className="text-slate-400">接談日期</span><span>{talk.talkDate}</span>
               <span className="text-slate-400">主訴問題</span><span className="whitespace-pre-wrap">{c.issue || '—'}</span>
               <span className="text-slate-400">約定／決議</span><span className="whitespace-pre-wrap">{c.resolution || '—'}</span>
@@ -12533,7 +12536,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
       if (t.kind === 'review' && t.status === 'todo') continue;   // 草稿併在人員卡片
       const date = t.talkDate || reviewYmd(new Date(t.createdAt));
       out.push({ key: `t${t.id}`, type: t.status === 'void' ? 'voidTalk' : 'talk', status: t.status, talk: t, empId: t.empId, name: t.name, empNo: t.empNo,
-        vendor: t.vendor, dept: t.dept, grp: t.grp, dates: [date], search: [t.name, t.empNo, t.no] });
+        vendor: t.vendor, dept: t.dept, grp: t.grp, dates: [date], search: [t.name, t.empNo, t.no, reviewTalkNo(t, data.records)] });
     }
     for (const r of data.records) if (r.status === 'void') {
       out.push({ key: `v${r.id}`, type: 'voidRec', status: 'void', rec: r, empId: r.empId, name: r.name, empNo: r.empNo,
@@ -12577,7 +12580,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
         </div>
         <div className="overflow-x-auto"><div className="min-w-[44rem]">
         <div className={`${REVIEW_REC_GRID} px-4 py-1.5 border-t border-[#EFEBE3] bg-white text-[11px] text-slate-400`}>
-          <span /><span>開立編號</span><span>作業日</span><span>項目</span><span>評核內容</span>
+          <span /><span>單號</span><span>作業日</span><span>項目</span><span>評核內容</span>
           <span className="text-right">點數</span><span className="text-right">第幾次</span><span />
         </div>
         {u.recs.map(r => (
@@ -12616,7 +12619,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
       <div key={u.key} className={`bg-white border rounded-2xl overflow-hidden ${fm ? 'border-violet-200' : 'border-[#DDD9D0]'}`}>
         <div className={`px-4 py-3 flex items-center gap-3 flex-wrap ${fm ? 'bg-violet-50/50' : 'bg-[#FAF8F4]'}`}>
           <span className={`text-xs px-1.5 py-0.5 rounded text-white ${fm ? 'bg-violet-600' : 'bg-blue-600'}`}>{fm ? 'FM-193 接談紀錄' : '評核約談'}</span>
-          {t.no && <span className="font-mono text-xs text-slate-600">{t.no}</span>}
+          {fm && t.no && <span className="font-mono text-xs text-slate-600">{t.no}</span>}
           <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
           <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
           {badge(t.status)}
@@ -12738,12 +12741,12 @@ function ReviewVendorSign() {
   const talkRows = (list?.talks ?? []).filter(t => scopeOk(t) && hit(t));
   const exportXlsx = () => {
     const aoa = kind === 'records'
-      ? [['編號', '作業日', '姓名', '員編', '課別', '組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '約談日'],
+      ? [['單號', '作業日', '姓名', '員編', '課別', '組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '約談日'],
          ...recRows.map(r => [r.no, r.workDate, r.name, r.empNo, r.dept, r.grp, r.code, reviewStrip(r.text), r.points, reviewNthLabel(r.nth), r.penalty, r.talkDate])]
-      : [['約談日', '類型', '編號', '姓名', '員編', '課別', '組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'],
+      : [['約談日', '類型', '單號', '姓名', '員編', '課別', '組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'],
          ...talkRows.map(t => [t.talkDate, t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談', t.no, t.name, t.empNo, t.dept, t.grp, t.codes, t.kind === 'fm' ? '' : t.points, t.reason, t.result, reviewFmtTime(t.doneAt).slice(0, 10)])];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = aoa[0].map(h => ({ wch: { 編號: 16, 評核內容: 40, 獎懲方式: 30, '事由／主訴問題': 36, '結果／決議': 30, 點數: 6 }[h] ?? 12 }));
+    ws['!cols'] = aoa[0].map(h => ({ wch: { 單號: 18, 評核內容: 40, 獎懲方式: 30, '事由／主訴問題': 36, '結果／決議': 30, 點數: 6 }[h] ?? 12 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, kind === 'records' ? '已完成理貨評核' : '已完成約談單');
     XLSX.writeFile(wb, `理貨評核_${kind === 'records' ? '評核紀錄' : '已完成約談單'}_${range.from}~${range.to}.xlsx`);
@@ -12796,7 +12799,7 @@ function ReviewVendorSign() {
             {!list ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div> : kind === 'records' ? (
               <table className="w-full text-sm whitespace-nowrap">
                 <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-                  {['編號', '作業日', '姓名', '課別／組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '約談日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+                  {['單號', '作業日', '姓名', '課別／組別', '項目', '評核內容', '點數', '第幾次', '獎懲方式', '約談日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {recRows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
@@ -12819,14 +12822,15 @@ function ReviewVendorSign() {
             ) : (
               <table className="w-full text-sm whitespace-nowrap">
                 <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-                  {['約談日', '類型', '姓名', '課別／組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+                  {['約談日', '類型', '單號', '姓名', '課別／組別', '處理項目', '點數', '事由／主訴問題', '結果／決議', '完成日'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                 </tr></thead>
                 <tbody>
-                  {talkRows.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
+                  {talkRows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
                   {talkRows.map(t => (
                     <tr key={t.id} className="border-t border-[#EFEBE3]">
                       <td className="px-3 py-2 tabular-nums">{t.talkDate}</td>
-                      <td className="px-3 py-2 text-xs">{t.kind === 'fm' ? 'FM-193' : '評核約談'} <span className="font-mono text-slate-500">{t.no}</span></td>
+                      <td className="px-3 py-2 text-xs">{t.kind === 'fm' ? 'FM-193' : '評核約談'}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-500 max-w-[12rem] truncate" title={t.no}>{t.no || '—'}</td>
                       <td className="px-3 py-2"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
                       <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} /></td>
                       <td className="px-3 py-2 font-mono text-xs text-blue-700">{t.codes || '—'}</td>
@@ -12850,7 +12854,7 @@ function ReviewVendorSign() {
 }
 
 /** 待我簽核：輪到登入者這一級的約談單，置頂顯示 */
-function ReviewInbox({ talks, me, onOpen }) {
+function ReviewInbox({ talks, records, me, onOpen }) {
   const mine = talks.filter(t => reviewMyTurn(t, me.user));
   if (!mine.length) return null;
   return (
@@ -12860,7 +12864,7 @@ function ReviewInbox({ talks, me, onOpen }) {
         <span className="text-xs px-2 py-0.5 rounded-full bg-violet-600 text-white">{mine.length} 件</span>
         <span className="text-[11px] text-slate-500">同一級多位時，任一位簽核即送下一級</span>
       </div>
-      <ReviewTalkRows talks={mine} action="簽核" actionCls="bg-violet-600" onAction={onOpen}
+      <ReviewTalkRows talks={mine} records={records} action="簽核" actionCls="bg-violet-600" onAction={onOpen}
         info={{ label: '目前級別', value: t => <span className="text-violet-700 font-semibold">{reviewCurMgr(t)?.level}</span> }} />
     </div>
   );
@@ -12917,7 +12921,7 @@ function ReviewPage() {
   return (
     <div className="p-6 space-y-4 max-w-6xl">
       <h2 className="text-xl font-bold text-slate-800">理貨評核紀錄</h2>
-      <ReviewInbox talks={data.talks} me={me} onOpen={setApproving} />
+      <ReviewInbox talks={data.talks} records={data.records} me={me} onOpen={setApproving} />
       <div className="flex gap-1 border-b border-[#DDD9D0] text-sm overflow-x-auto">
         {REVIEW_TABS.map(t => {
           const ready = REVIEW_READY.includes(t.key);
