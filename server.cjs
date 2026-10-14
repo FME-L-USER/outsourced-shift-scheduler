@@ -192,7 +192,7 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS review_records_emp ON review_records (emp_id, work_date)`);
-  // 開立編號：TE＋民國年月日＋倉別碼＋當日序號，例如 TE115101506001
+  // 開立編號：TE＋民國年月日＋倉別碼＋當日序號 4 碼，例如 TE1151015060001
   await pool.query(`ALTER TABLE review_records ADD COLUMN IF NOT EXISTS no TEXT NOT NULL DEFAULT ''`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_records_no ON review_records (no) WHERE no <> ''`);
   // 約談單：kind＝review（理貨評核約談）| fm（FM-193 從業人員接談紀錄表）
@@ -2822,10 +2822,10 @@ function fmtYmd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 // ── 開立編號 ─────────────────────────────────────
-// 前 2 碼英文（TE＝理貨評核、CR＝約談紀錄表）＋民國年月日 7 碼＋倉別 2 碼＋當日該倉別第幾張 3 碼
-// 例：TE115101501001＝115/10/15 大溪倉第 1 張理貨評核
+// 前 2 碼英文（TE＝理貨評核、CR＝約談紀錄表）＋民國年月日 7 碼＋倉別 2 碼＋當日該倉別第幾張 4 碼（共 15 碼）
+// 例：TE1151015010001＝115/10/15 大溪倉第 1 張理貨評核
 const REVIEW_WH_CODE = [['大溪', '01'], ['岡山', '03'], ['大肚', '06']];
-const REVIEW_SEQ_DIGITS = 3;
+const REVIEW_SEQ_DIGITS = 4;
 async function reviewWhCode(db, dept, vendor) {
   const { rows } = await db.query(`SELECT data->'warehouses' AS w FROM app_state WHERE id='main'`);
   const whs = Array.isArray(rows[0]?.w) ? rows[0].w : [];
