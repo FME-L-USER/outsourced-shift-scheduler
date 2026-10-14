@@ -94,6 +94,8 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vendors           TEXT[] NOT NULL DEFAULT '{}'`);
   // 權限申請時由申請者填寫的身分說明（AD 不回傳姓名，需申請者自述）
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS request_note  TEXT`);
+  // 主管級別（理貨評核送呈主管／約談人用）：協理／經理／副理／課長／經辦，空字串＝無（專員）
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mgr_level VARCHAR(10) NOT NULL DEFAULT ''`);
   // id 原為 VARCHAR(20)，但「委外人員升級廠商幹部」產生的帳號 id 形如
   // worker_upgraded_imp_1785741320010_236（37 字元），寫入時會超長拋錯，
   // 導致帳號無法建立、登入時回 500。放寬長度限制（僅在需要時才 ALTER）。
@@ -142,6 +144,38 @@ async function initDB() {
   `);
   // 簽署當下勾選的同意聲明全文：聲明文字日後若再修改，列印的簽署文件仍呈現當時的內容
   await pool.query(`ALTER TABLE safety_signs ADD COLUMN IF NOT EXISTS consent TEXT`);
+  // 理貨評核：評核項目。每次儲存／匯入都另存一個版本，最新一筆為現行版本；
+  // 評核紀錄會快照當時的項目內容，所以年度改版不會影響已開立的紀錄。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_item_versions (
+      id         SERIAL      PRIMARY KEY,
+      label      TEXT        NOT NULL DEFAULT '',
+      items      JSONB       NOT NULL,
+      notes      JSONB       NOT NULL DEFAULT '[]',
+      source     TEXT        NOT NULL DEFAULT '',
+      created_by TEXT        NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // 理貨評核設定：約談聲明（consent）、評核項目維護密碼雜湊（itemsPassword）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_config (
+      key        TEXT        PRIMARY KEY,
+      value      JSONB       NOT NULL,
+      updated_by TEXT        NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // 理貨評核操作紀錄：解鎖（含失敗）、修改項目、修改聲明、變更密碼
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_audit (
+      id       SERIAL      PRIMARY KEY,
+      at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username TEXT        NOT NULL DEFAULT '',
+      action   TEXT        NOT NULL,
+      detail   JSONB
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_audit (
       id       BIGSERIAL   PRIMARY KEY,
@@ -955,6 +989,9 @@ function issueToken(user) {
   );
 }
 
+// 主管級別（由高到低）；經辦＝約談人／接談人，其餘四級為送呈簽核的主管
+const MGR_LEVELS = ['', '協理', '經理', '副理', '課長', '經辦'];
+
 function safeUser(u) {
   return {
     id:                u.id,
@@ -970,6 +1007,7 @@ function safeUser(u) {
     last_login:        u.last_login,
     loginCount:        u.login_count ?? 0,
     request_note:      u.request_note || '',
+    mgrLevel:          u.mgr_level || '',
   };
 }
 
@@ -1095,7 +1133,8 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = String(req.params.id).trim();
   if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
-  const { role, approved, page_perms, fn_perms, allowed_warehouses, vendors } = req.body ?? {};
+  const { role, approved, page_perms, fn_perms, allowed_warehouses, vendors, mgr_level } = req.body ?? {};
+  if (mgr_level !== undefined && !MGR_LEVELS.includes(mgr_level)) return res.status(400).json({ error: '主管級別不正確' });
 
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (!existing[0]) return res.status(404).json({ error: '找不到此帳號' });
@@ -1110,6 +1149,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (fn_perms           !== undefined) { vals.push(fn_perms);           sets.push(`fn_perms=$${vals.length}`); }
   if (allowed_warehouses !== undefined) { vals.push(allowed_warehouses); sets.push(`allowed_warehouses=$${vals.length}`); }
   if (vendors           !== undefined) { vals.push(vendors);            sets.push(`vendors=$${vals.length}`); }
+  if (mgr_level          !== undefined) { vals.push(mgr_level);          sets.push(`mgr_level=$${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: '無可更新欄位' });
 
   vals.push(id);
@@ -2512,6 +2552,151 @@ app.put('/api/attendance', requireAuth, requireClientVersion, requireDataEpoch, 
 });
 
 // ── GET /api/health ───────────────────────────────────────
+// ── 理貨評核：評核項目維護 ─────────────────────────────────
+// 進入維護須輸入密碼（管理員在系統設定設定；只存 bcrypt 雜湊）。驗證通過發給
+// 10 分鐘的維護憑證（X-Review-Unlock），每次寫入都換發新憑證；改密碼後舊憑證全部失效。
+const REVIEW_UNLOCK_MIN = 10;
+const REVIEW_FAIL_MAX   = 5;
+const REVIEW_FAIL_LOCK  = 15 * 60 * 1000;
+const reviewFails = new Map();   // 帳號 → { n, until }：連續輸錯 5 次鎖 15 分鐘
+
+async function reviewAudit(username, action, detail = null) {
+  try {
+    await pool.query('INSERT INTO review_audit (username, action, detail) VALUES ($1, $2, $3)', [username || '', action, detail]);
+  } catch (e) { console.error('review_audit error:', e.message); }
+}
+async function reviewConfig(key) {
+  const { rows } = await pool.query('SELECT value, updated_by, updated_at FROM review_config WHERE key=$1', [key]);
+  return rows[0] || null;
+}
+async function setReviewConfig(key, value, by) {
+  await pool.query(
+    `INSERT INTO review_config (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+    [key, value, by || '']);
+}
+function issueReviewUnlock(user, pv) {
+  return jwt.sign({ sub: user.id, scope: 'review-items', pv }, JWT_SECRET, { expiresIn: `${REVIEW_UNLOCK_MIN}m` });
+}
+async function requireReviewUnlock(req, res, next) {
+  try {
+    const p = jwt.verify(String(req.headers['x-review-unlock'] || ''), JWT_SECRET);
+    const cfg = await reviewConfig('itemsPassword');
+    if (p.scope !== 'review-items' || p.sub !== req.user.id || !cfg || p.pv !== cfg.value.pv) throw new Error('invalid');
+    req.reviewPv = cfg.value.pv;
+    next();
+  } catch {
+    res.status(423).json({ error: '維護已上鎖，請重新輸入密碼', locked: true });
+  }
+}
+const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+function cleanItems(list) {
+  if (!Array.isArray(list) || list.length === 0 || list.length > 500) return null;
+  const seen = new Set(), out = [];
+  for (const x of list) {
+    const code = clip(x?.code, 10), text = clip(x?.text, 500);
+    if (!code || !text || seen.has(code)) return null;
+    seen.add(code);
+    const a = Array.isArray(x.a) ? x.a : [];
+    out.push({ code, cat: clip(x.cat, 40), text, pt: clip(x.pt, 20), a: [0, 1, 2].map(i => clip(a[i], 500)) });
+  }
+  return out;
+}
+
+// 現行評核項目與約談聲明（日翊、管理員可讀；開立評核也會用到）
+app.get('/api/review/items', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, label, items, notes, source, created_by, created_at FROM review_item_versions ORDER BY id DESC LIMIT 1');
+    const consent = await reviewConfig('consent');
+    const pw = await reviewConfig('itemsPassword');
+    res.json({ version: rows[0] || null, consent: consent?.value || null, passwordSet: !!pw });
+  } catch (e) {
+    console.error('review/items error:', e.message);
+    res.status(500).json({ error: '讀取評核項目失敗' });
+  }
+});
+
+// 輸入維護密碼
+app.post('/api/review/unlock', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const who = req.user.username;
+  const f = reviewFails.get(who);
+  if (f && f.until > Date.now()) {
+    return res.status(429).json({ error: `錯誤次數過多，請 ${Math.ceil((f.until - Date.now()) / 60000)} 分鐘後再試` });
+  }
+  const cfg = await reviewConfig('itemsPassword');
+  if (!cfg) return res.status(409).json({ error: '管理員尚未設定評核項目維護密碼（系統設定）' });
+  const ok = await bcrypt.compare(String(req.body?.password ?? ''), cfg.value.hash);
+  if (!ok) {
+    // until=0 表示尚未鎖定，照常累計；鎖定期滿才從頭計算
+    const n = (f && (!f.until || f.until > Date.now()) ? f.n : 0) + 1;
+    reviewFails.set(who, { n, until: n >= REVIEW_FAIL_MAX ? Date.now() + REVIEW_FAIL_LOCK : 0 });
+    await reviewAudit(who, 'unlock-fail', { n });
+    return res.status(401).json({ error: n >= REVIEW_FAIL_MAX ? '錯誤次數過多，請 15 分鐘後再試' : `密碼錯誤（${n}/${REVIEW_FAIL_MAX}）` });
+  }
+  reviewFails.delete(who);
+  await reviewAudit(who, 'unlock');
+  res.json({ token: issueReviewUnlock(req.user, cfg.value.pv), minutes: REVIEW_UNLOCK_MIN });
+});
+
+// 儲存評核項目（另存新版本）
+app.put('/api/review/items', requireAuth, requireManagerOrAdmin, requireClientVersion, requireReviewUnlock, async (req, res) => {
+  const items = cleanItems(req.body?.items);
+  if (!items) return res.status(400).json({ error: '評核項目資料不正確（代號、內容必填且代號不可重複）' });
+  const notes = (Array.isArray(req.body?.notes) ? req.body.notes : []).slice(0, 20).map(n => clip(n, 1000)).filter(Boolean);
+  const label = clip(req.body?.label, 60) || '未命名版本';
+  const source = clip(req.body?.source, 100);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO review_item_versions (label, items, notes, source, created_by) VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, label, items, notes, source, created_by, created_at`,
+      [label, JSON.stringify(items), JSON.stringify(notes), source, req.user.username]);
+    await reviewAudit(req.user.username, 'items', { version: rows[0].id, label, count: items.length, source });
+    res.json({ version: rows[0], token: issueReviewUnlock(req.user, req.reviewPv) });
+  } catch (e) {
+    console.error('review/items save error:', e.message);
+    res.status(500).json({ error: '儲存評核項目失敗' });
+  }
+});
+
+// 儲存約談聲明（受約談人員、廠商主管／幹部、記錄人）
+app.put('/api/review/consent', requireAuth, requireManagerOrAdmin, requireClientVersion, requireReviewUnlock, async (req, res) => {
+  const v = {};
+  for (const k of ['worker', 'vendor', 'recorder']) {
+    v[k] = clip(req.body?.[k], 1000);
+    if (!v[k]) return res.status(400).json({ error: '三段聲明都必須填寫' });
+  }
+  try {
+    await setReviewConfig('consent', v, req.user.username);
+    await reviewAudit(req.user.username, 'consent', v);
+    res.json({ consent: v, token: issueReviewUnlock(req.user, req.reviewPv) });
+  } catch (e) {
+    console.error('review/consent error:', e.message);
+    res.status(500).json({ error: '儲存約談聲明失敗' });
+  }
+});
+
+// 評核項目維護密碼（僅管理員）：只回傳是否已設定，不回傳密碼
+app.get('/api/review/password', requireAuth, requireAdmin, async (_req, res) => {
+  const cfg = await reviewConfig('itemsPassword');
+  res.json({ set: !!cfg, updatedBy: cfg?.updated_by || '', updatedAt: cfg?.updated_at || null });
+});
+app.put('/api/review/password', requireAuth, requireAdmin, requireClientVersion, async (req, res) => {
+  const pw = String(req.body?.password ?? '');
+  if (pw.length < 4 || pw.length > 12) return res.status(400).json({ error: '密碼須為 4～12 碼' });
+  try {
+    // pv 變更 → 已發出的維護憑證全部失效，已解鎖的人須重新輸入
+    await setReviewConfig('itemsPassword', { hash: await bcrypt.hash(pw, 10), pv: Date.now() }, req.user.username);
+    reviewFails.clear();
+    await reviewAudit(req.user.username, 'password');
+    const cfg = await reviewConfig('itemsPassword');
+    res.json({ set: true, updatedBy: cfg.updated_by, updatedAt: cfg.updated_at });
+  } catch (e) {
+    console.error('review/password error:', e.message);
+    res.status(500).json({ error: '更新密碼失敗' });
+  }
+});
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ── POST /api/auth/worker-login ──────────────────────────

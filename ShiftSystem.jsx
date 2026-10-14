@@ -109,6 +109,7 @@ import React, {
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
+import { REVIEW_ITEMS_115, REVIEW_NOTES_115, REVIEW_CONSENT_DEFAULT } from './reviewItems115.js';
 
 /** Modal wrapper：用 portal 掛到 body，避免被捲動容器裁切 */
 /**
@@ -2562,6 +2563,7 @@ const NAV_ITEMS = [
   { key: 'attendance',   label: '點名表',       icon: '📋', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
+  { key: 'review',       label: '理貨評核',     icon: '📝', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -11515,6 +11517,569 @@ function VendorCompanyRow({ vendorName, companyTitle, onSave }) {
 
 // 系統設定的可收合區塊：設定項目多，全部展開會讓頁面過長難以瀏覽。
 // 預設全部收合，點標題列展開；state 存在各自的元件內，切換分頁後回到預設。
+// ─────────────────────────────────────────────
+// 理貨評核：目前上線 ④ 評核項目維護；①②③⑤ 依序上線
+// ─────────────────────────────────────────────
+const REVIEW_TABS = [
+  { key: 'new',    label: '① 新增表單' },
+  { key: 'talk',   label: '② 約談進度' },
+  { key: 'report', label: '③ 報表匯出' },
+  { key: 'items',  label: '④ 評核項目維護', lock: true },
+  { key: 'stats',  label: '⑤ 資料統計' },
+];
+const REVIEW_READY = ['items'];
+// 主管級別（由高到低）；經辦＝約談人／接談人
+const MGR_LEVEL_OPTIONS = [['', '無（專員）'], ['協理', '協理'], ['經理', '經理'], ['副理', '副理'], ['課長', '課長'], ['經辦', '經辦']];
+
+async function reviewApi(path, { method = 'GET', body, unlock } = {}) {
+  const token = localStorage.getItem(JWT_KEY);
+  const r = await fetch(path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json', 'X-App-Version': APP_VERSION, Authorization: `Bearer ${token}`,
+      ...(unlock ? { 'X-Review-Unlock': unlock } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(d.error || `操作失敗（${r.status}）`);
+    e.locked = !!d.locked;
+    throw e;
+  }
+  return d;
+}
+
+// 項目內容開頭的「1.」只是 Excel 裡的序號，畫面上不重複顯示
+const reviewStrip = t => String(t ?? '').replace(/^\d+\./, '');
+// Excel 常混入 CJK 相容字（如「理」U+F9E4），轉回一般字，避免搜尋與比對失準
+const reviewNorm = v => String(v ?? '').replace(/[豈-﫿]/g, c => c.normalize('NFKC'))
+  .replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+const reviewPtNum = pt => { const m = String(pt ?? '').match(/\d+/); return m ? Number(m[0]) : 0; };
+
+/** 依「115年 理貨評核獎懲項目.xlsx」格式解析一張工作表：A 代號、B 分類、C 內容、E 記點、F～H 第一～三次 */
+function parseReviewSheet(ws) {
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  // 直向合併的分類（B）與記點（E）：合併範圍內每一列帶入左上角的值
+  for (const m of ws['!merges'] || []) {
+    if (m.s.r === m.e.r || (m.s.c !== 1 && m.s.c !== 4)) continue;
+    const v = rows[m.s.r]?.[m.s.c] ?? '';
+    for (let r = m.s.r + 1; r <= m.e.r; r++) {
+      rows[r] = rows[r] || [];
+      if (!rows[r][m.s.c]) rows[r][m.s.c] = v;
+    }
+  }
+  const items = [], notes = [], seen = new Set();
+  let skipped = 0, lastCat = '';
+  for (let r = 2; r < rows.length; r++) {
+    const row = rows[r] || [];
+    const code = reviewNorm(row[0]);
+    if (code.startsWith('※')) { notes.push(code); continue; }
+    if (reviewNorm(row[1])) lastCat = reviewNorm(row[1]);
+    if (!code || code === '刪除' || !reviewNorm(row[2]) || seen.has(code)) { if (row.some(c => reviewNorm(c))) skipped++; continue; }
+    seen.add(code);
+    const pen = c => { const v = reviewNorm(row[c]); return v === '-' ? '' : v; };
+    items.push({ code, cat: lastCat, text: reviewNorm(row[2]), pt: reviewNorm(row[4]), a: [pen(5), pen(6), pen(7)] });
+  }
+  return { items, notes, skipped };
+}
+
+/** 比對目前版本與新檔：新增／修改／檔案中沒有 */
+function reviewItemsDiff(cur, next) {
+  const curMap = new Map(cur.map(x => [x.code, x])), nextMap = new Map(next.map(x => [x.code, x]));
+  const label = ['分類', '項目內容', '記點', '第一次', '第二次', '第三次'];
+  const vals = x => [String(x.cat).replace(/\s/g, ''), reviewNorm(x.text), reviewNorm(x.pt), ...[0, 1, 2].map(i => reviewNorm(x.a?.[i]))];
+  const diff = [];
+  let same = 0;
+  for (const x of next) {
+    const o = curMap.get(x.code);
+    if (!o) { diff.push({ kind: 'add', code: x.code, text: x.text, note: `新項目・${x.pt || '未填記點'}` }); continue; }
+    const a = vals(o), b = vals(x);
+    const changed = label.filter((_, i) => a[i] !== b[i]);
+    if (!changed.length) { same++; continue; }
+    const others = changed.filter(c => c !== '記點');
+    diff.push({ kind: 'mod', code: x.code, text: x.text, note: [
+      changed.includes('記點') ? `記點：${a[2] || '（空白）'} → ${b[2] || '（空白）'}` : '',
+      others.length ? `${others.join('、')}有修改` : '',
+    ].filter(Boolean).join('；') });
+  }
+  for (const o of cur) if (!nextMap.has(o.code)) diff.push({ kind: 'del', code: o.code, text: o.text, note: '檔案中沒有此項目' });
+  return { diff, same };
+}
+
+/** 匯出成與匯入相同的格式，改完可以直接再匯入 */
+function exportReviewItems(items, notes, label) {
+  const aoa = [
+    ['評核項目', '', '', '', '評核標準', '理貨獎懲辦法', '', ''],
+    ['', '', '', '', '記點', '第一次', '第二次', '第三次'],
+    ...items.map(x => [x.code, x.cat, x.text, '', x.pt, ...[0, 1, 2].map(i => x.a?.[i] || '-')]),
+    ...notes.map(n => [n, '', '', '', '', '', '', '']),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const top = 2, n = items.length;
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 1, c: 3 } }, { s: { r: 0, c: 5 }, e: { r: 0, c: 7 } },
+    ...items.map((_, i) => ({ s: { r: top + i, c: 2 }, e: { r: top + i, c: 3 } })),
+    ...notes.map((_, i) => ({ s: { r: top + n + i, c: 0 }, e: { r: top + n + i, c: 7 } })),
+  ];
+  ws['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 48 }, { wch: 2 }, { wch: 10 }, { wch: 30 }, { wch: 30 }, { wch: 30 }];
+  const border = { style: 'thin', color: { rgb: 'BBBBBB' } };
+  Object.keys(ws).filter(k => !k.startsWith('!')).forEach(k => {
+    const r = XLSX.utils.decode_cell(k).r;
+    ws[k].s = {
+      font: { name: '微軟正黑體', sz: 10, bold: r < top },
+      alignment: { wrapText: true, vertical: 'center', horizontal: r < top ? 'center' : undefined },
+      border: { top: border, bottom: border, left: border, right: border },
+      ...(r < top ? { fill: { fgColor: { rgb: 'F1F5F9' } } } : {}),
+    };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '理貨評核獎懲項目');
+  XLSX.writeFile(wb, `理貨評核獎懲項目_${label || '目前版本'}.xlsx`);
+}
+
+function ReviewPage() {
+  const [tab, setTab] = useState('items');
+  return (
+    <div className="p-6 space-y-4 max-w-6xl">
+      <h2 className="text-xl font-bold text-slate-800">理貨評核紀錄</h2>
+      <div className="flex gap-1 border-b border-[#DDD9D0] text-sm overflow-x-auto">
+        {REVIEW_TABS.map(t => {
+          const ready = REVIEW_READY.includes(t.key);
+          return (
+            <button key={t.key} disabled={!ready} onClick={() => setTab(t.key)}
+              title={ready ? undefined : '下一批上線'}
+              className={`px-4 py-2 whitespace-nowrap rounded-t-lg ${tab === t.key
+                ? '-mb-px border-b-2 border-blue-600 text-blue-700 font-semibold bg-white'
+                : ready ? 'text-slate-500 hover:text-blue-600' : 'text-slate-300 cursor-not-allowed'}`}>
+              {t.label}{t.lock ? ' 🔒' : ''}
+              {!ready && <span className="ml-1 text-[10px]">（即將上線）</span>}
+            </button>
+          );
+        })}
+      </div>
+      {tab === 'items' && <ReviewItemsTab />}
+    </div>
+  );
+}
+
+function ReviewItemsTab() {
+  const { currentUser } = useApp();
+  const toast = useToast();
+  const [data, setData]       = useState(null);    // { version, consent, passwordSet }
+  const [loadErr, setLoadErr] = useState('');
+  const [unlock, setUnlock]   = useState(null);    // { token, exp }：只存在畫面上，離開本頁即上鎖
+  const [pw, setPw]           = useState('');
+  const [pwErr, setPwErr]     = useState('');
+  const [busy, setBusy]       = useState(false);
+  const [sub, setSub]         = useState('items');
+  const [cat, setCat]         = useState('');
+  const [kw, setKw]           = useState('');
+  const [openRows, setOpenRows] = useState(() => new Set());
+  const [form, setForm]       = useState(null);
+  const [imp, setImp]         = useState(null);
+  const [cs, setCs]           = useState(null);    // 約談聲明草稿
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try { setData(await reviewApi('/api/review/items')); setLoadErr(''); }
+    catch (e) { setLoadErr(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // 維護憑證到期（10 分鐘，每次儲存會延長）自動上鎖
+  useEffect(() => {
+    if (!unlock) return undefined;
+    const t = setTimeout(() => { setUnlock(null); toast('評核項目維護已自動上鎖', 'info'); }, Math.max(0, unlock.exp - Date.now()));
+    return () => clearTimeout(t);
+  }, [unlock, toast]);
+
+  const version  = data?.version ?? null;
+  const items    = version?.items ?? REVIEW_ITEMS_115;
+  const notes    = version?.notes ?? REVIEW_NOTES_115;
+  const consent  = data?.consent ?? REVIEW_CONSENT_DEFAULT;
+  const cats     = useMemo(() => [...new Set(items.map(x => x.cat))], [items]);
+  const fmtTime  = v => { if (!v) return ''; const d = new Date(v);
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+  const renew = token => setUnlock({ token, exp: Date.now() + 10 * 60000 });
+  const fail = e => {
+    if (e.locked) { setUnlock(null); toast('維護已上鎖，請重新輸入密碼', 'warn'); }
+    else toast(e.message, 'error');
+  };
+
+  const doUnlock = async e => {
+    e.preventDefault();
+    if (!pw) return;
+    setBusy(true); setPwErr('');
+    try {
+      const d = await reviewApi('/api/review/unlock', { method: 'POST', body: { password: pw } });
+      setUnlock({ token: d.token, exp: Date.now() + d.minutes * 60000 });
+      setCs(null);
+    } catch (err) { setPwErr(err.message); }
+    finally { setPw(''); setBusy(false); }
+  };
+
+  const saveItems = async (nextItems, { label, source, nextNotes } = {}) => {
+    setBusy(true);
+    try {
+      const d = await reviewApi('/api/review/items', { method: 'PUT', unlock: unlock?.token, body: {
+        items: nextItems, notes: nextNotes ?? notes, label: label ?? version?.label ?? '115 年版', source: source ?? '' } });
+      setData(prev => ({ ...prev, version: d.version }));
+      renew(d.token);
+      return true;
+    } catch (e) { fail(e); return false; }
+    finally { setBusy(false); }
+  };
+
+  // ── 修改／新增 ──
+  const openForm = x => setForm(x
+    ? { orig: x.code, code: x.code, cat: x.cat, newCat: '', text: reviewStrip(x.text), pt: String(reviewPtNum(x.pt)), a: [0, 1, 2].map(i => x.a?.[i] || '') }
+    : { orig: null, code: '', cat: cats[0] || '', newCat: '', text: '', pt: '', a: ['', '', ''] });
+  const submitForm = async () => {
+    const f = form, code = f.code.trim(), text = f.text.trim();
+    const catName = f.cat === '__new' ? f.newCat.trim() : f.cat;
+    if (!code || !text || !catName) { toast('代號、分類、項目內容都必須填寫', 'error'); return; }
+    if (code !== f.orig && items.some(x => x.code === code)) { toast(`代號 ${code} 已存在`, 'error'); return; }
+    const old = items.find(x => x.code === f.orig);
+    // 保留原本內容開頭的序號（如「3.」），新項目依代號末碼補上
+    const prefix = (old?.text.match(/^\d+\./) || [`${code.split('-').pop()}.`])[0];
+    const item = { code, cat: catName, text: prefix + reviewStrip(text), pt: f.pt === '' ? '' : `${Number(f.pt) || 0}點/次`, a: f.a.map(v => v.trim()) };
+    let next;
+    if (old) next = items.map(x => x.code === f.orig ? item : x);
+    else {
+      const last = items.map(x => x.cat).lastIndexOf(catName);
+      next = last < 0 ? [...items, item] : [...items.slice(0, last + 1), item, ...items.slice(last + 1)];
+    }
+    if (await saveItems(next, { source: old ? `修改 ${code}` : `新增 ${code}` })) {
+      toast(old ? `已修改 ${code}` : `已新增 ${code}`, 'success'); setForm(null);
+    }
+  };
+  const deleteItem = async () => {
+    if (!await askConfirm(`確定刪除評核項目 ${form.orig}？\n已開立的評核紀錄不受影響（紀錄保留當時的項目內容）。`)) return;
+    if (await saveItems(items.filter(x => x.code !== form.orig), { source: `刪除 ${form.orig}` })) {
+      toast(`已刪除 ${form.orig}`, 'success'); setForm(null);
+    }
+  };
+  const resetBuiltIn = async () => {
+    if (!await askConfirm('確定還原為內建 115 年版？目前的評核項目會另存為新版本並被取代。')) return;
+    if (await saveItems(REVIEW_ITEMS_115, { label: '115 年版（內建）', source: '還原內建', nextNotes: REVIEW_NOTES_115 })) toast('已還原為內建 115 年版', 'success');
+  };
+
+  // ── 匯入 ──
+  const pickFile = file => {
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = ev => {
+      try {
+        const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+        readSheet(wb, file.name, 0);
+      } catch { toast('無法讀取這個檔案，請確認是 Excel 檔', 'error'); }
+    };
+    rd.readAsArrayBuffer(file);
+  };
+  const readSheet = (wb, fileName, idx) => {
+    const parsed = parseReviewSheet(wb.Sheets[wb.SheetNames[idx]]);
+    const { diff, same } = reviewItemsDiff(items, parsed.items);
+    setImp({ wb, fileName, idx, parsed, diff, same, label: fileName.replace(/\.xlsx?$/i, '').trim() });
+  };
+  const confirmImport = async () => {
+    if (!imp.parsed.items.length) { toast('檔案中沒有讀到評核項目', 'error'); return; }
+    if (await saveItems(imp.parsed.items, { label: imp.label || '匯入版本', source: imp.fileName,
+      nextNotes: imp.parsed.notes.length ? imp.parsed.notes : notes })) {
+      toast(`已匯入 ${imp.parsed.items.length} 個評核項目`, 'success'); setImp(null);
+    }
+  };
+
+  // ── 約談聲明 ──
+  const csDraft = cs ?? consent;
+  const csDirty = cs && ['worker', 'vendor', 'recorder'].some(k => (cs[k] ?? '') !== (consent[k] ?? ''));
+  const saveConsent = async () => {
+    setBusy(true);
+    try {
+      const d = await reviewApi('/api/review/consent', { method: 'PUT', unlock: unlock?.token, body: cs });
+      setData(prev => ({ ...prev, consent: d.consent }));
+      setCs(null); renew(d.token);
+      toast('約談聲明已儲存，之後的簽名會使用新文字', 'success');
+    } catch (e) { fail(e); }
+    finally { setBusy(false); }
+  };
+
+  if (loadErr) return <div className="p-6 text-sm text-red-600">{loadErr}</div>;
+  if (!data) return <div className="p-6 text-sm text-slate-400">讀取中…</div>;
+
+  // ── 上鎖畫面 ──
+  if (!unlock) {
+    return (
+      <div className="max-w-sm mx-auto mt-6 bg-white border border-[#DDD9D0] rounded-2xl shadow-sm p-6 space-y-4 text-center">
+        <div className="text-4xl">🔒</div>
+        <div>
+          <h3 className="text-lg font-bold text-slate-800">評核項目維護</h3>
+          <p className="text-sm text-slate-500 mt-1">修改評核項目會影響之後所有的評核，請輸入密碼</p>
+        </div>
+        {!data.passwordSet ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            管理員尚未設定維護密碼。
+            {currentUser?.role === ROLES.ADMIN && <><br />請到「系統設定 → 理貨評核：評核項目維護密碼」設定。</>}
+          </p>
+        ) : (
+          <form onSubmit={doUnlock} className="space-y-3">
+            <input type="password" inputMode="numeric" autoComplete="off" value={pw} onChange={e => setPw(e.target.value)}
+              placeholder="請輸入密碼" autoFocus
+              className="w-full text-center text-lg tracking-[0.4em] border border-[#DDD9D0] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+            {pwErr && <div className="text-sm text-red-600">{pwErr}</div>}
+            <button disabled={busy || !pw} className="w-full py-2.5 rounded-lg bg-blue-600 text-white font-semibold disabled:opacity-50">解鎖</button>
+          </form>
+        )}
+        <p className="text-[11px] text-slate-400">連續錯誤 5 次鎖定 15 分鐘；解鎖 10 分鐘內未儲存或離開本頁即自動上鎖。</p>
+      </div>
+    );
+  }
+
+  const q = kw.trim().toLowerCase();
+  const list = items.filter(x => (!cat || x.cat === cat) && (!q || x.code.toLowerCase().includes(q) || x.text.toLowerCase().includes(q)));
+  const toggleRow = code => setOpenRows(prev => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n; });
+  const clamp = open => open ? '' : 'line-clamp-2';
+  const subBtn = (k, l) => (
+    <button onClick={() => setSub(k)} className={`px-4 py-1.5 rounded-full text-sm ${sub === k
+      ? 'bg-blue-600 text-white font-semibold' : 'bg-white border border-slate-200 text-slate-600'}`}>{l}</button>
+  );
+  let lastCat = '';
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        {subBtn('items', `評核項目（${items.length}）`)}
+        {subBtn('consent', '約談聲明')}
+        <span className="text-xs text-slate-500 ml-2">
+          {version
+            ? <>目前版本：<b className="text-slate-700">{version.label}</b>（{version.created_by}・{fmtTime(version.created_at)}）</>
+            : <>目前使用<b className="text-slate-700">內建 115 年版</b>（第一次儲存或匯入後建立版本）</>}
+        </span>
+        <button onClick={() => setUnlock(null)} className="ml-auto text-xs text-slate-500 hover:text-red-600">🔒 鎖定</button>
+      </div>
+
+      {sub === 'items' && (
+        <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-hidden">
+          <div className="p-3 flex items-center gap-2 flex-wrap border-b border-[#EFEBE3]">
+            <div className="flex gap-1 flex-wrap">
+              {[['', '全部'], ...cats.map(c => [c, c])].map(([k, l]) => (
+                <button key={k || 'all'} onClick={() => setCat(k)} className={`px-3 py-1 rounded-full text-xs border ${cat === k
+                  ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200'}`}>{l}</button>
+              ))}
+            </div>
+            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 代號或內容"
+              className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-44" />
+            <button onClick={() => openForm(null)} disabled={busy} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">＋ 新增項目</button>
+            <button onClick={() => exportReviewItems(items, notes, version?.label)} className="px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg text-sm">📤 匯出 Excel</button>
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-1.5 border border-blue-300 text-blue-700 rounded-lg text-sm disabled:opacity-50">📥 匯入 Excel</button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+              onChange={e => { pickFile(e.target.files?.[0]); e.target.value = ''; }} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[#F5F2EC] text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left w-14">代號</th><th className="px-3 py-2 text-left">項目內容</th>
+                  <th className="px-3 py-2 w-20">記點</th><th className="px-3 py-2 text-left w-44">第一次</th>
+                  <th className="px-3 py-2 text-left w-44">第二次</th><th className="px-3 py-2 text-left w-44">第三次（以上）</th><th className="w-12" />
+                </tr>
+              </thead>
+              <tbody>
+                {list.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">查無符合的項目</td></tr>}
+                {list.map(x => {
+                  const head = x.cat !== lastCat;
+                  lastCat = x.cat;
+                  const open = openRows.has(x.code);
+                  return (
+                    <React.Fragment key={x.code}>
+                      {head && <tr><td colSpan={7} className="px-3 py-1.5 bg-slate-50 text-xs font-semibold text-slate-600">{x.cat}</td></tr>}
+                      <tr onClick={() => toggleRow(x.code)} className="border-t border-[#EFEBE3] align-top cursor-pointer hover:bg-blue-50/40">
+                        <td className="px-3 py-2 font-mono text-xs font-bold text-blue-700">{x.code}</td>
+                        <td className="px-3 py-2 text-slate-800"><div className={clamp(open)}>{reviewStrip(x.text)}</div></td>
+                        <td className="px-3 py-2 text-center whitespace-nowrap">{x.pt || '—'}</td>
+                        {[0, 1, 2].map(i => <td key={i} className="px-3 py-2 text-xs text-slate-600"><div className={clamp(open)}>{x.a?.[i] || '—'}</div></td>)}
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <button onClick={e => { e.stopPropagation(); openForm(x); }} className="text-blue-600 hover:underline text-xs">修改</button>
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-3 py-2 border-t border-[#EFEBE3] flex items-center gap-3 text-xs text-slate-400">
+            <span>共 {list.length} 項・點一下列可展開全文</span>
+            <span>已開立的評核紀錄保留當時的項目內容，修改或改版不影響舊紀錄</span>
+            <button onClick={resetBuiltIn} disabled={busy} className="ml-auto hover:text-red-600 underline">還原內建 115 年版</button>
+          </div>
+        </div>
+      )}
+
+      {sub === 'consent' && (
+        <div className="bg-white border border-[#DDD9D0] rounded-2xl p-4 space-y-3 text-sm">
+          <p className="text-xs text-slate-500">電子簽名時須勾選的聲明。修改後只影響之後的簽名；已簽的文件保留簽署當時的文字。</p>
+          {[['worker', '受約談人員（理貨員）'], ['vendor', '廠商主管／幹部、協力商人力主管'], ['recorder', '記錄人（FM-193 接談紀錄表）']].map(([k, l]) => (
+            <label key={k} className="block">
+              <span className="block font-semibold text-slate-700 mb-1">{l}</span>
+              <textarea rows={3} value={csDraft[k] ?? ''} onChange={e => setCs({ ...csDraft, [k]: e.target.value })}
+                className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2" />
+            </label>
+          ))}
+          <div className="flex items-center gap-2">
+            <button onClick={saveConsent} disabled={!csDirty || busy} className="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold disabled:opacity-40">儲存聲明</button>
+            {csDirty && <button onClick={() => setCs(null)} className="px-3 py-2 border border-[#DDD9D0] rounded-lg">取消修改</button>}
+            <span className="text-xs text-slate-400">{csDirty ? '有未儲存的修改' : ''}</span>
+          </div>
+        </div>
+      )}
+
+      {/* 修改／新增視窗 */}
+      {form && createPortal(
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) setForm(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl my-10 shadow-xl">
+            <div className="px-5 py-4 border-b flex items-center">
+              <h3 className="text-lg font-bold text-slate-800">{form.orig ? `修改評核項目 ${form.orig}` : '新增評核項目'}</h3>
+              <button onClick={() => setForm(null)} className="ml-auto text-slate-400 text-xl">✕</button>
+            </div>
+            <div className="px-5 py-4 grid grid-cols-6 gap-3 text-sm">
+              <label className="col-span-1 block"><span className="block text-xs text-slate-500 mb-1">代號</span>
+                <input value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="1-21"
+                  className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 font-mono" /></label>
+              <label className="col-span-3 block"><span className="block text-xs text-slate-500 mb-1">分類</span>
+                <select value={form.cat} onChange={e => setForm({ ...form, cat: e.target.value })} className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5">
+                  {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="__new">＋ 新分類…</option>
+                </select></label>
+              <label className="col-span-2 block"><span className="block text-xs text-slate-500 mb-1">記點（點/次）</span>
+                <input type="number" min="0" value={form.pt} onChange={e => setForm({ ...form, pt: e.target.value })}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5" /></label>
+              {form.cat === '__new' && (
+                <label className="col-span-6 block"><span className="block text-xs text-slate-500 mb-1">新分類名稱</span>
+                  <input value={form.newCat} onChange={e => setForm({ ...form, newCat: e.target.value })} placeholder="例：7. 其他規範"
+                    className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5" /></label>
+              )}
+              <label className="col-span-6 block"><span className="block text-xs text-slate-500 mb-1">項目內容</span>
+                <textarea rows={3} value={form.text} onChange={e => setForm({ ...form, text: e.target.value })}
+                  className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2" /></label>
+              {['第一次', '第二次', '第三次（以上）'].map((l, i) => (
+                <label key={l} className="col-span-2 block"><span className="block text-xs text-slate-500 mb-1">{l}獎懲</span>
+                  <textarea rows={3} value={form.a[i]} onChange={e => { const a = [...form.a]; a[i] = e.target.value; setForm({ ...form, a }); }}
+                    className="w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-xs" /></label>
+              ))}
+            </div>
+            <div className="px-5 py-4 bg-[#FAF8F4] rounded-b-2xl flex items-center gap-2">
+              {form.orig && <button onClick={deleteItem} disabled={busy} className="px-3 py-2 border border-red-300 text-red-600 rounded-lg text-sm">刪除</button>}
+              <button onClick={() => setForm(null)} className="ml-auto px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm">取消</button>
+              <button onClick={submitForm} disabled={busy} className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">儲存</button>
+            </div>
+          </div>
+        </div>, document.body)}
+
+      {/* 匯入預覽 */}
+      {imp && createPortal(
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) setImp(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl my-10 shadow-xl">
+            <div className="px-5 py-4 border-b flex items-center gap-2">
+              <h3 className="text-lg font-bold text-slate-800">匯入評核項目</h3>
+              <span className="text-sm text-slate-500 truncate">{imp.fileName}</span>
+              <button onClick={() => setImp(null)} className="ml-auto text-slate-400 text-xl">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-slate-500">工作表</span>
+                <select value={imp.idx} onChange={e => readSheet(imp.wb, imp.fileName, Number(e.target.value))} className="border border-[#DDD9D0] rounded-lg px-2 py-1">
+                  {imp.wb.SheetNames.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                </select>
+                <span className="text-xs text-slate-500">
+                  讀到 {imp.parsed.items.length} 個項目{imp.parsed.skipped ? `，略過 ${imp.parsed.skipped} 列（無代號、重複代號或標示刪除）` : ''}
+                  {imp.parsed.notes.length ? `，備註 ${imp.parsed.notes.length} 則` : ''}
+                </span>
+              </div>
+              <div className="flex gap-2 text-xs">
+                {[['add', '新增', 'bg-emerald-50 text-emerald-700'], ['mod', '修改', 'bg-amber-50 text-amber-700'], ['del', '檔案中沒有（將移除）', 'bg-rose-50 text-rose-700']].map(([k, l, c]) => (
+                  <span key={k} className={`px-2 py-1 rounded ${c}`}>{l} <b>{imp.diff.filter(d => d.kind === k).length}</b></span>
+                ))}
+                <span className="px-2 py-1 rounded bg-slate-100 text-slate-600">相同 <b>{imp.same}</b></span>
+              </div>
+              <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {imp.diff.length === 0 && <tr><td className="px-2 py-4 text-center text-slate-400">與目前版本完全相同</td></tr>}
+                    {imp.diff.map(d => (
+                      <tr key={d.kind + d.code} className="border-t border-slate-100">
+                        <td className="px-2 py-1.5 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded ${{ add: 'bg-emerald-50 text-emerald-700', mod: 'bg-amber-50 text-amber-700', del: 'bg-rose-50 text-rose-700' }[d.kind]}`}>
+                          {{ add: '新增', mod: '修改', del: '檔案中沒有' }[d.kind]}</span></td>
+                        <td className="px-2 py-1.5 font-mono font-bold text-blue-700">{d.code}</td>
+                        <td className="px-2 py-1.5 text-slate-700">{reviewStrip(d.text).slice(0, 40)}</td>
+                        <td className="px-2 py-1.5 text-slate-500">{d.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <label className="flex items-center gap-2">
+                <span className="text-slate-500 shrink-0">版本名稱</span>
+                <input value={imp.label} onChange={e => setImp({ ...imp, label: e.target.value })} className="flex-1 border border-[#DDD9D0] rounded-lg px-2 py-1.5" />
+              </label>
+              <p className="text-xs text-slate-400">匯入後會取代目前的評核項目（另存為新版本）；已開立的評核紀錄不受影響。</p>
+            </div>
+            <div className="px-5 py-4 bg-[#FAF8F4] rounded-b-2xl flex justify-end gap-2">
+              <button onClick={() => setImp(null)} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm">取消</button>
+              <button onClick={confirmImport} disabled={busy || imp.diff.length === 0 || !imp.parsed.items.length}
+                className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-40">確認匯入</button>
+            </div>
+          </div>
+        </div>, document.body)}
+    </div>
+  );
+}
+
+// 系統設定：評核項目維護密碼（僅管理員；只存雜湊，畫面不顯示目前密碼）
+function ReviewPasswordSetting() {
+  const toast = useToast();
+  const [st, setSt] = useState(null);
+  const [p1, setP1] = useState('');
+  const [p2, setP2] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { reviewApi('/api/review/password').then(setSt).catch(e => setSt({ error: e.message })); }, []);
+  const save = async () => {
+    if (p1.length < 4 || p1.length > 12) { toast('密碼須為 4～12 碼', 'error'); return; }
+    if (p1 !== p2) { toast('兩次輸入的密碼不一致', 'error'); return; }
+    setBusy(true);
+    try {
+      setSt(await reviewApi('/api/review/password', { method: 'PUT', body: { password: p1 } }));
+      setP1(''); setP2('');
+      toast('評核項目維護密碼已更新，立即生效', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const d = st?.updatedAt ? new Date(st.updatedAt) : null;
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-xs text-slate-500">
+        進入「理貨評核 → ④ 評核項目維護」時要輸入的密碼。更改後立即生效，已解鎖的人須重新輸入。
+        <br />密碼加密存在伺服器，畫面與網頁原始碼都看不到；連續輸錯 5 次鎖定 15 分鐘。
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="password" autoComplete="new-password" value={p1} onChange={e => setP1(e.target.value)} placeholder="新密碼（4～12 碼）"
+          className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-44" />
+        <input type="password" autoComplete="new-password" value={p2} onChange={e => setP2(e.target.value)} placeholder="再輸入一次"
+          className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-44" />
+        <button onClick={save} disabled={busy} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50">
+          {st?.set ? '變更密碼' : '設定密碼'}
+        </button>
+        <span className={`text-xs font-medium ${st?.set ? 'text-teal-700' : 'text-amber-600'}`}>
+          {st?.error ? st.error : !st ? '讀取中…' : st.set
+            ? `✅ 已設定（${st.updatedBy}・${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}）`
+            : '🔒 尚未設定，評核項目維護無法解鎖'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SettingsSection({ title, desc, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -11996,6 +12561,10 @@ function Settings() {
             {unlockPwd ? '✅ 已設定' : '🔒 尚未設定，班表不會顯示解鎖按鈕'}
           </span>
         </div>
+      </SettingsSection>)}
+
+      {isAdminUser && (<SettingsSection title="理貨評核：評核項目維護密碼" desc="進入「理貨評核 → ④ 評核項目維護」時要輸入的密碼">
+        <ReviewPasswordSetting />
       </SettingsSection>)}
 
       {/* ── 資料健檢與合併 ── */}
@@ -14976,6 +15545,7 @@ function AccountManagement() {
   const [apiUsersLoaded, setApiUsersLoaded] = useState(false);
   const [savingWhFor,    setSavingWhFor]    = useState(null);
   const [savingRoleFor,  setSavingRoleFor]  = useState(null);
+  const [savingMgrFor,   setSavingMgrFor]   = useState(null);
   const [vendorSearch,   setVendorSearch]   = useState('');
 
   // 取不到資料庫帳號時會退回本機的種子清單（只有 4 筆），看起來像「帳號不見了」，
@@ -15035,6 +15605,28 @@ function AccountManagement() {
       toast('操作失敗', 'error');
     } finally {
       setSavingRoleFor(null);
+    }
+  };
+
+  // 主管級別：協理／經理／副理／課長可被送呈理貨評核簽核；經辦為約談人
+  const updateApiUserMgr = async (userId, level) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setSavingMgrFor(userId);
+    try {
+      const r = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ mgr_level: level }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.error ?? '操作失敗', 'error'); return; }
+      setApiUsers(prev => prev.map(u => u.id === d.id ? d : u));
+      toast(`${d.display_name || d.username} 主管級別：${level || '無（專員）'}`, 'success');
+    } catch {
+      toast('操作失敗', 'error');
+    } finally {
+      setSavingMgrFor(null);
     }
   };
 
@@ -15872,6 +16464,13 @@ function AccountManagement() {
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
                 {u.display_name && <span className="text-sm text-slate-600 shrink-0">{u.display_name}</span>}
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>{roleLabel[u.role]}</span>
+                <label className="shrink-0 flex items-center gap-1 text-xs text-slate-400" title="協理／經理／副理／課長可被送呈理貨評核簽核；經辦為約談人">
+                  主管級別
+                  <select value={u.mgrLevel ?? ''} disabled={savingMgrFor === u.id} onChange={e => updateApiUserMgr(u.id, e.target.value)}
+                    className={`border rounded-lg px-1.5 py-0.5 text-xs ${u.mgrLevel ? 'border-violet-300 text-violet-700 font-semibold' : 'border-slate-200 text-slate-500'}`}>
+                    {MGR_LEVEL_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </label>
                 {/* 登入次數／最後登入：資料庫於每次登入時累計 */}
                 <span className="shrink-0 text-xs text-slate-400" title="登入次數">
                   登入 <span className="text-teal-700 font-bold text-sm">{u.loginCount ?? 0}</span> 次
@@ -17267,6 +17866,7 @@ export default function App() {
     phoneControl: <Attendance phoneOnly />,
     station:    <StationBoard />,
     selfCheck:  <WorkerSelfCheck />,
+    review:     <ReviewPage />,
   };
 
   if (!currentUser) {
