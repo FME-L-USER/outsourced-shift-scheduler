@@ -2854,7 +2854,8 @@ app.get('/api/review/vendor-pending', requireAuth, async (req, res) => {
   }
 });
 
-// 委外幹部：自己廠商的理貨評核紀錄與已完成約談單（查詢總表）。
+// 委外幹部：自己廠商「已完成」的理貨評核紀錄與約談單（查詢總表）。
+// 約談、簽名、主管簽核都完成前，廠商看不到這筆評核。
 // 只回總表需要的欄位，不含簽名影像、簽名人、開立人與主管指示等內部資訊；作廢的不列出。
 app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ error: '僅限委外幹部' });
@@ -2871,7 +2872,7 @@ app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
     const byRec = new Map();
     for (const t of talks) for (const id of t.record_ids || []) byRec.set(Number(id), t);
     const stepOf = t => !t ? 'todo' : t.status === 'todo' ? 'todo' : t.status;
-    const records = recs.map(r => {
+    const records = recs.filter(r => byRec.get(Number(r.id))?.status === 'done').map(r => {
       const t = byRec.get(Number(r.id));
       return {
         id: Number(r.id), workDate: fmtYmd(r.work_date), name: r.emp_name, empNo: r.emp_no, dept: r.dept, grp: r.grp, vendor: r.vendor,
