@@ -192,6 +192,9 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS review_records_emp ON review_records (emp_id, work_date)`);
+  // 開立編號：TE＋民國年月日＋倉別碼＋當日序號，例如 TE115101506001
+  await pool.query(`ALTER TABLE review_records ADD COLUMN IF NOT EXISTS no TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_records_no ON review_records (no) WHERE no <> ''`);
   // 約談單：kind＝review（理貨評核約談）| fm（FM-193 從業人員接談紀錄表）
   // status：todo＝待約談（評核約談的草稿／FM-193 已開立）、pending＝待簽核（有人不在場）、
   //         mgr＝待主管簽核、done＝已完成、void＝作廢
@@ -2809,7 +2812,7 @@ function talkRow(t) {
 }
 function recordRow(r) {
   return {
-    id: Number(r.id), empId: r.emp_id, empNo: r.emp_no, name: r.emp_name, vendor: r.vendor, dept: r.dept, grp: r.grp,
+    id: Number(r.id), no: r.no || '', empId: r.emp_id, empNo: r.emp_no, name: r.emp_name, vendor: r.vendor, dept: r.dept, grp: r.grp,
     workDate: fmtYmd(r.work_date), item: r.item, count: r.count, points: r.points, zeroPoints: r.zero_points, nth: r.nth,
     penalty: r.penalty, extra: r.extra, status: r.status, voidInfo: r.void_info, createdBy: r.created_by, createdAt: r.created_at,
   };
@@ -2818,6 +2821,29 @@ function fmtYmd(d) {
   if (typeof d === 'string') return d.slice(0, 10);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+// ── 開立編號 ─────────────────────────────────────
+// 前 2 碼英文（TE＝理貨評核、CR＝約談紀錄表）＋民國年月日 7 碼＋倉別 2 碼＋當日該倉別第幾張 3 碼
+// 例：TE115101501001＝115/10/15 大溪倉第 1 張理貨評核
+const REVIEW_WH_CODE = [['大溪', '01'], ['岡山', '03'], ['大肚', '06']];
+const REVIEW_SEQ_DIGITS = 3;
+async function reviewWhCode(db, dept, vendor) {
+  const { rows } = await db.query(`SELECT data->'warehouses' AS w FROM app_state WHERE id='main'`);
+  const whs = Array.isArray(rows[0]?.w) ? rows[0].w : [];
+  const wh = whs.find(w => (w.departments || []).some(d => dept ? d.name === dept : (d.vendors || []).includes(vendor)));
+  // 倉別設定找不到時，退回以課別名稱判斷（如「大肚理貨課」）
+  const name = wh?.name || dept || '';
+  return REVIEW_WH_CODE.find(([k]) => name.includes(k))?.[1] || '00';
+}
+/** 在交易內配發下一個編號；以 advisory lock 鎖住同一前綴，兩人同時開單也不會撞號 */
+async function reviewAllocNo(db, table, head, dept, vendor) {
+  const d = twToday();
+  const prefix = `${head}${Number(d.slice(0, 4)) - 1911}${d.slice(5, 7)}${d.slice(8, 10)}${await reviewWhCode(db, dept, vendor)}`;
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [prefix]);
+  const { rows } = await db.query(`SELECT COALESCE(MAX(RIGHT(no, ${REVIEW_SEQ_DIGITS})::int), 0) AS n FROM ${table} WHERE no LIKE $1 AND LENGTH(no) = $2`,
+    [`${prefix}%`, prefix.length + REVIEW_SEQ_DIGITS]);
+  return prefix + String(rows[0].n + 1).padStart(REVIEW_SEQ_DIGITS, '0');
+}
+
 // 人員以清冊為準：確認存在，並以清冊上的員編、姓名、廠商、課別、組別覆寫畫面送來的資料
 async function rosterEmp(emp) {
   const { rows } = await pool.query(
@@ -2875,7 +2901,7 @@ app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
     const records = recs.filter(r => byRec.get(Number(r.id))?.status === 'done').map(r => {
       const t = byRec.get(Number(r.id));
       return {
-        id: Number(r.id), workDate: fmtYmd(r.work_date), name: r.emp_name, empNo: r.emp_no, dept: r.dept, grp: r.grp, vendor: r.vendor,
+        id: Number(r.id), no: r.no || '', workDate: fmtYmd(r.work_date), name: r.emp_name, empNo: r.emp_no, dept: r.dept, grp: r.grp, vendor: r.vendor,
         code: r.item?.code ?? '', text: r.item?.text ?? '', points: r.points, nth: r.nth, penalty: r.penalty,
         status: stepOf(t && t.status !== 'todo' ? t : null), talkDate: t && t.status !== 'todo' && t.talk_date ? fmtYmd(t.talk_date) : '',
       };
@@ -2966,11 +2992,19 @@ app.post('/api/review/records', requireAuth, requireManagerOrAdmin, requireClien
     const penalty = String(b.penalty ?? '').slice(0, 1000) || item.a[Math.min(nth, 3) - 1] || '';
     const ex = b.extra && typeof b.extra === 'object' ? b.extra : {};
     const extra = { absType: clip(ex.absType, 40), time: clip(ex.time, 20), note: String(ex.note ?? '').slice(0, 500), by: clip(ex.by, 40) };
-    const { rows } = await pool.query(
-      `INSERT INTO review_records (emp_id, emp_no, emp_name, vendor, dept, grp, work_date, item, count, points, zero_points, nth, penalty, extra, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, b.workDate, JSON.stringify(item), count, points, zero, nth, penalty, JSON.stringify(extra), req.user.username]);
-    await reviewAudit(req.user.username, 'record-create', { id: Number(rows[0].id), emp: emp.empNo, code: item.code, points });
+    const client = await pool.connect();
+    let rows;
+    try {
+      await client.query('BEGIN');
+      const no = await reviewAllocNo(client, 'review_records', 'TE', emp.dept, emp.vendor);
+      ({ rows } = await client.query(
+        `INSERT INTO review_records (no, emp_id, emp_no, emp_name, vendor, dept, grp, work_date, item, count, points, zero_points, nth, penalty, extra, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+        [no, emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, b.workDate, JSON.stringify(item), count, points, zero, nth, penalty, JSON.stringify(extra), req.user.username]));
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; }
+    finally { client.release(); }
+    await reviewAudit(req.user.username, 'record-create', { id: Number(rows[0].id), no: rows[0].no, emp: emp.empNo, code: item.code, points });
     res.json(recordRow(rows[0]));
   } catch (e) {
     console.error('review/records error:', e.message);
@@ -3028,26 +3062,21 @@ app.post('/api/review/talks', requireAuth, requireManagerOrAdmin, requireClientV
     }
     if (kind === 'fm' && !content.recorder) content.recorder = await reviewDisplayName(req.user.username);
     let rows;
-    for (let attempt = 0; ; attempt++) {
-      let no = '';
-      if (kind === 'fm') {
-        // 編號：FM193-民國年月日-當日序號；同時開單撞號時重取
-        const d = twToday(), roc = `${Number(d.slice(0, 4)) - 1911}${d.slice(5, 7)}${d.slice(8, 10)}`;
-        const { rows: c } = await pool.query(`SELECT COUNT(*)::int AS n FROM review_talks WHERE kind='fm' AND no LIKE $1`, [`FM193-${roc}-%`]);
-        no = `FM193-${roc}-${String(c[0].n + 1 + attempt).padStart(3, '0')}`;
-      }
-      try {
-        ({ rows } = await pool.query(
-          `INSERT INTO review_talks (kind, no, emp_id, emp_no, emp_name, vendor, dept, grp, talk_date, content, record_ids, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-          [kind, no, emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, talkDate, content, recordIds, req.user.username]));
-        break;
-      } catch (e) {
-        if (e.code !== '23505') throw e;
-        if (kind === 'review') return res.status(409).json({ error: '此人已有約談草稿，請重新整理' });
-        if (attempt >= 4) throw e;
-      }
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // CR 編號：FM-193 開立時即配號；評核約談的草稿不佔號，第一次送出簽名時才配號
+      const no = kind === 'fm' ? await reviewAllocNo(client, 'review_talks', 'CR', emp.dept, emp.vendor) : '';
+      ({ rows } = await client.query(
+        `INSERT INTO review_talks (kind, no, emp_id, emp_no, emp_name, vendor, dept, grp, talk_date, content, record_ids, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [kind, no, emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, talkDate, content, recordIds, req.user.username]));
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (e.code === '23505' && kind === 'review') return res.status(409).json({ error: '此人已有約談草稿，請重新整理' });
+      throw e;
+    } finally { client.release(); }
     await reviewAudit(req.user.username, 'talk-create', { id: Number(rows[0].id), kind, no: rows[0].no });
     res.json(talkRow(rows[0]));
   } catch (e) {
@@ -3177,9 +3206,10 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
     }
     if (!mgrs.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選送呈的主管' }); }
     const status = allSigned ? 'mgr' : 'pending';
+    const no = t.no || await reviewAllocNo(client, 'review_talks', 'CR', t.dept, t.vendor);
     const { rows: up } = await client.query(
-      `UPDATE review_talks SET content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status]);
+      `UPDATE review_talks SET no=$8, content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status, no]);
     if (t.kind === 'review' && t.status === 'todo') {
       await client.query(`UPDATE review_records SET status='talk' WHERE id = ANY($1::bigint[])`, [recordIds]);
     }
