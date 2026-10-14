@@ -2818,6 +2818,14 @@ function fmtYmd(d) {
   if (typeof d === 'string') return d.slice(0, 10);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+// 人員以清冊為準：確認存在，並以清冊上的員編、姓名、廠商、課別、組別覆寫畫面送來的資料
+async function rosterEmp(emp) {
+  const { rows } = await pool.query(
+    `SELECT e FROM app_state, jsonb_array_elements(COALESCE(data->'employees', '[]'::jsonb)) e WHERE id='main' AND e->>'id' = $1 LIMIT 1`, [emp.empId]);
+  const e = rows[0]?.e;
+  if (!e) return null;
+  return { empId: emp.empId, empNo: clip(e.empId, 30), name: clip(e.name, 50), vendor: clip(e.vendor, 50), dept: clip(e.dept, 50), grp: clip(e.group, 50) };
+}
 async function reviewDisplayName(username) {
   const { rows } = await pool.query('SELECT display_name FROM users WHERE username=$1', [username]);
   return rows[0]?.display_name || username;
@@ -2857,9 +2865,11 @@ app.get('/api/review/list', requireAuth, requireManagerOrAdmin, async (req, res)
 // ① 開立理貨評核
 app.post('/api/review/records', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
   const b = req.body ?? {};
-  const emp = cleanEmp(b);
+  let emp = cleanEmp(b);
   if (!emp) return res.status(400).json({ error: '請選擇人員' });
   if (!isYmd(b.workDate)) return res.status(400).json({ error: '作業日格式不正確' });
+  emp = await rosterEmp(emp);
+  if (!emp) return res.status(400).json({ error: '人員清冊中找不到這位人員，請重新整理後再選' });
   const item = cleanItems([b.item])?.[0];
   if (!item) return res.status(400).json({ error: '請選擇評核項目' });
   const count = Math.min(99, Math.max(1, Number(b.count) || 1));
@@ -2930,8 +2940,10 @@ app.post('/api/review/records/:id/void', requireAuth, requireManagerOrAdmin, req
 app.post('/api/review/talks', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
   const b = req.body ?? {};
   const kind = b.kind === 'fm' ? 'fm' : 'review';
-  const emp = cleanEmp(b);
+  let emp = cleanEmp(b);
   if (!emp) return res.status(400).json({ error: '請選擇人員' });
+  emp = await rosterEmp(emp);
+  if (!emp) return res.status(400).json({ error: '人員清冊中找不到這位人員，請重新整理後再選' });
   const content = cleanTalkContent(kind, b.content);
   const talkDate = isYmd(b.talkDate) ? b.talkDate : null;
   const recordIds = kind === 'review' ? [...new Set((Array.isArray(b.recordIds) ? b.recordIds : []).map(Number).filter(Boolean))] : [];
