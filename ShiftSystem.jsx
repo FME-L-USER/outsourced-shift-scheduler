@@ -12173,7 +12173,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   const [picked, setPicked] = useState(() => new Set(
     talk?.recordIds?.length && mode === 'review' ? talk.recordIds.filter(id => records.some(r => r.id === id)) : records.map(r => r.id)));
   const [signs, setSigns] = useState({});
-  const [names, setNames] = useState({ v: talk?.signed?.v?.name ?? '', h: '' });
+  // 委外幹部登入後送簽：簽名人姓名自動帶入登入者，不能修改
+  const [names, setNames] = useState(() => vendorMode ? { v: me.name, h: me.name } : { v: talk?.signed?.v?.name ?? '', h: '' });
   const [hSame, setHSame] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [mgrPick, setMgrPick] = useState({});
@@ -12352,7 +12353,9 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                       <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">✓ 已同步廠商主管／幹部的簽名，列印時人力主管欄帶入同一份簽名</div>
                     ) : (
                       <>
-                        {(p === 'v' || p === 'h') && <input value={names[p]} onChange={e => setNames({ ...names, [p]: e.target.value })} placeholder="簽名人姓名" className={I} />}
+                        {(p === 'v' || p === 'h') && (vendorMode
+                          ? <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">簽名人：<b>{names[p]}</b> <span className="text-xs text-slate-400">（登入帳號）</span></div>
+                          : <input value={names[p]} onChange={e => setNames({ ...names, [p]: e.target.value })} placeholder="簽名人姓名（廠商主管／幹部本人）" className={I} />)}
                         <ReviewSigPad consent={text} resetKey={resetKey} onChange={sigCb[p]} />
                       </>
                     )}

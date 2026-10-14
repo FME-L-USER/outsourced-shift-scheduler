@@ -3146,6 +3146,8 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
   const isVendor = req.user.role === 'vendor';
   const b = isVendor ? { signs: req.body?.signs, hSame: req.body?.hSame } : (req.body ?? {});
   const cfg = await reviewConfig('consent');
+  // 委外幹部登入後送簽：簽名人姓名一律用登入帳號的姓名，不採用畫面送來的值
+  const vendorName = isVendor ? await reviewDisplayName(req.user.username) : '';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -3184,7 +3186,7 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
       const s = signs[party];
       if (!s?.image) continue;
       if (!SIGN_RE.test(s.image) || s.image.length > SIGN_MAX) { await client.query('ROLLBACK'); return res.status(400).json({ error: '簽名影像格式不正確' }); }
-      const name = clip(s.name, 40);
+      const name = isVendor ? vendorName : clip(s.name, 40);
       await client.query(
         `INSERT INTO review_signs (talk_id, party, image, consent, signer_name, signed_by, ip) VALUES ($1,$2,$3,$4,$5,$6,$7)
          ON CONFLICT (talk_id, party) DO NOTHING`,
