@@ -11733,6 +11733,9 @@ function ReviewTalkerSelect({ options, value, onChange, className }) {
 }
 const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vendor: p.vendor, dept: p.dept, grp: p.grp });
 
+// 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
+const REVIEW_REC_GRID = 'grid grid-cols-[1rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem_3.5rem] items-center gap-3';
+
 function ReviewUnitTags({ dept, grp, vendor }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs flex-wrap">
@@ -12528,16 +12531,20 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
           <button onClick={() => setModal({ mode: 'review', talk: u.draft, person: u, records: u.recs })}
             className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white">{u.draft ? '繼續約談' : '約談'}（{u.recs.length} 筆）</button>
         </div>
+        <div className={`${REVIEW_REC_GRID} px-4 py-1.5 border-t border-[#EFEBE3] bg-white text-[11px] text-slate-400`}>
+          <span /><span>開立編號</span><span>作業日</span><span>項目</span><span>評核內容</span>
+          <span className="text-right">點數</span><span className="text-right">第幾次</span><span />
+        </div>
         {u.recs.map(r => (
           <details key={r.id} className="border-t border-[#EFEBE3] group">
-            <summary className="px-4 py-2 flex items-center gap-3 text-sm cursor-pointer list-none">
+            <summary className={`${REVIEW_REC_GRID} px-4 py-2 text-sm cursor-pointer list-none`}>
               <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
-              <span className="text-slate-500 tabular-nums w-24">{r.workDate}</span>
-              <span className="font-mono text-[11px] text-slate-400 hidden md:inline">{r.no}</span>
+              <span className="font-mono text-xs text-slate-600 truncate">{r.no || '—'}</span>
+              <span className="text-slate-500 tabular-nums">{r.workDate}</span>
               <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
-              <span className="flex-1 truncate text-slate-700">{reviewStrip(r.item.text)}</span>
-              <span className="font-bold text-rose-600 w-14 text-right">{r.points} 點</span>
-              <span className="text-xs text-slate-500 w-20 text-right">{reviewNthLabel(r.nth)}</span>
+              <span className="truncate text-slate-700">{reviewStrip(r.item.text)}</span>
+              <span className="font-bold text-rose-600 text-right">{r.points} 點</span>
+              <span className="text-xs text-slate-500 text-right">{reviewNthLabel(r.nth)}</span>
               {voidBtn(r.createdBy, () => setVoiding({ kind: 'record', id: r.id, title: `理貨評核 ${r.no}　${r.workDate} ${r.item.code}（${r.points} 點）`, desc: `${r.name}・${reviewStrip(r.item.text)}` }), 'text-xs px-2 py-0.5 rounded')}
             </summary>
             <div className="px-12 pb-3 text-sm space-y-1">
