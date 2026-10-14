@@ -11564,7 +11564,7 @@ const REVIEW_TABS = [
   { key: 'items',  label: '④ 評核項目維護', lock: true },
   { key: 'stats',  label: '⑤ 資料統計' },
 ];
-const REVIEW_READY = ['items'];
+const REVIEW_READY = ['new', 'talk', 'items'];
 // 主管級別（由高到低）；經辦＝約談人／接談人
 const MGR_LEVEL_OPTIONS = [['', '無（專員）'], ['協理', '協理'], ['經理', '經理'], ['副理', '副理'], ['課長', '課長'], ['經辦', '經辦']];
 
@@ -11675,11 +11675,1021 @@ function exportReviewItems(items, notes, label) {
   XLSX.writeFile(wb, `理貨評核獎懲項目_${label || '目前版本'}.xlsx`);
 }
 
+// ── 理貨評核：共用 ─────────────────────────────
+// 主管簽核順序（由低到高）：課長 → 副理 → 經理 → 協理；未選的級別跳過，同一級任一位簽核即送下一級
+const REVIEW_LEVEL_CHAIN = ['課長', '副理', '經理', '協理'];
+const reviewYmd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const reviewToday = () => reviewYmd(new Date());
+const reviewPresets = () => {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  return [
+    ['本月', reviewYmd(new Date(y, m, 1)), reviewToday()],
+    ['上月', reviewYmd(new Date(y, m - 1, 1)), reviewYmd(new Date(y, m, 0))],
+    ['今年', `${y}-01-01`, reviewToday()],
+  ];
+};
+const reviewFmtTime = v => {
+  if (!v) return '';
+  const d = new Date(v);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+// 由項目內容推出簡短的異常類別，例如「2.遲到(作業開始15分鐘以上未到者)。」→「遲到」
+const reviewAbsType = item => reviewStrip(item?.text).split(/[（(。，,：:]/)[0].slice(0, 12).trim();
+const reviewNthLabel = n => n >= 3 ? '第三次（以上）' : n === 2 ? '第二次' : '第一次';
+const REVIEW_STATUS = {
+  todo:    ['待約談',     'bg-rose-50 text-rose-700 border-rose-200'],
+  pending: ['待簽核',     'bg-amber-50 text-amber-700 border-amber-200'],
+  mgr:     ['待主管簽核', 'bg-violet-50 text-violet-700 border-violet-200'],
+  done:    ['已完成',     'bg-emerald-50 text-emerald-700 border-emerald-200'],
+  void:    ['已作廢',     'bg-slate-100 text-slate-500 border-slate-200'],
+};
+const REVIEW_FLOW = [
+  ['開立', '① 新增表單', null], ['約談', '填寫約談內容', 'todo'], ['受約談人、廠商簽名', '有人不在場→待簽核', 'pending'],
+  ['送呈主管', '逐級：課長→協理', 'mgr'], ['完成', '', 'done'], ['計分・結轉', '⑤ 資料統計', null],
+];
+const reviewCurMgr = t => (t.mgrs || []).find(m => !m.at);
+const reviewMyTurn = (t, user) => t.status === 'mgr' && !!reviewCurMgr(t)?.names.some(n => n.user === user);
+const reviewMgrText = t => (t.mgrs || []).map(m => `${m.at ? m.byName : m.names.map(n => n.name).join('／')}（${m.level}）${m.at ? '✓' : ''}`).join(' → ');
+const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vendor: p.vendor, dept: p.dept, grp: p.grp });
+
+function ReviewUnitTags({ dept, grp, vendor }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs flex-wrap">
+      {dept && <span className="px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">{dept}</span>}
+      {grp && <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{grp}</span>}
+      {vendor && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{vendor}</span>}
+    </span>
+  );
+}
+
+function ReviewFlowMini({ status }) {
+  const cur = REVIEW_FLOW.findIndex(f => f[2] === status);
+  return (
+    <div className="flex items-center gap-1 text-[11px] overflow-x-auto">
+      {REVIEW_FLOW.map(([t], i) => (
+        <React.Fragment key={t}>
+          <span className={`px-2 py-0.5 rounded-full whitespace-nowrap ${i === cur ? 'bg-blue-600 text-white font-semibold'
+            : i < cur || status === 'done' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+            {(i < cur || (status === 'done' && i <= cur)) && i !== cur ? '✓ ' : ''}{i < 5 ? `${i + 1}. ` : ''}{t}
+          </span>
+          {i < REVIEW_FLOW.length - 1 && <span className="text-slate-300">›</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/** 選人：依上方倉別／課別／組別／廠商篩選後，輸入姓名或員編搜尋 */
+function ReviewPersonPicker({ emps, value, onChange }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const list = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    return (k ? emps.filter(e => (e.name ?? '').toLowerCase().includes(k) || (e.empId ?? '').toLowerCase().includes(k)) : emps).slice(0, 40);
+  }, [emps, q]);
+  if (value) {
+    return (
+      <div className="flex items-center gap-3 flex-wrap border-2 border-blue-300 rounded-lg px-3 py-2 bg-blue-50/40 text-sm">
+        <b className="text-slate-800">{value.name}</b>
+        <span className="font-mono text-xs text-slate-500">{value.empNo}</span>
+        <ReviewUnitTags dept={value.dept} grp={value.grp} vendor={value.vendor} />
+        <button type="button" onClick={() => { onChange(null); setQ(''); }} className="ml-auto text-xs text-slate-400 hover:text-red-600">✕ 重選</button>
+      </div>
+    );
+  }
+  return (
+    <div className="relative">
+      <input value={q} onChange={e => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)} placeholder="輸入姓名或員編"
+        className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-[#DDD9D0] rounded-lg shadow-lg">
+          {list.length === 0 && <div className="px-3 py-3 text-sm text-slate-400">查無人員（請確認上方倉別、課別、組別、廠商篩選）</div>}
+          {list.map(e => (
+            <button type="button" key={e.id} onMouseDown={ev => ev.preventDefault()}
+              onClick={() => { onChange({ empId: e.id, empNo: e.empId ?? '', name: e.name ?? '', vendor: e.vendor ?? '', dept: e.dept ?? '', grp: e.group ?? '' }); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 flex items-center gap-2 flex-wrap">
+              <b>{e.name}</b><span className="font-mono text-xs text-slate-400">{e.empId}</span>
+              <ReviewUnitTags dept={e.dept} grp={e.group} vendor={e.vendor} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 評核項目：可搜尋的下拉選單，依分類分組 */
+function ReviewItemPicker({ items, value, onChange }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const k = q.trim().toLowerCase();
+  const list = items.filter(x => !k || x.code.toLowerCase().includes(k) || x.text.toLowerCase().includes(k) || x.cat.toLowerCase().includes(k));
+  if (value) {
+    return (
+      <div className="border-2 border-blue-300 rounded-lg px-3 py-2 bg-blue-50/40 text-sm space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs font-bold text-blue-700">{value.code}</span>
+          <span className="text-xs text-slate-500">{value.cat}</span>
+          <span className="text-xs font-semibold text-rose-600">{value.pt || '未填記點'}</span>
+          <button type="button" onClick={() => { onChange(null); setQ(''); }} className="ml-auto text-xs text-slate-400 hover:text-red-600">✕ 重選</button>
+        </div>
+        <div className="text-slate-800">{reviewStrip(value.text)}</div>
+      </div>
+    );
+  }
+  let last = '';
+  return (
+    <div className="relative">
+      <input value={q} onChange={e => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)} placeholder="輸入代號或關鍵字，例如 1-11、手機、遲到"
+        className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full max-h-80 overflow-y-auto bg-white border border-[#DDD9D0] rounded-lg shadow-lg">
+          {list.length === 0 && <div className="px-3 py-3 text-sm text-slate-400">查無符合的評核項目</div>}
+          {list.map(x => {
+            const head = x.cat !== last; last = x.cat;
+            return (
+              <React.Fragment key={x.code}>
+                {head && <div className="px-3 py-1 bg-slate-50 text-xs font-semibold text-slate-500 sticky top-0">{x.cat}</div>}
+                <button type="button" onMouseDown={ev => ev.preventDefault()} onClick={() => { onChange(x); setOpen(false); }}
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 flex items-start gap-2">
+                  <span className="font-mono text-xs font-bold text-blue-700 w-10 shrink-0 pt-0.5">{x.code}</span>
+                  <span className="flex-1 text-slate-700">{reviewStrip(x.text)}</span>
+                  <span className="text-xs text-rose-600 shrink-0">{x.pt}</span>
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 電子簽名板：先勾選聲明才能簽；取消勾選會清除簽名。至少畫 3 筆移動才算簽名 */
+function ReviewSigPad({ consent, resetKey, onChange }) {
+  const [agree, setAgree] = useState(false);
+  const cvRef = useRef(null);
+  const st = useRef({ down: false, last: null, ink: 0 });
+  const clear = useCallback(() => {
+    const cv = cvRef.current;
+    if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    onChange(null);
+  }, [onChange]);
+  useEffect(() => {
+    setAgree(false);
+    const cv = cvRef.current;
+    if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  }, [resetKey]);
+  const pos = e => {
+    const cv = cvRef.current, r = cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * cv.width / r.width, y: (e.clientY - r.top) * cv.height / r.height };
+  };
+  return (
+    <div className="space-y-2">
+      <label className="flex gap-2 text-xs text-slate-700 leading-relaxed bg-slate-50 rounded-lg p-2 cursor-pointer">
+        <input type="checkbox" checked={agree} onChange={e => { setAgree(e.target.checked); if (!e.target.checked) clear(); }} className="mt-0.5 w-4 h-4 shrink-0" />
+        {consent}
+      </label>
+      <div className="relative">
+        <canvas ref={cvRef} width={600} height={220}
+          className="w-full h-28 border-2 border-dashed border-slate-300 rounded-lg bg-white touch-none"
+          onPointerDown={e => { if (!agree) return; st.current = { down: true, last: pos(e), ink: 0 }; e.currentTarget.setPointerCapture?.(e.pointerId); }}
+          onPointerMove={e => {
+            const s = st.current; if (!s.down) return;
+            const c = cvRef.current.getContext('2d'), p = pos(e);
+            c.lineWidth = 3; c.lineCap = 'round'; c.strokeStyle = '#1e293b';
+            c.beginPath(); c.moveTo(s.last.x, s.last.y); c.lineTo(p.x, p.y); c.stroke();
+            s.last = p; s.ink++;
+          }}
+          onPointerUp={() => { const s = st.current; if (s.down && s.ink >= 3) onChange(cvRef.current.toDataURL('image/png')); s.down = false; }}
+          onPointerLeave={() => { const s = st.current; if (s.down && s.ink >= 3) onChange(cvRef.current.toDataURL('image/png')); s.down = false; }} />
+        {!agree && <div className="absolute inset-0 rounded-lg bg-slate-100/90 flex items-center justify-center text-sm text-slate-500">🔒 請先勾選上方聲明</div>}
+        {agree && <button type="button" onClick={clear} className="absolute top-1 right-1 px-2 py-0.5 text-xs text-red-600 bg-white/90 border border-red-200 rounded">清除簽名</button>}
+      </div>
+    </div>
+  );
+}
+
+/** 作廢：須填原因 */
+function ReviewVoidModal({ title, desc, onClose, onConfirm }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl w-full max-w-md my-16 shadow-xl">
+        <div className="px-5 py-4 border-b flex items-center"><h3 className="text-lg font-bold text-rose-700">作廢</h3>
+          <button onClick={onClose} className="ml-auto text-slate-400 text-xl">✕</button></div>
+        <div className="px-5 py-4 space-y-3 text-sm">
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700"><b>{title}</b><div className="text-xs text-slate-500 mt-0.5">{desc}</div></div>
+          <label className="block"><span className="block font-semibold text-slate-700 mb-1">作廢原因 <span className="text-rose-600">*</span></span>
+            <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="例：登記錯人、重複開立、事實有誤"
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2" /></label>
+          <p className="text-xs text-slate-500">作廢後不列入約談、扣點與統計，紀錄保留在「已作廢」可查詢，無法復原。</p>
+        </div>
+        <div className="px-5 py-4 bg-[#FAF8F4] rounded-b-2xl flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm">取消</button>
+          <button disabled={!reason.trim() || busy} onClick={async () => { setBusy(true); try { await onConfirm(reason.trim()); } finally { setBusy(false); } }}
+            className="px-5 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-40">確認作廢</button>
+        </div>
+      </div>
+    </div>, document.body);
+}
+
+// ── ① 新增表單 ────────────────────────────────
+function ReviewNewTab({ items, records, managers, emps, me, reload }) {
+  const toast = useToast();
+  const [kind, setKind] = useState('review');
+  const [busy, setBusy] = useState(false);
+  // 開立理貨評核
+  const [date, setDate] = useState(reviewToday());
+  const [person, setPerson] = useState(null);
+  const [item, setItem] = useState(null);
+  const [count, setCount] = useState(1);
+  const [zero, setZero] = useState(false);
+  const [penalty, setPenalty] = useState(null);     // null＝依第幾次自動帶入
+  const [more, setMore] = useState(false);
+  const [extra, setExtra] = useState({ absType: '', time: '', note: '', by: '' });
+  // 約談表（FM-193）
+  const [fm, setFm] = useState({ fmKind: '初次接談', ref: '', title: '', place: '', talker: '', issue: '', resolution: '' });
+  const [fmDate, setFmDate] = useState(reviewToday());
+  const [fmPerson, setFmPerson] = useState(null);
+  const jingban = managers.filter(m => m.level === '經辦');
+
+  const ptNum = reviewPtNum(item?.pt);
+  const points = zero ? 0 : ptNum * (Number(count) || 1);
+  // 預估第幾次（同一人、同一項目、同一年度；送出後以系統計算為準）
+  const nth = useMemo(() => {
+    if (!person || !item) return 1;
+    const y = date.slice(0, 4);
+    return records.filter(r => r.empId === person.empId && r.item?.code === item.code && r.status !== 'void' && r.workDate.slice(0, 4) === y).length + 1;
+  }, [records, person, item, date]);
+  const autoPenalty = item ? (item.a?.[Math.min(nth, 3) - 1] || '') : '';
+
+  const submitReview = async () => {
+    if (!person) { toast('請選擇人員', 'error'); return; }
+    if (!item) { toast('請選擇違反的評核項目', 'error'); return; }
+    setBusy(true);
+    try {
+      const r = await reviewApi('/api/review/records', { method: 'POST', body: {
+        ...reviewEmpBody(person), workDate: date, item, count, zeroPoints: zero, penalty: penalty ?? '',
+        extra: { absType: extra.absType || reviewAbsType(item), time: extra.time, note: extra.note, by: extra.by || me.name } } });
+      toast(`已開立：${r.name} ${r.item.code}（${reviewNthLabel(r.nth)}，${r.points} 點），到「② 約談進度」約談`, 'success');
+      setItem(null); setCount(1); setZero(false); setPenalty(null); setExtra(x => ({ ...x, absType: '', time: '', note: '' }));
+      await reload();
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const submitFm = async () => {
+    if (!fmPerson) { toast('請選擇人員', 'error'); return; }
+    if (!fm.issue.trim()) { toast('請填寫主訴問題／事件內容', 'error'); return; }
+    setBusy(true);
+    try {
+      const t = await reviewApi('/api/review/talks', { method: 'POST', body: { kind: 'fm', ...reviewEmpBody(fmPerson), talkDate: fmDate, content: fm } });
+      toast(`已開立接談紀錄表 ${t.no}，到「② 約談進度」簽名`, 'success');
+      setFmPerson(null); setFm(f => ({ ...f, ref: '', title: '', place: '', issue: '', resolution: '' }));
+      await reload();
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const card = (k, icon, title, sub, on) => (
+    <button onClick={() => setKind(k)} className={`rounded-2xl border-2 p-4 text-left flex items-center gap-3 ${kind === k
+      ? (k === 'review' ? 'border-blue-500 bg-blue-50' : 'border-violet-500 bg-violet-50') : 'border-[#DDD9D0] bg-white hover:border-slate-400'}`}>
+      <span className="text-2xl">{icon}</span>
+      <span className="min-w-0"><span className={`block font-bold ${kind === k ? on : 'text-slate-700'}`}>{title}</span><span className="block text-xs text-slate-500">{sub}</span></span>
+    </button>
+  );
+  const L = 'block text-xs text-slate-500 mb-1', I = 'w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm';
+  const Num = ({ n, c }) => <div className={`w-7 h-7 rounded-full ${c} text-white text-sm font-bold flex items-center justify-center shrink-0`}>{n}</div>;
+
+  return (
+    <div className="space-y-4 max-w-4xl">
+      <div className="grid sm:grid-cols-2 gap-3">
+        {card('review', '📝', '開立理貨評核', '登記一筆違規：人員 → 評核項目 → 點數與獎懲', 'text-blue-700')}
+        {card('fm', '🗣', '約談表', 'FM-193 從業人員接談紀錄表：開立後到 ② 簽名', 'text-violet-700')}
+      </div>
+
+      {kind === 'review' && (
+        <div className="bg-white border border-[#DDD9D0] rounded-2xl divide-y divide-[#EFEBE3]">
+          <section className="p-5 flex gap-4">
+            <Num n={1} c="bg-blue-600" />
+            <div className="flex-1 space-y-3">
+              <h3 className="font-semibold text-slate-800">誰、哪一天</h3>
+              <div className="flex gap-3 flex-wrap items-end">
+                <label><span className={L}>作業日</span><input type="date" value={date} onChange={e => setDate(e.target.value)} className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" /></label>
+                <div className="flex-1 min-w-[260px]"><span className={L}>人員（依上方倉別／課別／組別／廠商篩選）</span><ReviewPersonPicker emps={emps} value={person} onChange={setPerson} /></div>
+              </div>
+            </div>
+          </section>
+          <section className="p-5 flex gap-4">
+            <Num n={2} c="bg-blue-600" />
+            <div className="flex-1 space-y-3">
+              <h3 className="font-semibold text-slate-800">違反哪一項</h3>
+              <ReviewItemPicker items={items} value={item} onChange={x => { setItem(x); setPenalty(null); }} />
+            </div>
+          </section>
+          <section className="p-5 flex gap-4">
+            <Num n={3} c="bg-blue-600" />
+            <div className="flex-1 space-y-3 text-sm">
+              <h3 className="font-semibold text-slate-800">點數與獎懲</h3>
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-2"><span className="text-slate-500">次數</span>
+                  <input type="number" min="1" max="99" value={count} onChange={e => setCount(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+                    className="w-16 border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-center" /></label>
+                <label className="flex items-center gap-1.5"><input type="radio" checked={!zero} onChange={() => setZero(false)} />依標準扣 <b className="text-rose-600">{ptNum * (Number(count) || 1)}</b> 點</label>
+                <label className="flex items-center gap-1.5"><input type="radio" checked={zero} onChange={() => setZero(true)} />0 點（不扣點）</label>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{item ? `${reviewNthLabel(nth)}（同年度同項目）` : '—'}</span>
+              </div>
+              {zero && <input value={extra.note} onChange={e => setExtra({ ...extra, note: e.target.value })} placeholder="0 點原因（選填）" className={I} />}
+              <label className="block"><span className={L}>獎懲方式（依第幾次帶入，可修改）</span>
+                <textarea rows={2} value={penalty ?? autoPenalty} onChange={e => setPenalty(e.target.value)} className={I} /></label>
+              <button type="button" onClick={() => setMore(v => !v)} className="text-xs text-slate-500 hover:text-blue-600">{more ? '▲ 收合' : '▼ 更多（異常類別、時間、備註、登記人）'}</button>
+              {more && (
+                <div className="grid sm:grid-cols-4 gap-3">
+                  <label><span className={L}>異常類別</span><input value={extra.absType} onChange={e => setExtra({ ...extra, absType: e.target.value })} placeholder={item ? reviewAbsType(item) : ''} className={I} /></label>
+                  <label><span className={L}>時間</span><input type="time" value={extra.time} onChange={e => setExtra({ ...extra, time: e.target.value })} className={I} /></label>
+                  {!zero && <label><span className={L}>備註</span><input value={extra.note} onChange={e => setExtra({ ...extra, note: e.target.value })} className={I} /></label>}
+                  <label><span className={L}>登記人</span><input value={extra.by} onChange={e => setExtra({ ...extra, by: e.target.value })} placeholder={me.name} className={I} /></label>
+                </div>
+              )}
+            </div>
+          </section>
+          <div className="p-4 bg-[#FAF8F4] rounded-b-2xl flex items-center gap-3 flex-wrap text-sm">
+            <span className="text-slate-600">{person ? <b>{person.name}</b> : '未選人員'}・{item ? `${item.code}` : '未選項目'}・<b className="text-rose-600">{points}</b> 點</span>
+            <button onClick={submitReview} disabled={busy} className="ml-auto px-6 py-2 bg-blue-600 text-white rounded-xl font-semibold disabled:opacity-50">登記</button>
+          </div>
+        </div>
+      )}
+
+      {kind === 'fm' && (
+        <div className="bg-white border border-[#DDD9D0] rounded-2xl divide-y divide-[#EFEBE3]">
+          <div className="px-5 py-2.5 bg-violet-50/60 rounded-t-2xl text-xs text-violet-800">FM-193 從業人員接談紀錄表・非理貨評核事項，不連動評核項目、不扣點。開立後到「② 約談進度」簽名。</div>
+          <section className="p-5 flex gap-4">
+            <Num n={1} c="bg-violet-600" />
+            <div className="flex-1 space-y-3 text-sm">
+              <h3 className="font-semibold text-slate-800">接談對象</h3>
+              <div className="flex items-center gap-x-5 gap-y-2 flex-wrap">
+                {['初次接談', '非初次接談'].map(k => (
+                  <label key={k} className="flex items-center gap-1.5"><input type="radio" checked={fm.fmKind === k} onChange={() => setFm({ ...fm, fmKind: k, ref: k === '初次接談' ? '' : fm.ref })} /> {k}</label>
+                ))}
+                <label className={`flex items-center gap-1.5 ${fm.fmKind === '非初次接談' ? '' : 'text-slate-400'}`}>調閱存查文件編號
+                  <input disabled={fm.fmKind !== '非初次接談'} value={fm.ref} onChange={e => setFm({ ...fm, ref: e.target.value })} className="w-48 border border-[#DDD9D0] rounded-lg px-2 py-1 disabled:bg-slate-50" /></label>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2"><span className={L}>人員姓名（輸入姓名或員編）</span><ReviewPersonPicker emps={emps} value={fmPerson} onChange={setFmPerson} /></div>
+                <label><span className={L}>職務職位</span><input value={fm.title} onChange={e => setFm({ ...fm, title: e.target.value })} placeholder="例：理貨員" className={I} /></label>
+              </div>
+            </div>
+          </section>
+          <section className="p-5 flex gap-4">
+            <Num n={2} c="bg-violet-600" />
+            <div className="flex-1 grid sm:grid-cols-3 gap-3 text-sm">
+              <h3 className="sm:col-span-3 font-semibold text-slate-800">接談內容</h3>
+              <label><span className={L}>接談日期</span><input type="date" value={fmDate} onChange={e => setFmDate(e.target.value)} className={I} /></label>
+              <label><span className={L}>接談地點</span><input value={fm.place} onChange={e => setFm({ ...fm, place: e.target.value })} className={I} /></label>
+              <label><span className={L}>接談人姓名（經辦）</span>
+                {jingban.length
+                  ? <select value={fm.talker} onChange={e => setFm({ ...fm, talker: e.target.value })} className={I}>
+                      <option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
+                  : <input value={fm.talker} onChange={e => setFm({ ...fm, talker: e.target.value })} placeholder="尚未設定經辦，可直接輸入" className={I} />}
+              </label>
+              <label className="sm:col-span-3"><span className={L}>主訴問題／事件內容</span><textarea rows={5} value={fm.issue} onChange={e => setFm({ ...fm, issue: e.target.value })} className={I} /></label>
+              <label className="sm:col-span-3"><span className={L}>約定／決議事項</span><textarea rows={3} value={fm.resolution} onChange={e => setFm({ ...fm, resolution: e.target.value })} className={I} /></label>
+            </div>
+          </section>
+          <div className="p-4 bg-[#FAF8F4] rounded-b-2xl flex items-center gap-2">
+            <span className="text-xs text-slate-500">編號於開立時自動產生；記錄人＝開立者（{me.name}）</span>
+            <button onClick={submitFm} disabled={busy} className="ml-auto px-6 py-2 bg-violet-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">開立</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ② 約談單視窗：約談／簽名／補簽／檢視 ─────────────────
+// mode：review＝評核約談（待約談，可能有草稿）、fm＝FM-193 待約談、cosign＝待簽核補簽、view＝檢視
+function ReviewTalkModal({ mode, talk, person, records, managers, consent, me, onClose, reload }) {
+  const toast = useToast();
+  const kind = talk?.kind ?? 'review';
+  const editable = mode === 'review' || mode === 'fm';
+  const jingban = managers.filter(m => m.level === '經辦');
+  const who = talk ?? person;
+  const base = talk?.content ?? {};
+  const [content, setContent] = useState(() => kind === 'fm' ? { ...base } : {
+    talker: base.talker ?? (jingban.find(j => j.user === me.user)?.name ?? ''),
+    reason: base.reason ?? '違反理貨評核規範', content: base.content ?? '', result: base.result ?? '' });
+  const [talkDate, setTalkDate] = useState(talk?.talkDate || reviewToday());
+  const [picked, setPicked] = useState(() => new Set(
+    talk?.recordIds?.length && mode === 'review' ? talk.recordIds.filter(id => records.some(r => r.id === id)) : records.map(r => r.id)));
+  const [signs, setSigns] = useState({});
+  const [names, setNames] = useState({ v: talk?.signed?.v?.name ?? '', h: '' });
+  const [hSame, setHSame] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
+  const [mgrPick, setMgrPick] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [warn, setWarn] = useState(false);
+  const [imgs, setImgs] = useState(null);
+  useEffect(() => {
+    if (talk && (mode === 'view' || mode === 'cosign')) reviewApi(`/api/review/talks/${talk.id}/signs`).then(setImgs).catch(() => setImgs({}));
+  }, [talk, mode]);
+
+  const signed = talk?.signed ?? {};
+  const parties = kind === 'fm'
+    ? [['w', '受談人員', consent.worker], ['v', '協力商主管／幹部', consent.vendor], ['h', '協力商人力主管', consent.vendor], ['r', `記錄人（${base.recorder || ''}）`, consent.recorder]]
+    : [['w', '受約談人員（理貨員）', consent.worker], ['v', '廠商主管／幹部', consent.vendor]];
+  const has = p => !!signed[p] || !!signs[p] || (p === 'h' && hSame && !!(signed.v || signs.v));
+  const allSigned = parties.every(([p]) => has(p));
+  const setSign = useCallback((p, v) => setSigns(s => ({ ...s, [p]: v })), []);
+  const sigCb = useMemo(() => Object.fromEntries(['w', 'v', 'h', 'r'].map(p => [p, v => setSign(p, v)])), [setSign]);
+  // 內容改了：本次已簽的簽名對應的是舊內容，清除重簽
+  const touch = () => {
+    if (Object.values(signs).some(Boolean)) { setSigns({}); setHSame(false); setResetKey(k => k + 1); setWarn(true); }
+  };
+  const setC = patch => { touch(); setContent(c => ({ ...c, ...patch })); };
+  const recs = mode === 'review' ? records : records.filter(r => talk?.recordIds?.includes(r.id));
+  const total = recs.filter(r => mode !== 'review' || picked.has(r.id)).reduce((a, r) => a + r.points, 0);
+  const mgrBody = REVIEW_LEVEL_CHAIN.map(level => ({ level, users: [...(mgrPick[level] ?? [])] })).filter(m => m.users.length);
+
+  const ensureTalk = async () => talk ?? reviewApi('/api/review/talks', {
+    method: 'POST', body: { kind: 'review', ...reviewEmpBody(person), content, talkDate, recordIds: [...picked] } });
+  const saveDraft = async () => {
+    setBusy(true);
+    try {
+      if (talk) await reviewApi(`/api/review/talks/${talk.id}`, { method: 'PUT', body: { content, talkDate, recordIds: [...picked] } });
+      else await ensureTalk();
+      toast(kind === 'fm' ? '已儲存修改' : '已暫存草稿（簽名不會暫存）', 'success');
+      await reload(); onClose();
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const discard = async () => {
+    if (!await askConfirm('捨棄這份約談草稿？評核紀錄會回到待約談。')) return;
+    try { await reviewApi(`/api/review/talks/${talk.id}`, { method: 'DELETE' }); await reload(); onClose(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const submit = async toMgr => {
+    if (kind === 'review' && mode === 'review' && picked.size === 0) { toast('請勾選本次處理的評核紀錄', 'error'); return; }
+    setBusy(true);
+    try {
+      const t = await ensureTalk();
+      const signerName = p => p === 'w' ? who.name : p === 'r' ? (base.recorder || '') : names[p];
+      const r = await reviewApi(`/api/review/talks/${t.id}/sign`, { method: 'POST', body: {
+        content, talkDate, recordIds: [...picked], hSame,
+        signs: Object.fromEntries(Object.entries(signs).filter(([, v]) => v).map(([p, image]) => [p, { image, name: signerName(p) }])),
+        mgrs: toMgr ? mgrBody : [] } });
+      toast(r.status === 'mgr' ? `已送呈主管簽核：${reviewMgrText(r)}` : '已送出，尚有人員未簽（待簽核）', 'success');
+      await reload(); onClose();
+    } catch (e) { toast(e.message, 'error'); await reload(); }
+    finally { setBusy(false); }
+  };
+
+  const I = 'w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm';
+  const ro = (k, v, wide) => <React.Fragment key={k}><span className="text-slate-400">{k}</span><span className={`whitespace-pre-wrap ${wide ? 'sm:col-span-3' : ''}`}>{v || '—'}</span></React.Fragment>;
+  const hint = !has('w') ? '下一步：受約談人員勾選聲明並簽名'
+    : !has('v') ? '下一步：廠商主管／幹部勾選聲明並簽名'
+    : kind === 'fm' && !has('h') ? '下一步：協力商人力主管簽名（同一人可勾選同步）'
+    : kind === 'fm' && !has('r') ? '下一步：記錄人勾選聲明並簽名'
+    : !mgrBody.length ? '下一步：勾選送呈主管' : '';
+  const signable = mode !== 'view';
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4">
+      <div className="bg-white rounded-2xl w-full max-w-3xl my-6 shadow-xl">
+        <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
+          <h2 className="text-lg font-bold text-slate-800">{kind === 'fm' ? 'FM-193 從業人員接談紀錄表' : '約談單'}</h2>
+          <span className="text-sm text-slate-600">{who.name}・<span className="font-mono text-xs">{who.empNo}</span></span>
+          <ReviewUnitTags dept={who.dept} grp={who.grp} vendor={who.vendor} />
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600 text-xl">✕</button>
+        </div>
+        <div className="px-6 py-2 border-b border-[#EFEBE3]"><ReviewFlowMini status={talk?.status === 'todo' || !talk ? 'todo' : talk.status} /></div>
+        {warn && <div className="px-6 py-2 bg-rose-50 text-xs text-rose-700 border-b border-rose-200">內容已修改，原有的簽名已清除，請重新勾選聲明並簽名。</div>}
+        <div className="divide-y divide-[#EFEBE3]">
+          {kind === 'review' && (
+            <section className="px-6 py-4 space-y-2">
+              <h3 className="font-semibold text-slate-700">本次處理的評核紀錄</h3>
+              {recs.map(r => (
+                <label key={r.id} className="flex items-center gap-3 text-sm border border-slate-200 rounded-lg px-3 py-2">
+                  {mode === 'review' && <input type="checkbox" checked={picked.has(r.id)} onChange={e => { touch(); setPicked(s => { const n = new Set(s); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; }); }} className="w-4 h-4" />}
+                  <span className="tabular-nums text-slate-500">{r.workDate}</span>
+                  <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
+                  <span className="flex-1 truncate">{reviewStrip(r.item.text)}</span>
+                  <span className="text-xs text-slate-500">{reviewNthLabel(r.nth)}</span>
+                  <span className="font-bold text-rose-600">{r.points} 點</span>
+                </label>
+              ))}
+              <div className="text-sm text-right text-slate-600">合計 <b className="text-rose-600 text-lg">{total}</b> 點</div>
+            </section>
+          )}
+          {kind === 'review' && (
+            <section className="px-6 py-4 grid sm:grid-cols-3 gap-3 text-sm">
+              <h3 className="sm:col-span-3 font-semibold text-slate-700">約談資訊</h3>
+              {editable ? <>
+                <label><span className="block text-xs text-slate-500 mb-1">約談日期</span><input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={I} /></label>
+                <label><span className="block text-xs text-slate-500 mb-1">約談人（經辦）</span>
+                  {jingban.length
+                    ? <select value={content.talker} onChange={e => setC({ talker: e.target.value })} className={I}><option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
+                    : <input value={content.talker} onChange={e => setC({ talker: e.target.value })} className={I} />}
+                </label>
+                <label><span className="block text-xs text-slate-500 mb-1">約談事由</span><input value={content.reason} onChange={e => setC({ reason: e.target.value })} className={I} /></label>
+                <label className="sm:col-span-3"><span className="block text-xs text-slate-500 mb-1">約談內容</span><textarea rows={3} value={content.content} onChange={e => setC({ content: e.target.value })} placeholder="說明缺失、當事人陳述、要求改善事項…" className={I} /></label>
+                <label className="sm:col-span-3"><span className="block text-xs text-slate-500 mb-1">結果／改善事項</span><input value={content.result} onChange={e => setC({ result: e.target.value })} className={I} /></label>
+              </> : <div className="sm:col-span-3 grid grid-cols-[6rem_1fr] sm:grid-cols-[6rem_1fr_6rem_1fr] gap-x-3 gap-y-1.5">
+                {ro('約談日期', talk.talkDate)}{ro('約談人', base.talker)}{ro('約談事由', base.reason, true)}{ro('約談內容', base.content, true)}{ro('結果', base.result, true)}
+              </div>}
+            </section>
+          )}
+          {kind === 'fm' && (
+            <section className="px-6 py-4 text-sm">
+              <div className="flex items-center gap-2 mb-2"><h3 className="font-semibold text-slate-700">接談紀錄內容</h3>
+                <span className="text-xs text-slate-400">{editable ? '（待約談時可修改；簽名送出後即鎖定）' : '（已送出簽名，內容已鎖定）'}</span></div>
+              {editable ? (
+                <div className="grid sm:grid-cols-[7rem_1fr_7rem_1fr] gap-x-3 gap-y-2 items-center">
+                  {ro('編號', talk.no)}
+                  <span className="text-slate-400">接談類別</span>
+                  <span className="flex items-center gap-3 flex-wrap">
+                    {['初次接談', '非初次接談'].map(k => <label key={k} className="flex items-center gap-1"><input type="radio" checked={content.fmKind === k} onChange={() => setC({ fmKind: k, ref: k === '初次接談' ? '' : content.ref })} /> {k}</label>)}
+                    <input disabled={content.fmKind !== '非初次接談'} value={content.ref ?? ''} onChange={e => setC({ ref: e.target.value })} placeholder="調閱文件編號" className="border border-[#DDD9D0] rounded-lg px-2 py-1 w-36 disabled:bg-slate-50" />
+                  </span>
+                  <span className="text-slate-400">職務職位</span><input value={content.title ?? ''} onChange={e => setC({ title: e.target.value })} className={I} />
+                  <span className="text-slate-400">接談日期</span><input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={I} />
+                  <span className="text-slate-400">接談地點</span><input value={content.place ?? ''} onChange={e => setC({ place: e.target.value })} className={I} />
+                  <span className="text-slate-400">接談人（經辦）</span>
+                  {jingban.length
+                    ? <select value={content.talker ?? ''} onChange={e => setC({ talker: e.target.value })} className={I}><option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
+                    : <input value={content.talker ?? ''} onChange={e => setC({ talker: e.target.value })} className={I} />}
+                  <span className="text-slate-400 self-start pt-2">主訴問題／事件內容</span>
+                  <textarea rows={4} value={content.issue ?? ''} onChange={e => setC({ issue: e.target.value })} className={`${I} sm:col-span-3`} />
+                  <span className="text-slate-400 self-start pt-2">約定／決議事項</span>
+                  <textarea rows={3} value={content.resolution ?? ''} onChange={e => setC({ resolution: e.target.value })} className={`${I} sm:col-span-3`} />
+                  {ro('記錄人', base.recorder, true)}
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-[7rem_1fr_7rem_1fr] gap-x-3 gap-y-1.5">
+                  {ro('編號', talk.no)}{ro('接談類別', base.fmKind + (base.ref ? `（調閱 ${base.ref}）` : ''))}
+                  {ro('職務職位', base.title)}{ro('接談日期', talk.talkDate)}{ro('接談地點', base.place)}{ro('接談人', base.talker)}
+                  {ro('主訴問題／事件內容', base.issue, true)}{ro('約定／決議事項', base.resolution, true)}{ro('記錄人', base.recorder, true)}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 簽名 */}
+          <section className="px-6 py-4 space-y-3">
+            <h3 className="font-semibold text-slate-700">{kind === 'fm' ? '本次接談簽名' : '本次約談簽名'}</h3>
+            {kind === 'review' && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 leading-relaxed space-y-0.5">
+                <div className="font-semibold text-slate-600">備註</div>
+                {REVIEW_NOTES_115.map(n => <div key={n}>{n}</div>)}
+              </div>
+            )}
+            <div className="grid md:grid-cols-2 gap-4">
+              {parties.map(([p, label, text]) => {
+                const done = signed[p];
+                return (
+                  <div key={p} className="border border-slate-200 rounded-xl p-3 space-y-2">
+                    <div className="font-semibold text-slate-700 text-sm flex items-center gap-2 flex-wrap">
+                      {label}
+                      {p === 'h' && !done && signable && (
+                        <label className="ml-auto flex items-center gap-1 text-xs font-normal text-slate-500 cursor-pointer">
+                          <input type="checkbox" checked={hSame} onChange={e => { setHSame(e.target.checked); if (e.target.checked) setSign('h', null); }} className="w-4 h-4" />
+                          同步廠商主管／幹部簽名（同一人）
+                        </label>
+                      )}
+                    </div>
+                    {done ? (
+                      <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">
+                        ✓ 已簽{done.same ? '（同協力商主管／幹部）' : done.name ? `：${done.name}` : ''}　{reviewFmtTime(done.at)}
+                        {imgs?.[p]?.image && <img src={imgs[p].image} alt="簽名" className="mt-1 h-14 bg-white rounded border border-emerald-100" />}
+                      </div>
+                    ) : !signable ? (
+                      <div className="text-xs text-red-600">未簽</div>
+                    ) : p === 'h' && hSame ? (
+                      <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">✓ 已同步廠商主管／幹部的簽名，列印時人力主管欄帶入同一份簽名</div>
+                    ) : (
+                      <>
+                        {(p === 'v' || p === 'h') && <input value={names[p]} onChange={e => setNames({ ...names, [p]: e.target.value })} placeholder="簽名人姓名" className={I} />}
+                        <ReviewSigPad consent={text} resetKey={resetKey} onChange={sigCb[p]} />
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* 送呈主管：全部簽完才出現 */}
+          {signable && allSigned && (
+            <section className="px-6 py-4 space-y-2 bg-violet-50/40">
+              <div className="flex items-baseline gap-2 flex-wrap"><h3 className="font-semibold text-violet-800">送呈主管</h3>
+                <span className="text-xs text-slate-500">逐級簽核：課長 → 副理 → 經理 → 協理；同一級可複選，任一位簽核就送下一級；沒勾的級別跳過</span></div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                {REVIEW_LEVEL_CHAIN.map(level => {
+                  const list = managers.filter(m => m.level === level);
+                  return (
+                    <div key={level} className="bg-white border border-violet-200 rounded-lg p-2">
+                      <div className="text-xs font-semibold text-violet-700 mb-0.5">{level}</div>
+                      {list.length === 0 && <div className="text-xs text-slate-400">（帳號與權限尚未設定）</div>}
+                      {list.map(m => (
+                        <label key={m.user} className="flex items-center gap-2 py-0.5 cursor-pointer">
+                          <input type="checkbox" checked={!!mgrPick[level]?.has(m.user)} className="w-4 h-4 accent-violet-600"
+                            onChange={e => setMgrPick(s => { const n = new Set(s[level] ?? []); e.target.checked ? n.add(m.user) : n.delete(m.user); return { ...s, [level]: n }; })} />
+                          {m.name}
+                        </label>
+                      ))}
+                      <div className="text-[10.5px] text-slate-400 mt-0.5">不勾＝跳過此級</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+          {talk && (talk.mgrs || []).length > 0 && (
+            <section className="px-6 py-4 text-sm space-y-1">
+              <h3 className="font-semibold text-slate-700">主管簽核</h3>
+              {talk.mgrs.map(m => (
+                <div key={m.level} className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-slate-400 w-10">{m.level}</span>
+                  <span className="text-slate-700">{m.at ? m.byName : m.names.map(n => n.name).join('、')}</span>
+                  <span className={`ml-auto text-xs ${m.at ? 'text-emerald-700' : m === reviewCurMgr(talk) ? 'text-violet-700 font-semibold' : 'text-slate-400'}`}>
+                    {m.at ? `✓ 已簽核 ${reviewFmtTime(m.at)}` : m === reviewCurMgr(talk) ? '◀ 目前輪到' : '前一級簽完才送達'}</span>
+                  {m.note && <div className="basis-full text-xs text-slate-500 pl-12">指示：{m.note}</div>}
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+        <div className="px-6 py-4 bg-[#FAF8F4] rounded-b-2xl flex items-center gap-2 flex-wrap">
+          <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm">{signable ? '取消' : '關閉'}</button>
+          {editable && <button onClick={saveDraft} disabled={busy} title="先打好內容，約談時再打開簽名（簽名不會暫存）"
+            className="px-4 py-2 border-2 border-sky-400 text-sky-700 rounded-lg text-sm font-semibold disabled:opacity-50">💾 {kind === 'fm' ? '儲存修改' : '暫存草稿'}</button>}
+          {mode === 'review' && talk && <button onClick={discard} className="text-xs text-slate-400 hover:text-red-600 underline">捨棄草稿</button>}
+          {signable && <span className="ml-auto text-xs text-slate-500">{hint}</span>}
+          {signable && has('w') && !allSigned && (
+            <button onClick={() => submit(false)} disabled={busy} className="px-4 py-2 border-2 border-amber-400 text-amber-700 rounded-lg text-sm font-semibold disabled:opacity-50">尚有人員不在場，先送待簽核</button>
+          )}
+          {signable && allSigned && (
+            <button onClick={() => submit(true)} disabled={busy || !mgrBody.length}
+              className="px-5 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold disabled:opacity-40">
+              {mgrBody.length ? `送呈簽核：${mgrBody.map(m => managers.filter(x => m.users.includes(x.user)).map(x => x.name).join('／')).join(' → ')}` : '送呈主管簽核'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>, document.body);
+}
+
+/** 主管簽核：只按確認簽核（可留指示），不電子簽名、沒有退回 */
+function ReviewApproveModal({ talk, records, me, onClose, reload }) {
+  const toast = useToast();
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const cur = reviewCurMgr(talk);
+  const mine = reviewMyTurn(talk, me.user);
+  const recs = records.filter(r => talk.recordIds.includes(r.id));
+  const c = talk.content || {};
+  const approve = async () => {
+    setBusy(true);
+    try {
+      const t = await reviewApi(`/api/review/talks/${talk.id}/approve`, { method: 'POST', body: { note } });
+      toast(t.status === 'done' ? '已簽核，全部主管簽核完成' : `已簽核，已送給下一級（${reviewCurMgr(t)?.level}）`, 'success');
+      await reload(); onClose();
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl my-8 shadow-xl">
+        <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
+          <h2 className="text-lg font-bold text-slate-800">主管簽核</h2>
+          <span className="text-sm text-slate-600">{talk.name}・<span className="font-mono text-xs">{talk.empNo}</span></span>
+          <ReviewUnitTags dept={talk.dept} grp={talk.grp} vendor={talk.vendor} />
+          <button onClick={onClose} className="ml-auto text-slate-400 text-xl">✕</button>
+        </div>
+        <div className="px-6 py-4 space-y-3 text-sm">
+          <div className="flex gap-2 flex-wrap text-xs">
+            {Object.keys(talk.signed || {}).map(p => (
+              <span key={p} className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">✓ {{ w: talk.kind === 'fm' ? '受談人員' : '理貨員', v: '廠商主管／幹部', h: '人力主管', r: '記錄人' }[p]}已簽</span>
+            ))}
+          </div>
+          <div className="border border-violet-200 rounded-lg p-3 space-y-1.5">
+            <div className="text-xs font-semibold text-violet-700">主管簽核（課長 → 副理 → 經理 → 協理，逐級送達）</div>
+            {talk.mgrs.map(m => (
+              <div key={m.level} className={`flex items-center gap-2 rounded px-1 ${m === cur ? 'bg-violet-100' : ''}`}>
+                <span className="text-xs text-slate-400 w-10">{m.level}</span>
+                <span className="font-medium text-slate-700">{m.at ? m.byName : m.names.map(n => n.name).join('、')}</span>
+                {!m.at && m.names.length > 1 && <span className="text-[10.5px] text-slate-400">（任一位）</span>}
+                <span className={`ml-auto text-xs ${m.at ? 'text-emerald-700' : m === cur ? 'font-semibold text-violet-700' : 'text-slate-400'}`}>
+                  {m.at ? `✓ 已簽核 ${reviewFmtTime(m.at)}` : m === cur ? '◀ 目前輪到' : '前一級簽完才送達'}</span>
+                {m.note && <div className="basis-full text-xs text-slate-500 pl-12">指示：{m.note}</div>}
+              </div>
+            ))}
+          </div>
+          {talk.kind === 'review' ? (
+            <>
+              {recs.map(r => (
+                <div key={r.id} className="flex gap-3 border border-slate-200 rounded-lg px-3 py-2">
+                  <span className="tabular-nums text-slate-500">{r.workDate}</span><span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
+                  <span className="flex-1 truncate">{reviewStrip(r.item.text)}</span><span className="font-bold text-rose-600">{r.points} 點</span>
+                </div>
+              ))}
+              <div className="grid grid-cols-[6rem_1fr] gap-y-1 text-slate-700">
+                <span className="text-slate-400">約談日期</span><span>{talk.talkDate}</span>
+                <span className="text-slate-400">約談事由</span><span>{c.reason || '—'}</span>
+                <span className="text-slate-400">約談內容</span><span className="whitespace-pre-wrap">{c.content || '—'}</span>
+                <span className="text-slate-400">結果</span><span>{c.result || '—'}</span>
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-[7rem_1fr] gap-y-1 text-slate-700 border border-violet-200 rounded-lg p-3">
+              <span className="text-slate-400">編號</span><span>{talk.no}</span>
+              <span className="text-slate-400">接談日期</span><span>{talk.talkDate}</span>
+              <span className="text-slate-400">主訴問題</span><span className="whitespace-pre-wrap">{c.issue || '—'}</span>
+              <span className="text-slate-400">約定／決議</span><span className="whitespace-pre-wrap">{c.resolution || '—'}</span>
+            </div>
+          )}
+          {mine ? (
+            <label className="block pt-2 border-t border-[#EFEBE3]">
+              <span className="block font-semibold text-slate-700 mb-1">主管指示 <span className="font-normal text-xs text-slate-400">（選填，會印在約談紀錄表上）</span></span>
+              <textarea rows={3} value={note} onChange={e => setNote(e.target.value)} placeholder="例：請廠商加強教育訓練，下月複查" className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2" />
+            </label>
+          ) : <p className="text-xs text-slate-500">目前輪到 {cur?.names.map(n => n.name).join('、')}（{cur?.level}）簽核，只有本人可以簽核。</p>}
+          <p className="text-xs text-slate-400">主管不需電子簽名，按下「確認簽核」即完成；系統會記錄簽核人、時間與指示。</p>
+        </div>
+        <div className="px-6 py-4 bg-[#FAF8F4] rounded-b-2xl flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 border border-[#DDD9D0] rounded-lg text-sm">{mine ? '取消' : '關閉'}</button>
+          {mine && <button onClick={approve} disabled={busy} className="px-5 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">✓ 確認簽核</button>}
+        </div>
+      </div>
+    </div>, document.body);
+}
+
+// ── ② 約談進度 ────────────────────────────────
+function ReviewTalkTab({ data, managers, consent, me, scopeOk, range, setRange, reload, openApprove }) {
+  const toast = useToast();
+  const [status, setStatus] = useState('todo');
+  const [kw, setKw] = useState('');
+  const [preset, setPreset] = useState('今年');
+  const [modal, setModal] = useState(null);       // { mode, talk, person, records }
+  const [voiding, setVoiding] = useState(null);   // { kind: 'record'|'talk', id, title, desc }
+  const canVoid = createdBy => me.admin || createdBy === me.user;
+
+  // 清單單位：待約談的人（合併同一人的評核紀錄＋草稿）、各張約談單、作廢紀錄
+  const units = useMemo(() => {
+    const out = [];
+    const byEmp = new Map();
+    for (const r of data.records) if (r.status === 'todo') {
+      if (!byEmp.has(r.empId)) byEmp.set(r.empId, []);
+      byEmp.get(r.empId).push(r);
+    }
+    for (const [empId, recs] of byEmp) {
+      const draft = data.talks.find(t => t.kind === 'review' && t.status === 'todo' && t.empId === empId) ?? null;
+      const p = recs[0];
+      out.push({ key: `p${empId}`, type: 'person', status: 'todo', empId, name: p.name, empNo: p.empNo, vendor: p.vendor, dept: p.dept, grp: p.grp,
+        recs, draft, dates: recs.map(r => r.workDate), search: [p.name, p.empNo, ...recs.map(r => r.item.code)] });
+    }
+    for (const t of data.talks) {
+      if (t.kind === 'review' && t.status === 'todo') continue;   // 草稿併在人員卡片
+      const date = t.talkDate || reviewYmd(new Date(t.createdAt));
+      out.push({ key: `t${t.id}`, type: t.status === 'void' ? 'voidTalk' : 'talk', status: t.status, talk: t, empId: t.empId, name: t.name, empNo: t.empNo,
+        vendor: t.vendor, dept: t.dept, grp: t.grp, dates: [date], search: [t.name, t.empNo, t.no] });
+    }
+    for (const r of data.records) if (r.status === 'void') {
+      out.push({ key: `v${r.id}`, type: 'voidRec', status: 'void', rec: r, empId: r.empId, name: r.name, empNo: r.empNo,
+        vendor: r.vendor, dept: r.dept, grp: r.grp, dates: [r.workDate], search: [r.name, r.empNo, r.item.code] });
+    }
+    return out;
+  }, [data]);
+  const inRange = u => u.dates.some(d => d >= range.from && d <= range.to);
+  const visible = units.filter(u => scopeOk(u) && inRange(u));
+  const q = kw.trim().toLowerCase();
+  const shown = visible.filter(u => (status === 'all' ? u.status !== 'void' : u.status === status)
+    && (!q || u.search.some(v => String(v ?? '').toLowerCase().includes(q))));
+  const countOf = st => visible.filter(u => st === 'all' ? u.status !== 'void' : u.status === st).length;
+  const setP = k => { const p = reviewPresets().find(x => x[0] === k); setPreset(k); setRange({ from: p[1], to: p[2] }); };
+  const recsOfTalk = t => data.records.filter(r => t.recordIds.includes(r.id));
+
+  const doVoid = async reason => {
+    try {
+      await reviewApi(voiding.kind === 'record' ? `/api/review/records/${voiding.id}/void` : `/api/review/talks/${voiding.id}/void`, { method: 'POST', body: { reason } });
+      toast('已作廢', 'success'); setVoiding(null); await reload();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  const voidBtn = (createdBy, onClick, cls) => canVoid(createdBy)
+    ? <button onClick={e => { e.preventDefault(); e.stopPropagation(); onClick(); }} className={`${cls} border border-rose-200 text-rose-600 hover:bg-rose-50`}>作廢</button>
+    : <span title={`只有開立人（${createdBy}）或管理員可以作廢`} className={`${cls} border border-slate-200 text-slate-300 cursor-not-allowed`}>作廢</span>;
+  const badge = st => <span className={`text-xs px-2 py-0.5 rounded-full border ${REVIEW_STATUS[st][1]}`}>{REVIEW_STATUS[st][0]}</span>;
+
+  const personCard = u => {
+    const total = u.recs.reduce((a, r) => a + r.points, 0);
+    return (
+      <div key={u.key} className="bg-white border border-[#DDD9D0] rounded-2xl overflow-hidden">
+        <div className="px-4 py-3 flex items-center gap-3 flex-wrap bg-[#FAF8F4]">
+          <span className="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">理貨評核</span>
+          <b className="text-slate-800">{u.name}</b><span className="font-mono text-xs text-slate-500">{u.empNo}</span>
+          <ReviewUnitTags dept={u.dept} grp={u.grp} vendor={u.vendor} />
+          {badge('todo')}
+          {u.draft && <span className="text-xs px-2 py-0.5 rounded-full border bg-sky-50 border-sky-200 text-sky-700">📝 草稿 {reviewFmtTime(u.draft.updatedAt).slice(11)}</span>}
+          <span className="ml-auto text-sm text-slate-600">{u.recs.length} 筆・共 <b className="text-rose-600">{total}</b> 點</span>
+          <button onClick={() => setModal({ mode: 'review', talk: u.draft, person: u, records: u.recs })}
+            className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white">{u.draft ? '繼續約談' : '約談'}（{u.recs.length} 筆）</button>
+        </div>
+        {u.recs.map(r => (
+          <details key={r.id} className="border-t border-[#EFEBE3] group">
+            <summary className="px-4 py-2 flex items-center gap-3 text-sm cursor-pointer list-none">
+              <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
+              <span className="text-slate-500 tabular-nums w-24">{r.workDate}</span>
+              <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
+              <span className="flex-1 truncate text-slate-700">{reviewStrip(r.item.text)}</span>
+              <span className="font-bold text-rose-600 w-14 text-right">{r.points} 點</span>
+              <span className="text-xs text-slate-500 w-20 text-right">{reviewNthLabel(r.nth)}</span>
+              {voidBtn(r.createdBy, () => setVoiding({ kind: 'record', id: r.id, title: `理貨評核 ${r.workDate} ${r.item.code}（${r.points} 點）`, desc: `${r.name}・${reviewStrip(r.item.text)}` }), 'text-xs px-2 py-0.5 rounded')}
+            </summary>
+            <div className="px-12 pb-3 text-sm space-y-1">
+              <div className="text-slate-700">{reviewStrip(r.item.text)}</div>
+              <div className="text-xs text-slate-500">獎懲方式：<span className="text-slate-700">{r.penalty || '—'}</span></div>
+              <div className="text-xs text-slate-400">開立：{r.extra?.by || r.createdBy}・{reviewFmtTime(r.createdAt)}{r.extra?.note ? `・備註：${r.extra.note}` : ''}</div>
+            </div>
+          </details>
+        ))}
+      </div>
+    );
+  };
+  const talkCard = u => {
+    const t = u.talk, fm = t.kind === 'fm';
+    const recs = fm ? [] : recsOfTalk(t);
+    const mine = reviewMyTurn(t, me.user);
+    const action = t.status === 'todo' ? '修改／簽名' : t.status === 'pending' ? '補簽' : t.status === 'mgr' ? (mine ? `${reviewCurMgr(t).level}簽核` : '檢視') : '檢視';
+    const open = () => {
+      if (t.status === 'mgr') openApprove(t);
+      else setModal({ mode: t.status === 'todo' ? 'fm' : t.status === 'pending' ? 'cosign' : 'view', talk: t, person: t, records: recs });
+    };
+    return (
+      <div key={u.key} className={`bg-white border rounded-2xl overflow-hidden ${fm ? 'border-violet-200' : 'border-[#DDD9D0]'}`}>
+        <div className={`px-4 py-3 flex items-center gap-3 flex-wrap ${fm ? 'bg-violet-50/50' : 'bg-[#FAF8F4]'}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded text-white ${fm ? 'bg-violet-600' : 'bg-blue-600'}`}>{fm ? 'FM-193 接談紀錄' : '評核約談'}</span>
+          <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
+          <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
+          {badge(t.status)}
+          <span className="ml-auto text-xs text-slate-500">{fm ? `${t.no}・接談 ${t.talkDate || '—'}` : `約談 ${t.talkDate}・${recs.length} 筆・${recs.reduce((a, r) => a + r.points, 0)} 點`}</span>
+          {t.status === 'mgr' && <span className="text-xs text-violet-700">送呈 {reviewMgrText(t)}</span>}
+          {fm && t.status === 'todo' && voidBtn(t.createdBy, () => setVoiding({ kind: 'talk', id: t.id, title: `FM-193 接談紀錄 ${t.no}`, desc: `${t.name}・${(t.content.issue || '').slice(0, 40)}` }), 'px-3 py-1.5 rounded-lg text-sm')}
+          <button onClick={open} className={`px-4 py-1.5 rounded-lg text-sm font-semibold ${t.status === 'done' || (t.status === 'mgr' && !mine)
+            ? 'border border-slate-300 text-slate-600' : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white'}`}>{action}</button>
+        </div>
+        <details className="border-t border-[#EFEBE3] group">
+          <summary className="px-4 py-2 flex items-center gap-3 text-sm cursor-pointer list-none">
+            <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
+            <span className="flex-1 truncate text-slate-700">{fm ? `主訴問題：${t.content.issue || '—'}` : recs.map(r => `${r.item.code} ${reviewStrip(r.item.text)}`).join('；')}</span>
+          </summary>
+          <div className="px-12 pb-3 text-sm space-y-1 text-slate-700">
+            {fm ? <><div className="whitespace-pre-wrap">{t.content.issue}</div><div className="text-xs text-slate-500">約定／決議事項：{t.content.resolution || '—'}</div></>
+              : recs.map(r => <div key={r.id} className="text-xs"><span className="font-mono font-bold text-blue-700">{r.item.code}</span> {reviewStrip(r.item.text)}・{r.points} 點・{reviewNthLabel(r.nth)}</div>)}
+          </div>
+        </details>
+      </div>
+    );
+  };
+  const voidCard = u => {
+    const r = u.rec, t = u.talk, info = (r ?? t).voidInfo || {};
+    return (
+      <div key={u.key} className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-500">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500 text-white">已作廢</span>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${t ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>{t ? 'FM-193' : '理貨評核'}</span>
+          <b className="text-slate-600 line-through">{u.name}</b><span className="font-mono text-xs">{u.empNo}</span>
+          <ReviewUnitTags dept={u.dept} grp={u.grp} vendor={u.vendor} />
+          <span className="line-through">{t ? t.no : `${r.workDate} ${r.item.code} ${r.points} 點`}</span>
+          <span className="ml-auto text-xs">{info.byName || info.by}・{reviewFmtTime(info.at)}</span>
+        </div>
+        <div className="mt-1 text-xs">作廢原因：<span className="text-slate-700">{info.reason}</span></div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap text-sm">
+          <span className="font-semibold text-slate-700">期間</span>
+          <input type="date" value={range.from} onChange={e => { setPreset(''); setRange({ ...range, from: e.target.value }); }} className="border border-[#DDD9D0] rounded-lg px-2 py-1" />
+          <span className="text-slate-400">～</span>
+          <input type="date" value={range.to} onChange={e => { setPreset(''); setRange({ ...range, to: e.target.value }); }} className="border border-[#DDD9D0] rounded-lg px-2 py-1" />
+          {reviewPresets().map(([k]) => (
+            <button key={k} onClick={() => setP(k)} className={`px-3 py-1 rounded-full border text-sm ${preset === k ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>{k}</button>
+          ))}
+          <span className="text-[11px] text-slate-400">倉別、課別、組別、廠商依上方篩選列</span>
+          <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、項目代號、編號" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-56" />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap border-t border-[#EFEBE3] pt-2">
+          <span className="text-xs font-semibold text-slate-500">約談流程</span>
+          <span className="text-[11px] text-slate-400">點步驟可切換清單</span>
+          {[['all', '全部'], ['void', '已作廢']].map(([k, l]) => (
+            <button key={k} onClick={() => setStatus(k)} className={`px-3 py-1 rounded-full text-sm border ${status === k
+              ? (k === 'void' ? 'bg-slate-600 text-white border-slate-600' : 'bg-blue-600 text-white border-blue-600') : 'bg-white text-slate-600 border-slate-200'}`}>{l} <b>{countOf(k)}</b></button>
+          ))}
+        </div>
+        <div className="flex items-stretch gap-1 text-xs overflow-x-auto">
+          {REVIEW_FLOW.map(([t, sub, st], i) => (
+            <React.Fragment key={t}>
+              <button disabled={!st} onClick={() => st && setStatus(st)}
+                className={`flex-1 min-w-[6.5rem] rounded-lg border px-2 py-1.5 text-left ${status === st ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50'} ${st ? 'hover:border-blue-400' : 'cursor-default'}`}>
+                <div className={`font-semibold ${status === st ? 'text-blue-700' : 'text-slate-700'}`}>{i < 5 ? `${i + 1}. ` : ''}{t}</div>
+                <div className="text-[10.5px] text-slate-400">{sub}{st ? <>　<b className="text-slate-600">{countOf(st)}</b></> : null}</div>
+              </button>
+              {i < REVIEW_FLOW.length - 1 && <span className="self-center text-slate-300">›</span>}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+
+      {!data.loaded ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
+        : shown.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">此條件下沒有紀錄</div>
+        : <div className="space-y-3">{shown.map(u => u.type === 'person' ? personCard(u) : u.type === 'talk' ? talkCard(u) : voidCard(u))}</div>}
+
+      {modal && <ReviewTalkModal {...modal} managers={managers} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
+      {voiding && <ReviewVoidModal title={voiding.title} desc={voiding.desc} onClose={() => setVoiding(null)} onConfirm={doVoid} />}
+    </div>
+  );
+}
+
+/** 待我簽核：輪到登入者這一級的約談單，置頂顯示 */
+function ReviewInbox({ talks, me, onOpen }) {
+  const mine = talks.filter(t => reviewMyTurn(t, me.user));
+  if (!mine.length) return null;
+  return (
+    <div className="bg-violet-50 border-2 border-violet-300 rounded-2xl px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <b className="text-violet-800">📥 待我簽核</b>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-600 text-white">{mine.length} 件</span>
+        <span className="text-[11px] text-slate-500">同一級多位時，任一位簽核即送下一級</span>
+      </div>
+      {mine.map(t => (
+        <div key={t.id} className="flex items-center gap-3 flex-wrap bg-white border border-violet-200 rounded-lg px-3 py-2 text-sm">
+          <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193' : '評核約談'}</span>
+          <b className="text-slate-800">{t.name}</b>
+          <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
+          <span className="text-xs text-slate-500">{t.kind === 'fm' ? t.no : `約談 ${t.talkDate}`}</span>
+          <span className="ml-auto text-xs text-violet-700">目前：{reviewCurMgr(t)?.level}</span>
+          <button onClick={() => onOpen(t)} className="px-3 py-1 rounded-lg bg-violet-600 text-white text-xs font-semibold">簽核</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReviewPage() {
-  const [tab, setTab] = useState('items');
+  const {
+    currentUser, employees, warehouses,
+    selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor,
+  } = useApp();
+  const toast = useToast();
+  const [tab, setTab] = useState('talk');
+  const [range, setRange] = useState(() => { const p = reviewPresets()[2]; return { from: p[1], to: p[2] }; });
+  const [data, setData] = useState({ records: [], talks: [], loaded: false });
+  const [managers, setManagers] = useState([]);
+  const [cfg, setCfg] = useState(null);
+  const [approving, setApproving] = useState(null);
+  const me = useMemo(() => ({
+    user: currentUser?.username ?? '', name: currentUser?.name || currentUser?.username || '',
+    admin: currentUser?.role === ROLES.ADMIN,
+  }), [currentUser]);
+
+  const reload = useCallback(async () => {
+    try {
+      const d = await reviewApi(`/api/review/list?from=${range.from}&to=${range.to}`);
+      setData({ ...d, loaded: true });
+    } catch (e) { toast(e.message, 'error'); }
+  }, [range.from, range.to, toast]);
+  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    reviewApi('/api/review/managers').then(setManagers).catch(() => {});
+    reviewApi('/api/review/items').then(setCfg).catch(() => setCfg({}));
+  }, []);
+  const items = cfg?.version?.items ?? REVIEW_ITEMS_115;
+  const consent = useMemo(() => ({ ...REVIEW_CONSENT_DEFAULT, ...(cfg?.consent ?? {}) }), [cfg]);
+
+  // 上方篩選列（倉別／課別／組別／作業區／廠商）：以人員清冊目前的資料判斷，清冊找不到時用開立當時的快照
+  const empMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
+  const scopeOk = useCallback(u => {
+    const e = empMap.get(u.empId) ?? { id: u.empId, dept: u.dept, group: u.grp, vendor: u.vendor };
+    if (selectedVendor && e.vendor !== selectedVendor) return false;
+    return filterByScope([e], warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea).length > 0;
+  }, [empMap, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor]);
+  const emps = useMemo(() => {
+    const now = new Date(), dk = dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    let list = employees.filter(e => e.vendor && String(e.vendor).trim() && activeOn(e, dk));
+    list = filterByScope(list, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea);
+    if (selectedVendor) list = list.filter(e => e.vendor === selectedVendor);
+    return [...list].sort((a, b) => vendorRank(a.vendor) - vendorRank(b.vendor) || (a.name ?? '').localeCompare(b.name ?? '', 'zh-Hant'));
+  }, [employees, warehouses, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor]);
+
   return (
     <div className="p-6 space-y-4 max-w-6xl">
       <h2 className="text-xl font-bold text-slate-800">理貨評核紀錄</h2>
+      <ReviewInbox talks={data.talks} me={me} onOpen={setApproving} />
       <div className="flex gap-1 border-b border-[#DDD9D0] text-sm overflow-x-auto">
         {REVIEW_TABS.map(t => {
           const ready = REVIEW_READY.includes(t.key);
@@ -11695,7 +12705,11 @@ function ReviewPage() {
           );
         })}
       </div>
+      {tab === 'new' && <ReviewNewTab items={items} records={data.records} managers={managers} emps={emps} me={me} reload={reload} />}
+      {tab === 'talk' && <ReviewTalkTab data={data} managers={managers} consent={consent} me={me} scopeOk={scopeOk}
+        range={range} setRange={setRange} reload={reload} openApprove={setApproving} />}
       {tab === 'items' && <ReviewItemsTab />}
+      {approving && <ReviewApproveModal talk={approving} records={data.records} me={me} onClose={() => setApproving(null)} reload={reload} />}
     </div>
   );
 }

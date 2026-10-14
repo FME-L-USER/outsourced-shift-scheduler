@@ -166,6 +166,78 @@ async function initDB() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // 理貨評核紀錄：開立當下快照評核項目（item），年度改版不影響舊紀錄。
+  // status：todo＝待約談、talk＝已納入約談單、void＝作廢
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_records (
+      id          BIGSERIAL   PRIMARY KEY,
+      emp_id      TEXT        NOT NULL,
+      emp_no      TEXT        NOT NULL DEFAULT '',
+      emp_name    TEXT        NOT NULL DEFAULT '',
+      vendor      TEXT        NOT NULL DEFAULT '',
+      dept        TEXT        NOT NULL DEFAULT '',
+      grp         TEXT        NOT NULL DEFAULT '',
+      work_date   DATE        NOT NULL,
+      item        JSONB       NOT NULL,
+      count       INTEGER     NOT NULL DEFAULT 1,
+      points      INTEGER     NOT NULL DEFAULT 0,
+      zero_points BOOLEAN     NOT NULL DEFAULT false,
+      nth         INTEGER     NOT NULL DEFAULT 1,
+      penalty     TEXT        NOT NULL DEFAULT '',
+      extra       JSONB       NOT NULL DEFAULT '{}',
+      status      TEXT        NOT NULL DEFAULT 'todo',
+      void_info   JSONB,
+      created_by  TEXT        NOT NULL DEFAULT '',
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS review_records_emp ON review_records (emp_id, work_date)`);
+  // 約談單：kind＝review（理貨評核約談）| fm（FM-193 從業人員接談紀錄表）
+  // status：todo＝待約談（評核約談的草稿／FM-193 已開立）、pending＝待簽核（有人不在場）、
+  //         mgr＝待主管簽核、done＝已完成、void＝作廢
+  // mgrs：逐級送呈 [{ level, names:[{user,name}], by, byName, at, note }]，課長 → 協理
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_talks (
+      id          BIGSERIAL   PRIMARY KEY,
+      kind        TEXT        NOT NULL,
+      no          TEXT        NOT NULL DEFAULT '',
+      emp_id      TEXT        NOT NULL,
+      emp_no      TEXT        NOT NULL DEFAULT '',
+      emp_name    TEXT        NOT NULL DEFAULT '',
+      vendor      TEXT        NOT NULL DEFAULT '',
+      dept        TEXT        NOT NULL DEFAULT '',
+      grp         TEXT        NOT NULL DEFAULT '',
+      talk_date   DATE,
+      content     JSONB       NOT NULL DEFAULT '{}',
+      record_ids  BIGINT[]    NOT NULL DEFAULT '{}',
+      status      TEXT        NOT NULL DEFAULT 'todo',
+      signed      JSONB       NOT NULL DEFAULT '{}',
+      mgrs        JSONB       NOT NULL DEFAULT '[]',
+      void_info   JSONB,
+      score_month TEXT        NOT NULL DEFAULT '',
+      created_by  TEXT        NOT NULL DEFAULT '',
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // FM-193 編號不重複；同一人同時只能有一份評核約談草稿（兩人同時開單也不會重複）
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_talks_no ON review_talks (no) WHERE no <> ''`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_talks_draft ON review_talks (emp_id) WHERE kind = 'review' AND status = 'todo'`);
+  // 電子簽名影像與簽署當下的聲明全文（聲明日後修改，文件仍呈現當時內容）。
+  // party：w＝受約談人員、v＝廠商主管／幹部、h＝協力商人力主管、r＝記錄人
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_signs (
+      talk_id     BIGINT      NOT NULL,
+      party       TEXT        NOT NULL,
+      image       TEXT        NOT NULL,
+      consent     TEXT        NOT NULL DEFAULT '',
+      signer_name TEXT        NOT NULL DEFAULT '',
+      signed_by   TEXT        NOT NULL DEFAULT '',
+      ip          TEXT,
+      signed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (talk_id, party)
+    )
+  `);
   // 理貨評核操作紀錄：解鎖（含失敗）、修改項目、修改聲明、變更密碼
   await pool.query(`
     CREATE TABLE IF NOT EXISTS review_audit (
@@ -2695,6 +2767,371 @@ app.put('/api/review/password', requireAuth, requireAdmin, requireClientVersion,
     console.error('review/password error:', e.message);
     res.status(500).json({ error: '更新密碼失敗' });
   }
+});
+
+// ── 理貨評核：開立、約談、簽名、逐級送呈主管 ─────────────────
+// 主管簽核順序（由低到高）；未選的級別直接跳過，同一級多位時任一位簽核即送下一級
+const REVIEW_CHAIN = ['課長', '副理', '經理', '協理'];
+const REVIEW_CONSENT_FALLBACK = {
+  worker: '本人已詳閱並充分瞭解本次約談紀錄及評核內容，確認所載之違規事實無誤。本人係基於自由意志進行確認，未受任何脅迫，並同意以電子簽名方式簽署本文件，知悉其依法與實體親筆簽名具同等效力。',
+  vendor: '本人已充分閱覽本紀錄，並知悉上述受約談人員之違規事實及公司相關之處置。本人同意以電子簽名方式簽署，確認上方電子簽名為本人親自簽署，且瞭解其依法具備正式簽署之效力。',
+  recorder: '本人確認以上接談紀錄係依接談當時之陳述如實記錄，並同意以電子簽名方式簽署，瞭解其依法具備正式簽署之效力。',
+};
+const SIGN_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+const SIGN_MAX = 400 * 1024;
+const isYmd = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ''));
+const twToday = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+const reqIp = req => req.headers['x-forwarded-for']?.split(',')[0] ?? req.socket.remoteAddress ?? '';
+
+function cleanEmp(b) {
+  const empId = clip(b?.empId, 64);
+  if (!empId) return null;
+  return { empId, empNo: clip(b.empNo, 30), name: clip(b.name, 50), vendor: clip(b.vendor, 50), dept: clip(b.dept, 50), grp: clip(b.grp, 50) };
+}
+function cleanTalkContent(kind, c) {
+  c = c && typeof c === 'object' ? c : {};
+  if (kind === 'fm') {
+    return {
+      fmKind: c.fmKind === '非初次接談' ? '非初次接談' : '初次接談', ref: clip(c.ref, 60), title: clip(c.title, 40),
+      place: clip(c.place, 60), talker: clip(c.talker, 40), recorder: clip(c.recorder, 40),
+      issue: String(c.issue ?? '').slice(0, 3000), resolution: String(c.resolution ?? '').slice(0, 3000),
+    };
+  }
+  return { talker: clip(c.talker, 40), reason: clip(c.reason, 100), content: String(c.content ?? '').slice(0, 3000), result: String(c.result ?? '').slice(0, 1000) };
+}
+function talkRow(t) {
+  return {
+    id: Number(t.id), kind: t.kind, no: t.no, empId: t.emp_id, empNo: t.emp_no, name: t.emp_name, vendor: t.vendor,
+    dept: t.dept, grp: t.grp, talkDate: t.talk_date ? fmtYmd(t.talk_date) : '', content: t.content, recordIds: (t.record_ids || []).map(Number),
+    status: t.status, signed: t.signed, mgrs: t.mgrs, voidInfo: t.void_info, scoreMonth: t.score_month,
+    createdBy: t.created_by, createdAt: t.created_at, updatedAt: t.updated_at,
+  };
+}
+function recordRow(r) {
+  return {
+    id: Number(r.id), empId: r.emp_id, empNo: r.emp_no, name: r.emp_name, vendor: r.vendor, dept: r.dept, grp: r.grp,
+    workDate: fmtYmd(r.work_date), item: r.item, count: r.count, points: r.points, zeroPoints: r.zero_points, nth: r.nth,
+    penalty: r.penalty, extra: r.extra, status: r.status, voidInfo: r.void_info, createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+function fmtYmd(d) {
+  if (typeof d === 'string') return d.slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+async function reviewDisplayName(username) {
+  const { rows } = await pool.query('SELECT display_name FROM users WHERE username=$1', [username]);
+  return rows[0]?.display_name || username;
+}
+
+// 可送呈的主管與經辦名單（依帳號與權限的主管級別）
+app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT username, display_name, mgr_level FROM users WHERE mgr_level <> '' AND approved = true ORDER BY username`);
+  res.json(rows.map(u => ({ user: u.username, name: u.display_name || u.username, level: u.mgr_level })));
+});
+
+// 清單：未結案的全部列出；已完成／作廢的依期間
+app.get('/api/review/list', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const from = isYmd(req.query.from) ? req.query.from : '1900-01-01';
+  const to   = isYmd(req.query.to)   ? req.query.to   : '2999-12-31';
+  try {
+    const { rows: recs } = await pool.query(
+      `SELECT * FROM review_records WHERE status = 'todo' OR work_date BETWEEN $1 AND $2 ORDER BY work_date, id`, [from, to]);
+    const { rows: talks } = await pool.query(
+      `SELECT * FROM review_talks WHERE status IN ('todo','pending','mgr') OR talk_date BETWEEN $1 AND $2
+         OR (talk_date IS NULL AND created_at::date BETWEEN $1 AND $2) ORDER BY id`, [from, to]);
+    // 已結案約單所處理的紀錄也要一併帶出（紀錄的作業日可能早於期間）
+    const have = new Set(recs.map(r => Number(r.id)));
+    const need = [...new Set(talks.flatMap(t => (t.record_ids || []).map(Number)))].filter(id => !have.has(id));
+    if (need.length) {
+      const { rows } = await pool.query('SELECT * FROM review_records WHERE id = ANY($1::bigint[])', [need]);
+      recs.push(...rows);
+    }
+    res.json({ records: recs.map(recordRow), talks: talks.map(talkRow) });
+  } catch (e) {
+    console.error('review/list error:', e.message);
+    res.status(500).json({ error: '讀取理貨評核資料失敗' });
+  }
+});
+
+// ① 開立理貨評核
+app.post('/api/review/records', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const b = req.body ?? {};
+  const emp = cleanEmp(b);
+  if (!emp) return res.status(400).json({ error: '請選擇人員' });
+  if (!isYmd(b.workDate)) return res.status(400).json({ error: '作業日格式不正確' });
+  const item = cleanItems([b.item])?.[0];
+  if (!item) return res.status(400).json({ error: '請選擇評核項目' });
+  const count = Math.min(99, Math.max(1, Number(b.count) || 1));
+  const zero = !!b.zeroPoints;
+  try {
+    // 以伺服器現行版本為準，避免畫面停留太久用到已改版的項目
+    const { rows: v } = await pool.query('SELECT items FROM review_item_versions ORDER BY id DESC LIMIT 1');
+    if (v[0]) {
+      const cur = (v[0].items || []).find(x => x.code === item.code);
+      if (!cur) return res.status(409).json({ error: `評核項目 ${item.code} 已不在現行版本，請重新整理後再選` });
+      Object.assign(item, cur);
+    }
+    const ptNum = Number(String(item.pt).match(/\d+/)?.[0] ?? 0);
+    const points = zero ? 0 : ptNum * count;
+    // 第幾次：同一人、同一項目、同一年度（作業日）已開立且未作廢的次數 + 1
+    const { rows: c } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM review_records
+        WHERE emp_id=$1 AND item->>'code'=$2 AND status <> 'void' AND EXTRACT(YEAR FROM work_date) = $3`,
+      [emp.empId, item.code, Number(b.workDate.slice(0, 4))]);
+    const nth = c[0].n + 1;
+    const penalty = String(b.penalty ?? '').slice(0, 1000) || item.a[Math.min(nth, 3) - 1] || '';
+    const ex = b.extra && typeof b.extra === 'object' ? b.extra : {};
+    const extra = { absType: clip(ex.absType, 40), time: clip(ex.time, 20), note: String(ex.note ?? '').slice(0, 500), by: clip(ex.by, 40) };
+    const { rows } = await pool.query(
+      `INSERT INTO review_records (emp_id, emp_no, emp_name, vendor, dept, grp, work_date, item, count, points, zero_points, nth, penalty, extra, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, b.workDate, JSON.stringify(item), count, points, zero, nth, penalty, JSON.stringify(extra), req.user.username]);
+    await reviewAudit(req.user.username, 'record-create', { id: Number(rows[0].id), emp: emp.empNo, code: item.code, points });
+    res.json(recordRow(rows[0]));
+  } catch (e) {
+    console.error('review/records error:', e.message);
+    res.status(500).json({ error: '開立評核失敗' });
+  }
+});
+
+// 作廢：只限待約談（尚未約談），且只有開立人或管理員可以作廢
+async function canVoid(req, createdBy) {
+  return req.user.role === 'admin' || createdBy === req.user.username;
+}
+app.post('/api/review/records/:id/void', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const reason = clip(req.body?.reason, 300);
+  if (!reason) return res.status(400).json({ error: '請填寫作廢原因' });
+  // 交易進行中不可再用 pool 取第二條連線（連線用盡時會互等卡住），需要的資料先查好
+  const byName = await reviewDisplayName(req.user.username);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM review_records WHERE id=$1 FOR UPDATE', [Number(req.params.id) || 0]);
+    const r = rows[0];
+    if (!r) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這筆評核紀錄' }); }
+    if (r.status !== 'todo') { await client.query('ROLLBACK'); return res.status(409).json({ error: '已開始約談，不能作廢' }); }
+    if (!await canVoid(req, r.created_by)) { await client.query('ROLLBACK'); return res.status(403).json({ error: '只有開立人或管理員可以作廢' }); }
+    const info = { reason, by: req.user.username, byName, at: new Date().toISOString() };
+    const { rows: up } = await client.query(`UPDATE review_records SET status='void', void_info=$2 WHERE id=$1 RETURNING *`, [r.id, info]);
+    // 從草稿約談單移除
+    await client.query(`UPDATE review_talks SET record_ids = array_remove(record_ids, $1::bigint), updated_at=NOW() WHERE status='todo' AND kind='review' AND $1::bigint = ANY(record_ids)`, [r.id]);
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, 'record-void', { id: Number(r.id), reason });   // 釋放連線後才寫入，不等待
+    res.json(recordRow(up[0]));
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('review/records void error:', e.message);
+    res.status(500).json({ error: '作廢失敗' });
+  } finally { client.release(); }
+});
+
+// 建立約談單：fm＝開立 FM-193；review＝評核約談的草稿（暫存草稿）
+app.post('/api/review/talks', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const b = req.body ?? {};
+  const kind = b.kind === 'fm' ? 'fm' : 'review';
+  const emp = cleanEmp(b);
+  if (!emp) return res.status(400).json({ error: '請選擇人員' });
+  const content = cleanTalkContent(kind, b.content);
+  const talkDate = isYmd(b.talkDate) ? b.talkDate : null;
+  const recordIds = kind === 'review' ? [...new Set((Array.isArray(b.recordIds) ? b.recordIds : []).map(Number).filter(Boolean))] : [];
+  if (kind === 'fm' && !content.issue.trim()) return res.status(400).json({ error: '請填寫主訴問題／事件內容' });
+  try {
+    if (kind === 'review') {
+      const { rows: dup } = await pool.query(`SELECT id FROM review_talks WHERE kind='review' AND status='todo' AND emp_id=$1`, [emp.empId]);
+      if (dup[0]) return res.status(409).json({ error: '此人已有約談草稿，請重新整理', id: Number(dup[0].id) });
+    }
+    if (kind === 'fm' && !content.recorder) content.recorder = await reviewDisplayName(req.user.username);
+    let rows;
+    for (let attempt = 0; ; attempt++) {
+      let no = '';
+      if (kind === 'fm') {
+        // 編號：FM193-民國年月日-當日序號；同時開單撞號時重取
+        const d = twToday(), roc = `${Number(d.slice(0, 4)) - 1911}${d.slice(5, 7)}${d.slice(8, 10)}`;
+        const { rows: c } = await pool.query(`SELECT COUNT(*)::int AS n FROM review_talks WHERE kind='fm' AND no LIKE $1`, [`FM193-${roc}-%`]);
+        no = `FM193-${roc}-${String(c[0].n + 1 + attempt).padStart(3, '0')}`;
+      }
+      try {
+        ({ rows } = await pool.query(
+          `INSERT INTO review_talks (kind, no, emp_id, emp_no, emp_name, vendor, dept, grp, talk_date, content, record_ids, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+          [kind, no, emp.empId, emp.empNo, emp.name, emp.vendor, emp.dept, emp.grp, talkDate, content, recordIds, req.user.username]));
+        break;
+      } catch (e) {
+        if (e.code !== '23505') throw e;
+        if (kind === 'review') return res.status(409).json({ error: '此人已有約談草稿，請重新整理' });
+        if (attempt >= 4) throw e;
+      }
+    }
+    await reviewAudit(req.user.username, 'talk-create', { id: Number(rows[0].id), kind, no: rows[0].no });
+    res.json(talkRow(rows[0]));
+  } catch (e) {
+    console.error('review/talks create error:', e.message);
+    res.status(500).json({ error: '建立約談單失敗' });
+  }
+});
+
+// 修改待約談的約談單（評核約談草稿、FM-193 內容）
+app.put('/api/review/talks/:id', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const b = req.body ?? {};
+  try {
+    const { rows } = await pool.query('SELECT * FROM review_talks WHERE id=$1', [Number(req.params.id) || 0]);
+    const t = rows[0];
+    if (!t) return res.status(404).json({ error: '找不到這張約談單' });
+    if (t.status !== 'todo') return res.status(409).json({ error: '已送出簽名，內容已鎖定' });
+    const content = cleanTalkContent(t.kind, { ...t.content, ...(b.content || {}) });
+    const talkDate = isYmd(b.talkDate) ? b.talkDate : t.talk_date;
+    const recordIds = t.kind === 'review' && Array.isArray(b.recordIds) ? [...new Set(b.recordIds.map(Number).filter(Boolean))] : (t.record_ids || []);
+    const { rows: up } = await pool.query(
+      `UPDATE review_talks SET content=$2, talk_date=$3, record_ids=$4, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [t.id, content, talkDate, recordIds]);
+    res.json(talkRow(up[0]));
+  } catch (e) {
+    console.error('review/talks update error:', e.message);
+    res.status(500).json({ error: '儲存失敗' });
+  }
+});
+
+// 捨棄評核約談草稿（紀錄回到待約談）
+app.delete('/api/review/talks/:id', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { rowCount } = await pool.query(`DELETE FROM review_talks WHERE id=$1 AND kind='review' AND status='todo'`, [Number(req.params.id) || 0]);
+  if (!rowCount) return res.status(409).json({ error: '只有尚未送出的草稿可以捨棄' });
+  res.json({ ok: true });
+});
+
+// 作廢 FM-193（待約談時）
+app.post('/api/review/talks/:id/void', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const reason = clip(req.body?.reason, 300);
+  if (!reason) return res.status(400).json({ error: '請填寫作廢原因' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM review_talks WHERE id=$1', [Number(req.params.id) || 0]);
+    const t = rows[0];
+    if (!t || t.kind !== 'fm') return res.status(404).json({ error: '找不到這張接談紀錄' });
+    if (t.status !== 'todo') return res.status(409).json({ error: '已開始簽名，不能作廢' });
+    if (!await canVoid(req, t.created_by)) return res.status(403).json({ error: '只有開立人或管理員可以作廢' });
+    const info = { reason, by: req.user.username, byName: await reviewDisplayName(req.user.username), at: new Date().toISOString() };
+    const { rows: up } = await pool.query(`UPDATE review_talks SET status='void', void_info=$2, updated_at=NOW() WHERE id=$1 AND status='todo' RETURNING *`, [t.id, info]);
+    if (!up[0]) return res.status(409).json({ error: '狀態已變更，請重新整理' });
+    await reviewAudit(req.user.username, 'talk-void', { id: Number(t.id), reason });
+    res.json(talkRow(up[0]));
+  } catch (e) {
+    console.error('review/talks void error:', e.message);
+    res.status(500).json({ error: '作廢失敗' });
+  }
+});
+
+// 簽名送出：首次簽名（todo）或補簽（pending）。全部簽完須送呈主管，有人不在場則進入待簽核。
+// body: { content, talkDate, recordIds, signs: { w|v|h|r: { image, name } }, hSame, mgrs: [{ level, users: [username] }] }
+app.post('/api/review/talks/:id/sign', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const b = req.body ?? {};
+  const cfg = await reviewConfig('consent');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM review_talks WHERE id=$1 FOR UPDATE', [Number(req.params.id) || 0]);
+    const t = rows[0];
+    if (!t) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這張約談單' }); }
+    if (!['todo', 'pending'].includes(t.status)) { await client.query('ROLLBACK'); return res.status(409).json({ error: '這張約談單已送出，請重新整理' }); }
+    const parties = t.kind === 'fm' ? ['w', 'v', 'h', 'r'] : ['w', 'v'];
+    const signed = { ...(t.signed || {}) };
+    const signs = b.signs && typeof b.signs === 'object' ? b.signs : {};
+    let content = t.content, talkDate = t.talk_date, recordIds = (t.record_ids || []).map(Number);
+    if (t.status === 'todo') {
+      content = cleanTalkContent(t.kind, { ...t.content, ...(b.content || {}) });
+      if (isYmd(b.talkDate)) talkDate = b.talkDate;
+      if (t.kind === 'review') {
+        recordIds = [...new Set((Array.isArray(b.recordIds) ? b.recordIds : recordIds).map(Number).filter(Boolean))];
+        if (!recordIds.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選本次處理的評核紀錄' }); }
+        const { rows: rs } = await client.query(`SELECT id, emp_id, status FROM review_records WHERE id = ANY($1::bigint[]) FOR UPDATE`, [recordIds]);
+        if (rs.length !== recordIds.length || rs.some(r => r.emp_id !== t.emp_id || r.status !== 'todo')) {
+          await client.query('ROLLBACK'); return res.status(409).json({ error: '評核紀錄已變更（可能已作廢或已約談），請重新整理' });
+        }
+      }
+      if (!talkDate) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請填寫約談日期' }); }
+    }
+    const consent = { ...REVIEW_CONSENT_FALLBACK, ...(cfg?.value || {}) };
+    const consentOf = { w: consent.worker, v: consent.vendor, h: consent.vendor, r: consent.recorder };
+    const at = new Date().toISOString();
+    for (const party of parties) {
+      if (signed[party]) continue;                 // 已簽的不可覆寫
+      if (party === 'h' && b.hSame && (signed.v || signs.v)) { signed.h = { same: true, at }; continue; }
+      const s = signs[party];
+      if (!s?.image) continue;
+      if (!SIGN_RE.test(s.image) || s.image.length > SIGN_MAX) { await client.query('ROLLBACK'); return res.status(400).json({ error: '簽名影像格式不正確' }); }
+      const name = clip(s.name, 40);
+      await client.query(
+        `INSERT INTO review_signs (talk_id, party, image, consent, signer_name, signed_by, ip) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (talk_id, party) DO NOTHING`,
+        [t.id, party, s.image, consentOf[party], name, req.user.username, reqIp(req)]);
+      signed[party] = { at, name, by: req.user.username };
+    }
+    if (!signed.w) { await client.query('ROLLBACK'); return res.status(400).json({ error: '受約談人員須先勾選聲明並簽名' }); }
+    const allSigned = parties.every(p => signed[p]);
+    let status = 'pending', mgrs = t.mgrs || [];
+    if (allSigned) {
+      // 逐級送呈：依 課長 → 協理 排序；名單須是帳號與權限中該級別的主管
+      const want = Array.isArray(b.mgrs) ? b.mgrs : [];
+      const { rows: us } = await client.query(`SELECT username, display_name, mgr_level FROM users WHERE mgr_level = ANY($1::text[]) AND approved = true`, [REVIEW_CHAIN]);
+      mgrs = REVIEW_CHAIN.map(level => {
+        const users = (want.find(m => m?.level === level)?.users || []).map(String);
+        const names = us.filter(u => u.mgr_level === level && users.includes(u.username)).map(u => ({ user: u.username, name: u.display_name || u.username }));
+        return { level, names, by: '', byName: '', at: '', note: '' };
+      }).filter(m => m.names.length);
+      if (!mgrs.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選送呈的主管' }); }
+      status = 'mgr';
+    }
+    const { rows: up } = await client.query(
+      `UPDATE review_talks SET content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status]);
+    if (t.kind === 'review' && t.status === 'todo') {
+      await client.query(`UPDATE review_records SET status='talk' WHERE id = ANY($1::bigint[])`, [recordIds]);
+    }
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, 'talk-sign', { id: Number(t.id), status, parties: Object.keys(signed) });
+    res.json(talkRow(up[0]));
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('review/talks sign error:', e.message);
+    res.status(500).json({ error: '送出簽名失敗' });
+  } finally { client.release(); }
+});
+
+// 評核約談：直接開始約談（沒有草稿時先建立再簽名）由前端先呼叫 POST /api/review/talks 建草稿，再送 /sign
+
+// 主管確認簽核：只有目前這一級名單內的本人可以簽；最後一級簽完即完成
+app.post('/api/review/talks/:id/approve', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const note = String(req.body?.note ?? '').slice(0, 500).trim();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM review_talks WHERE id=$1 FOR UPDATE', [Number(req.params.id) || 0]);
+    const t = rows[0];
+    if (!t || t.status !== 'mgr') { await client.query('ROLLBACK'); return res.status(409).json({ error: '這張約談單目前不需要主管簽核' }); }
+    const mgrs = t.mgrs || [];
+    const cur = mgrs.find(m => !m.at);
+    if (!cur || !cur.names.some(n => n.user === req.user.username)) {
+      await client.query('ROLLBACK'); return res.status(403).json({ error: '目前不是輪到您簽核' });
+    }
+    cur.by = req.user.username;
+    cur.byName = cur.names.find(n => n.user === req.user.username)?.name || req.user.username;
+    cur.at = new Date().toISOString();
+    cur.note = note;
+    const status = mgrs.every(m => m.at) ? 'done' : 'mgr';
+    const { rows: up } = await client.query(`UPDATE review_talks SET mgrs=$2, status=$3, updated_at=NOW() WHERE id=$1 RETURNING *`, [t.id, JSON.stringify(mgrs), status]);
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, 'talk-approve', { id: Number(t.id), level: cur.level, status });
+    res.json(talkRow(up[0]));
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('review/talks approve error:', e.message);
+    res.status(500).json({ error: '簽核失敗' });
+  } finally { client.release(); }
+});
+
+// 簽名影像（檢視、列印用）
+app.get('/api/review/talks/:id/signs', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { rows } = await pool.query('SELECT party, image, consent, signer_name, signed_at FROM review_signs WHERE talk_id=$1', [Number(req.params.id) || 0]);
+  res.json(Object.fromEntries(rows.map(r => [r.party, { image: r.image, consent: r.consent, name: r.signer_name, at: r.signed_at }])));
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
