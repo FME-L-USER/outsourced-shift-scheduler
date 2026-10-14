@@ -2838,6 +2838,13 @@ app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req,
   res.json(rows.map(u => ({ user: u.username, name: u.display_name || u.username, level: u.mgr_level })));
 });
 
+// 約談人／接談人可選名單：日翊（含管理員）帳號與其可用倉別；可用倉別空白＝全部倉別
+app.get('/api/review/staff', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT username, display_name, role, allowed_warehouses FROM users WHERE role IN ('area','admin') AND approved = true ORDER BY display_name, username`);
+  res.json(rows.map(u => ({ user: u.username, name: u.display_name || u.username, warehouses: u.allowed_warehouses || [] })));
+});
+
 // 清單：未結案的全部列出；已完成／作廢的依期間
 app.get('/api/review/list', requireAuth, requireManagerOrAdmin, async (req, res) => {
   const from = isYmd(req.query.from) ? req.query.from : '1900-01-01';

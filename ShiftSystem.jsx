@@ -11710,6 +11710,25 @@ const REVIEW_FLOW = [
 const reviewCurMgr = t => (t.mgrs || []).find(m => !m.at);
 const reviewMyTurn = (t, user) => t.status === 'mgr' && !!reviewCurMgr(t)?.names.some(n => n.user === user);
 const reviewMgrText = t => (t.mgrs || []).map(m => `${m.at ? m.byName : m.names.map(n => n.name).join('／')}（${m.level}）${m.at ? '✓' : ''}`).join(' → ');
+/** 受約談人員所屬倉別（依課別比對；清冊沒填課別時用廠商比對） */
+const reviewWhIdsOf = (person, warehouses) => warehouses.filter(w => (w.departments ?? []).some(d =>
+  person?.dept ? d.name === person.dept : (d.vendors ?? []).includes(person?.vendor))).map(w => w.id);
+/** 約談人／接談人：該員所屬倉別的日翊人員都可以選（帳號可用倉別空白＝全部倉別） */
+const reviewTalkers = (staff, person, warehouses) => {
+  if (!person) return staff;
+  const wh = reviewWhIdsOf(person, warehouses);
+  return staff.filter(u => !u.warehouses.length || !wh.length || u.warehouses.some(w => wh.includes(w)));
+};
+function ReviewTalkerSelect({ options, value, onChange, className }) {
+  const known = options.some(o => o.name === value);
+  return (
+    <select value={value ?? ''} onChange={e => onChange(e.target.value)} className={className}>
+      <option value="">請選擇</option>
+      {value && !known && <option value={value}>{value}</option>}
+      {options.map(o => <option key={o.user} value={o.name}>{o.name}</option>)}
+    </select>
+  );
+}
 const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vendor: p.vendor, dept: p.dept, grp: p.grp });
 
 function ReviewUnitTags({ dept, grp, vendor }) {
@@ -11898,7 +11917,7 @@ function ReviewVoidModal({ title, desc, onClose, onConfirm }) {
 }
 
 // ── ① 新增表單 ────────────────────────────────
-function ReviewNewTab({ items, records, managers, emps, me, reload }) {
+function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
   const toast = useToast();
   const [kind, setKind] = useState('review');
   const [busy, setBusy] = useState(false);
@@ -11915,7 +11934,11 @@ function ReviewNewTab({ items, records, managers, emps, me, reload }) {
   const [fm, setFm] = useState({ fmKind: '初次接談', ref: '', title: '', place: '', talker: '', issue: '', resolution: '' });
   const [fmDate, setFmDate] = useState(reviewToday());
   const [fmPerson, setFmPerson] = useState(null);
-  const jingban = managers.filter(m => m.level === '經辦');
+  const fmTalkers = reviewTalkers(staff, fmPerson, warehouses);
+  // 選了人之後，接談人預設帶入登入者（若在可選名單內）
+  useEffect(() => {
+    if (fmPerson && !fm.talker && fmTalkers.some(o => o.user === me.user)) setFm(f => ({ ...f, talker: me.name }));
+  }, [fmPerson]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ptNum = reviewPtNum(item?.pt);
   const points = zero ? 0 : ptNum * (Number(count) || 1);
@@ -12049,11 +12072,8 @@ function ReviewNewTab({ items, records, managers, emps, me, reload }) {
               <h3 className="sm:col-span-3 font-semibold text-slate-800">接談內容</h3>
               <label><span className={L}>接談日期</span><input type="date" value={fmDate} onChange={e => setFmDate(e.target.value)} className={I} /></label>
               <label><span className={L}>接談地點</span><input value={fm.place} onChange={e => setFm({ ...fm, place: e.target.value })} className={I} /></label>
-              <label><span className={L}>接談人姓名（經辦）</span>
-                {jingban.length
-                  ? <select value={fm.talker} onChange={e => setFm({ ...fm, talker: e.target.value })} className={I}>
-                      <option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
-                  : <input value={fm.talker} onChange={e => setFm({ ...fm, talker: e.target.value })} placeholder="尚未設定經辦，可直接輸入" className={I} />}
+              <label><span className={L}>接談人姓名（{fmPerson ? '該員所屬倉別的日翊人員' : '請先選人員'}）</span>
+                <ReviewTalkerSelect options={fmTalkers} value={fm.talker} onChange={v => setFm({ ...fm, talker: v })} className={I} />
               </label>
               <label className="sm:col-span-3"><span className={L}>主訴問題／事件內容</span><textarea rows={5} value={fm.issue} onChange={e => setFm({ ...fm, issue: e.target.value })} className={I} /></label>
               <label className="sm:col-span-3"><span className={L}>約定／決議事項</span><textarea rows={3} value={fm.resolution} onChange={e => setFm({ ...fm, resolution: e.target.value })} className={I} /></label>
@@ -12071,15 +12091,15 @@ function ReviewNewTab({ items, records, managers, emps, me, reload }) {
 
 // ── ② 約談單視窗：約談／簽名／補簽／檢視 ─────────────────
 // mode：review＝評核約談（待約談，可能有草稿）、fm＝FM-193 待約談、cosign＝待簽核補簽、view＝檢視
-function ReviewTalkModal({ mode, talk, person, records, managers, consent, me, onClose, reload }) {
+function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehouses, consent, me, onClose, reload }) {
   const toast = useToast();
   const kind = talk?.kind ?? 'review';
   const editable = mode === 'review' || mode === 'fm';
-  const jingban = managers.filter(m => m.level === '經辦');
   const who = talk ?? person;
+  const talkers = reviewTalkers(staff, who, warehouses);
   const base = talk?.content ?? {};
   const [content, setContent] = useState(() => kind === 'fm' ? { ...base } : {
-    talker: base.talker ?? (jingban.find(j => j.user === me.user)?.name ?? ''),
+    talker: base.talker ?? (talkers.some(o => o.user === me.user) ? me.name : ''),
     reason: base.reason ?? '違反理貨評核規範', content: base.content ?? '', result: base.result ?? '' });
   const [talkDate, setTalkDate] = useState(talk?.talkDate || reviewToday());
   const [picked, setPicked] = useState(() => new Set(
@@ -12188,10 +12208,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, consent, me, o
               <h3 className="sm:col-span-3 font-semibold text-slate-700">約談資訊</h3>
               {editable ? <>
                 <label><span className="block text-xs text-slate-500 mb-1">約談日期</span><input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={I} /></label>
-                <label><span className="block text-xs text-slate-500 mb-1">約談人（經辦）</span>
-                  {jingban.length
-                    ? <select value={content.talker} onChange={e => setC({ talker: e.target.value })} className={I}><option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
-                    : <input value={content.talker} onChange={e => setC({ talker: e.target.value })} className={I} />}
+                <label><span className="block text-xs text-slate-500 mb-1">約談人（該員所屬倉別的日翊人員）</span>
+                  <ReviewTalkerSelect options={talkers} value={content.talker} onChange={v => setC({ talker: v })} className={I} />
                 </label>
                 <label><span className="block text-xs text-slate-500 mb-1">約談事由</span><input value={content.reason} onChange={e => setC({ reason: e.target.value })} className={I} /></label>
                 <label className="sm:col-span-3"><span className="block text-xs text-slate-500 mb-1">約談內容</span><textarea rows={3} value={content.content} onChange={e => setC({ content: e.target.value })} placeholder="說明缺失、當事人陳述、要求改善事項…" className={I} /></label>
@@ -12216,10 +12234,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, consent, me, o
                   <span className="text-slate-400">職務職位</span><input value={content.title ?? ''} onChange={e => setC({ title: e.target.value })} className={I} />
                   <span className="text-slate-400">接談日期</span><input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={I} />
                   <span className="text-slate-400">接談地點</span><input value={content.place ?? ''} onChange={e => setC({ place: e.target.value })} className={I} />
-                  <span className="text-slate-400">接談人（經辦）</span>
-                  {jingban.length
-                    ? <select value={content.talker ?? ''} onChange={e => setC({ talker: e.target.value })} className={I}><option value="">請選擇</option>{jingban.map(j => <option key={j.user} value={j.name}>{j.name}</option>)}</select>
-                    : <input value={content.talker ?? ''} onChange={e => setC({ talker: e.target.value })} className={I} />}
+                  <span className="text-slate-400">接談人</span>
+                  <ReviewTalkerSelect options={talkers} value={content.talker} onChange={v => setC({ talker: v })} className={I} />
                   <span className="text-slate-400 self-start pt-2">主訴問題／事件內容</span>
                   <textarea rows={4} value={content.issue ?? ''} onChange={e => setC({ issue: e.target.value })} className={`${I} sm:col-span-3`} />
                   <span className="text-slate-400 self-start pt-2">約定／決議事項</span>
@@ -12427,7 +12443,7 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
 }
 
 // ── ② 約談進度 ────────────────────────────────
-function ReviewTalkTab({ data, managers, consent, me, scopeOk, range, setRange, reload, openApprove }) {
+function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk, range, setRange, reload, openApprove }) {
   const toast = useToast();
   const [status, setStatus] = useState('todo');
   const [kw, setKw] = useState('');
@@ -12609,7 +12625,7 @@ function ReviewTalkTab({ data, managers, consent, me, scopeOk, range, setRange, 
         : shown.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">此條件下沒有紀錄</div>
         : <div className="space-y-3">{shown.map(u => u.type === 'person' ? personCard(u) : u.type === 'talk' ? talkCard(u) : voidCard(u))}</div>}
 
-      {modal && <ReviewTalkModal {...modal} managers={managers} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
+      {modal && <ReviewTalkModal {...modal} managers={managers} staff={staff} warehouses={warehouses} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
       {voiding && <ReviewVoidModal title={voiding.title} desc={voiding.desc} onClose={() => setVoiding(null)} onConfirm={doVoid} />}
     </div>
   );
@@ -12650,6 +12666,7 @@ function ReviewPage() {
   const [range, setRange] = useState(() => { const p = reviewPresets()[2]; return { from: p[1], to: p[2] }; });
   const [data, setData] = useState({ records: [], talks: [], loaded: false });
   const [managers, setManagers] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [cfg, setCfg] = useState(null);
   const [approving, setApproving] = useState(null);
   const me = useMemo(() => ({
@@ -12666,6 +12683,7 @@ function ReviewPage() {
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
     reviewApi('/api/review/managers').then(setManagers).catch(() => {});
+    reviewApi('/api/review/staff').then(setStaff).catch(() => {});
     reviewApi('/api/review/items').then(setCfg).catch(() => setCfg({}));
   }, []);
   const items = cfg?.version?.items ?? REVIEW_ITEMS_115;
@@ -12705,8 +12723,8 @@ function ReviewPage() {
           );
         })}
       </div>
-      {tab === 'new' && <ReviewNewTab items={items} records={data.records} managers={managers} emps={emps} me={me} reload={reload} />}
-      {tab === 'talk' && <ReviewTalkTab data={data} managers={managers} consent={consent} me={me} scopeOk={scopeOk}
+      {tab === 'new' && <ReviewNewTab items={items} records={data.records} staff={staff} warehouses={warehouses} emps={emps} me={me} reload={reload} />}
+      {tab === 'talk' && <ReviewTalkTab data={data} managers={managers} staff={staff} warehouses={warehouses} consent={consent} me={me} scopeOk={scopeOk}
         range={range} setRange={setRange} reload={reload} openApprove={setApproving} />}
       {tab === 'items' && <ReviewItemsTab />}
       {approving && <ReviewApproveModal talk={approving} records={data.records} me={me} onClose={() => setApproving(null)} reload={reload} />}
