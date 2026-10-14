@@ -2838,6 +2838,22 @@ app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req,
   res.json(rows.map(u => ({ user: u.username, name: u.display_name || u.username, level: u.mgr_level })));
 });
 
+// 委外幹部：自己廠商的待簽核約談單（後送簽）
+app.get('/api/review/vendor-pending', requireAuth, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: '僅限委外幹部' });
+  const vendors = req.user.vendors || [];
+  try {
+    const { rows: talks } = await pool.query(`SELECT * FROM review_talks WHERE status='pending' AND vendor = ANY($1::text[]) ORDER BY id`, [vendors]);
+    const ids = [...new Set(talks.flatMap(t => (t.record_ids || []).map(Number)))];
+    const { rows: recs } = ids.length ? await pool.query('SELECT * FROM review_records WHERE id = ANY($1::bigint[])', [ids]) : { rows: [] };
+    const cfg = await reviewConfig('consent');
+    res.json({ talks: talks.map(talkRow), records: recs.map(recordRow), consent: { ...REVIEW_CONSENT_FALLBACK, ...(cfg?.value || {}) } });
+  } catch (e) {
+    console.error('review/vendor-pending error:', e.message);
+    res.status(500).json({ error: '讀取待簽核約談單失敗' });
+  }
+});
+
 // 約談人／接談人可選名單：日翊（含管理員）帳號與其可用倉別；可用倉別空白＝全部倉別
 app.get('/api/review/staff', requireAuth, requireManagerOrAdmin, async (_req, res) => {
   const { rows } = await pool.query(
@@ -3041,8 +3057,14 @@ app.post('/api/review/talks/:id/void', requireAuth, requireManagerOrAdmin, requi
 
 // 簽名送出：首次簽名（todo）或補簽（pending）。全部簽完須送呈主管，有人不在場則進入待簽核。
 // body: { content, talkDate, recordIds, signs: { w|v|h|r: { image, name } }, hSame, mgrs: [{ level, users: [username] }] }
-app.post('/api/review/talks/:id/sign', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
-  const b = req.body ?? {};
+function requireReviewSigner(req, res, next) {
+  const role = req.user?.role;
+  if (role !== 'admin' && role !== 'area' && role !== 'vendor') return res.status(403).json({ error: '沒有簽名權限' });
+  next();
+}
+app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, requireClientVersion, async (req, res) => {
+  const isVendor = req.user.role === 'vendor';
+  const b = isVendor ? { signs: req.body?.signs, hSame: req.body?.hSame } : (req.body ?? {});
   const cfg = await reviewConfig('consent');
   const client = await pool.connect();
   try {
@@ -3051,7 +3073,12 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireManagerOrAdmin, requi
     const t = rows[0];
     if (!t) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這張約談單' }); }
     if (!['todo', 'pending'].includes(t.status)) { await client.query('ROLLBACK'); return res.status(409).json({ error: '這張約談單已送出，請重新整理' }); }
-    const parties = t.kind === 'fm' ? ['w', 'v', 'h', 'r'] : ['w', 'v'];
+    if (isVendor && (t.status !== 'pending' || !(req.user.vendors || []).includes(t.vendor))) {
+      await client.query('ROLLBACK'); return res.status(403).json({ error: '只能補簽自己廠商的待簽核約談單' });
+    }
+    // 委外幹部只能簽「廠商主管／幹部」與「協力商人力主管」
+    const parties = isVendor ? (t.kind === 'fm' ? ['v', 'h'] : ['v']) : (t.kind === 'fm' ? ['w', 'v', 'h', 'r'] : ['w', 'v']);
+    const required = t.kind === 'fm' ? ['w', 'v', 'h', 'r'] : ['w', 'v'];
     const signed = { ...(t.signed || {}) };
     const signs = b.signs && typeof b.signs === 'object' ? b.signs : {};
     let content = t.content, talkDate = t.talk_date, recordIds = (t.record_ids || []).map(Number);
@@ -3085,20 +3112,21 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireManagerOrAdmin, requi
       signed[party] = { at, name, by: req.user.username };
     }
     if (!signed.w) { await client.query('ROLLBACK'); return res.status(400).json({ error: '受約談人員須先勾選聲明並簽名' }); }
-    const allSigned = parties.every(p => signed[p]);
-    let status = 'pending', mgrs = t.mgrs || [];
-    if (allSigned) {
-      // 逐級送呈：依 課長 → 協理 排序；名單須是帳號與權限中該級別的主管
-      const want = Array.isArray(b.mgrs) ? b.mgrs : [];
+    const allSigned = required.every(p => signed[p]);
+    // 逐級送呈：依 課長 → 協理 排序；名單須是帳號與權限中該級別的主管。
+    // 先送待簽核時就要選好主管，之後由廠商（或日翊）補簽完即自動送出。
+    let mgrs = t.mgrs || [];
+    const want = Array.isArray(b.mgrs) ? b.mgrs : [];
+    if (want.length) {
       const { rows: us } = await client.query(`SELECT username, display_name, mgr_level FROM users WHERE mgr_level = ANY($1::text[]) AND approved = true`, [REVIEW_CHAIN]);
       mgrs = REVIEW_CHAIN.map(level => {
         const users = (want.find(m => m?.level === level)?.users || []).map(String);
         const names = us.filter(u => u.mgr_level === level && users.includes(u.username)).map(u => ({ user: u.username, name: u.display_name || u.username }));
         return { level, names, by: '', byName: '', at: '', note: '' };
       }).filter(m => m.names.length);
-      if (!mgrs.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選送呈的主管' }); }
-      status = 'mgr';
     }
+    if (!mgrs.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: '請勾選送呈的主管' }); }
+    const status = allSigned ? 'mgr' : 'pending';
     const { rows: up } = await client.query(
       `UPDATE review_talks SET content=$2, talk_date=$3, record_ids=$4, signed=$5, mgrs=$6, status=$7, updated_at=NOW() WHERE id=$1 RETURNING *`,
       [t.id, content, talkDate, recordIds, signed, JSON.stringify(mgrs), status]);

@@ -2564,6 +2564,8 @@ const NAV_ITEMS = [
   { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'review',       label: '理貨評核',     icon: '📝', roles: [ROLES.ADMIN, ROLES.AREA] },
+  // 委外幹部補簽約談單（後送簽）；只看得到自己廠商的待簽核，不受分頁權限設定影響
+  { key: 'reviewSign',   label: '約談簽名',     icon: '✍️', roles: [ROLES.VENDOR], always: true },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
   { key: 'employees',    label: '人員清冊',     icon: '👥', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'shiftsetup',   label: '人員班別設定', icon: '⏰', roles: [ROLES.ADMIN, ROLES.AREA] },
@@ -2636,7 +2638,7 @@ function buildPermsFromPagePerms(role, pagePerms, allowedWarehouses) {
   const perms = { ...base };
   NAV_ITEMS.forEach(n => {
     if (!n.roles.includes(role)) return;
-    const on = allowed.has(n.key);
+    const on = allowed.has(n.key) || !!n.always;
     perms[n.key] = { ...(base[n.key] ?? {}), view: on };
     if (!on) {
       PAGE_PERMISSIONS.find(pp => pp.key === n.key)
@@ -12091,7 +12093,7 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
 
 // ── ② 約談單視窗：約談／簽名／補簽／檢視 ─────────────────
 // mode：review＝評核約談（待約談，可能有草稿）、fm＝FM-193 待約談、cosign＝待簽核補簽、view＝檢視
-function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehouses, consent, me, onClose, reload }) {
+function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehouses, consent, me, vendorMode = false, onClose, reload }) {
   const toast = useToast();
   const kind = talk?.kind ?? 'review';
   const editable = mode === 'review' || mode === 'fm';
@@ -12130,6 +12132,10 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   };
   const setC = patch => { touch(); setContent(c => ({ ...c, ...patch })); };
   const recs = mode === 'review' ? records : records.filter(r => talk?.recordIds?.includes(r.id));
+  // 已選好的主管（先送待簽核時選的）；補簽完即自動送出
+  const preMgrs = talk?.mgrs ?? [];
+  // 委外幹部只能簽廠商主管／幹部、協力商人力主管
+  const mayPad = p => !vendorMode || p === 'v' || p === 'h';
   const total = recs.filter(r => mode !== 'review' || picked.has(r.id)).reduce((a, r) => a + r.points, 0);
   const mgrBody = REVIEW_LEVEL_CHAIN.map(level => ({ level, users: [...(mgrPick[level] ?? [])] })).filter(m => m.users.length);
 
@@ -12159,7 +12165,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
       const r = await reviewApi(`/api/review/talks/${t.id}/sign`, { method: 'POST', body: {
         content, talkDate, recordIds: [...picked], hSame,
         signs: Object.fromEntries(Object.entries(signs).filter(([, v]) => v).map(([p, image]) => [p, { image, name: signerName(p) }])),
-        mgrs: toMgr ? mgrBody : [] } });
+        mgrs: mgrBody } });
       toast(r.status === 'mgr' ? `已送呈主管簽核：${reviewMgrText(r)}` : '已送出，尚有人員未簽（待簽核）', 'success');
       await reload(); onClose();
     } catch (e) { toast(e.message, 'error'); await reload(); }
@@ -12168,11 +12174,12 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
 
   const I = 'w-full border border-[#DDD9D0] rounded-lg px-2 py-1.5 text-sm';
   const ro = (k, v, wide) => <React.Fragment key={k}><span className="text-slate-400">{k}</span><span className={`whitespace-pre-wrap ${wide ? 'sm:col-span-3' : ''}`}>{v || '—'}</span></React.Fragment>;
+  const needMgr = !preMgrs.length && !mgrBody.length;
   const hint = !has('w') ? '下一步：受約談人員勾選聲明並簽名'
-    : !has('v') ? '下一步：廠商主管／幹部勾選聲明並簽名'
+    : needMgr ? '下一步：勾選送呈主管（有人不在場時也要先選，補簽完即自動送出）'
+    : !has('v') ? '下一步：廠商主管／幹部勾選聲明並簽名，或先送待簽核由廠商登入補簽'
     : kind === 'fm' && !has('h') ? '下一步：協力商人力主管簽名（同一人可勾選同步）'
-    : kind === 'fm' && !has('r') ? '下一步：記錄人勾選聲明並簽名'
-    : !mgrBody.length ? '下一步：勾選送呈主管' : '';
+    : kind === 'fm' && !has('r') ? '下一步：記錄人勾選聲明並簽名' : '';
   const signable = mode !== 'view';
 
   return createPortal(
@@ -12282,6 +12289,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                       </div>
                     ) : !signable ? (
                       <div className="text-xs text-red-600">未簽</div>
+                    ) : !mayPad(p) ? (
+                      <div className="text-xs text-red-600">未簽（須由日翊於約談時簽署）</div>
                     ) : p === 'h' && hSame ? (
                       <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">✓ 已同步廠商主管／幹部的簽名，列印時人力主管欄帶入同一份簽名</div>
                     ) : (
@@ -12296,8 +12305,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
             </div>
           </section>
 
-          {/* 送呈主管：全部簽完才出現 */}
-          {signable && allSigned && (
+          {/* 送呈主管：受約談人簽完就要選（有人不在場先送待簽核時，補簽完即自動送出）；已選過的不再重選 */}
+          {signable && !vendorMode && has('w') && !preMgrs.length && (
             <section className="px-6 py-4 space-y-2 bg-violet-50/40">
               <div className="flex items-baseline gap-2 flex-wrap"><h3 className="font-semibold text-violet-800">送呈主管</h3>
                 <span className="text-xs text-slate-500">逐級簽核：課長 → 副理 → 經理 → 協理；同一級可複選，任一位簽核就送下一級；沒勾的級別跳過</span></div>
@@ -12324,7 +12333,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
           )}
           {talk && (talk.mgrs || []).length > 0 && (
             <section className="px-6 py-4 text-sm space-y-1">
-              <h3 className="font-semibold text-slate-700">主管簽核</h3>
+              <h3 className="font-semibold text-slate-700">主管簽核{talk.status === 'pending' ? '（已選好，補簽完即自動送出）' : ''}</h3>
               {talk.mgrs.map(m => (
                 <div key={m.level} className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs text-slate-400 w-10">{m.level}</span>
@@ -12343,13 +12352,17 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
             className="px-4 py-2 border-2 border-sky-400 text-sky-700 rounded-lg text-sm font-semibold disabled:opacity-50">💾 {kind === 'fm' ? '儲存修改' : '暫存草稿'}</button>}
           {mode === 'review' && talk && <button onClick={discard} className="text-xs text-slate-400 hover:text-red-600 underline">捨棄草稿</button>}
           {signable && <span className="ml-auto text-xs text-slate-500">{hint}</span>}
-          {signable && has('w') && !allSigned && (
-            <button onClick={() => submit(false)} disabled={busy} className="px-4 py-2 border-2 border-amber-400 text-amber-700 rounded-lg text-sm font-semibold disabled:opacity-50">尚有人員不在場，先送待簽核</button>
+          {signable && !vendorMode && has('w') && !allSigned && mode !== 'cosign' && (
+            <button onClick={() => submit(false)} disabled={busy || needMgr} className="px-4 py-2 border-2 border-amber-400 text-amber-700 rounded-lg text-sm font-semibold disabled:opacity-40">尚有人員不在場，先送待簽核</button>
+          )}
+          {signable && mode === 'cosign' && !allSigned && Object.values(signs).some(Boolean) && (
+            <button onClick={() => submit(false)} disabled={busy || needMgr} className="px-4 py-2 border-2 border-amber-400 text-amber-700 rounded-lg text-sm font-semibold disabled:opacity-40">送出簽名（仍有人未簽，維持待簽核）</button>
           )}
           {signable && allSigned && (
-            <button onClick={() => submit(true)} disabled={busy || !mgrBody.length}
+            <button onClick={() => submit(true)} disabled={busy || needMgr}
               className="px-5 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold disabled:opacity-40">
-              {mgrBody.length ? `送呈簽核：${mgrBody.map(m => managers.filter(x => m.users.includes(x.user)).map(x => x.name).join('／')).join(' → ')}` : '送呈主管簽核'}
+              {preMgrs.length ? `送出並送呈：${reviewMgrText(talk)}`
+                : mgrBody.length ? `送呈簽核：${mgrBody.map(m => managers.filter(x => m.users.includes(x.user)).map(x => x.name).join('／')).join(' → ')}` : '送呈主管簽核'}
             </button>
           )}
         </div>
@@ -12627,6 +12640,42 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
 
       {modal && <ReviewTalkModal {...modal} managers={managers} staff={staff} warehouses={warehouses} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
       {voiding && <ReviewVoidModal title={voiding.title} desc={voiding.desc} onClose={() => setVoiding(null)} onConfirm={doVoid} />}
+    </div>
+  );
+}
+
+/** 委外幹部：自己廠商的待簽核約談單，登入後補簽（後送簽） */
+function ReviewVendorSign() {
+  const { currentUser } = useApp();
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  const [modal, setModal] = useState(null);
+  const me = { user: currentUser?.username ?? '', name: currentUser?.name || currentUser?.username || '', admin: false };
+  const load = useCallback(async () => {
+    try { setData(await reviewApi('/api/review/vendor-pending')); }
+    catch (e) { toast(e.message, 'error'); setData({ talks: [], records: [], consent: REVIEW_CONSENT_DEFAULT }); }
+  }, [toast]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <div className="p-6 space-y-4 max-w-4xl">
+      <h2 className="text-xl font-bold text-slate-800">約談簽名</h2>
+      <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
+      {!data ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
+        : data.talks.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">目前沒有需要您簽名的約談單</div>
+        : data.talks.map(t => {
+          const recs = data.records.filter(r => t.recordIds.includes(r.id));
+          return (
+            <div key={t.id} className="bg-white border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
+              <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談'}</span>
+              <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
+              <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
+              <span className="text-xs text-slate-500">{t.kind === 'fm' ? t.no : `約談 ${t.talkDate}・${recs.length} 筆`}</span>
+              <button onClick={() => setModal({ talk: t, records: recs })} className="ml-auto px-4 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 text-white">簽名</button>
+            </div>
+          );
+        })}
+      {modal && <ReviewTalkModal mode="cosign" talk={modal.talk} person={modal.talk} records={modal.records} managers={[]} staff={[]} warehouses={[]}
+        consent={data.consent} me={me} vendorMode onClose={() => setModal(null)} reload={load} />}
     </div>
   );
 }
@@ -18940,6 +18989,7 @@ export default function App() {
     selfCheck:  <WorkerSelfCheck />,
     home:       <WorkerHome onNavigate={setCurrentPage} />,
     review:     <ReviewPage />,
+    reviewSign: <ReviewVendorSign />,
   };
 
   if (!currentUser) {
