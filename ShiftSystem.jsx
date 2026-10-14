@@ -11736,12 +11736,72 @@ const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vend
 // 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
 const REVIEW_REC_GRID = 'grid grid-cols-[1rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem_3.5rem] items-center gap-3';
 
+// 評核紀錄表格（約談單、主管簽核、約談單卡片共用，欄位與表頭一致）
+const REVIEW_REC_COLS = 'grid grid-cols-[8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem] items-center gap-3';
+const REVIEW_REC_COLS_PICK = 'grid grid-cols-[1.25rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem] items-center gap-3';
+function ReviewRecTable({ recs, picked, onToggle, total = true }) {
+  const pick = !!onToggle;
+  const cols = pick ? REVIEW_REC_COLS_PICK : REVIEW_REC_COLS;
+  const sum = recs.filter(r => !pick || picked.has(r.id)).reduce((a, r) => a + r.points, 0);
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-x-auto text-sm">
+     <div className="min-w-[38rem]">
+      <div className={`${cols} px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400`}>
+        {pick && <span />}<span>開立編號</span><span>作業日</span><span>項目</span><span>評核內容</span>
+        <span className="text-right">點數</span><span className="text-right">第幾次</span>
+      </div>
+      {recs.length === 0 && <div className="px-3 py-3 text-center text-slate-400 border-t border-slate-100">沒有評核紀錄</div>}
+      {recs.map(r => {
+        const row = <>
+          {pick && <input type="checkbox" checked={picked.has(r.id)} onChange={e => onToggle(r.id, e.target.checked)} className="w-4 h-4" />}
+          <span className="font-mono text-xs text-slate-600 truncate">{r.no || '—'}</span>
+          <span className="tabular-nums text-slate-500">{r.workDate}</span>
+          <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
+          <span className="truncate text-slate-700" title={reviewStrip(r.item.text)}>{reviewStrip(r.item.text)}</span>
+          <span className="font-bold text-rose-600 text-right">{r.points} 點</span>
+          <span className="text-xs text-slate-500 text-right">{reviewNthLabel(r.nth)}</span>
+        </>;
+        return pick
+          ? <label key={r.id} className={`${cols} px-3 py-2 border-t border-slate-100 cursor-pointer hover:bg-blue-50/40`}>{row}</label>
+          : <div key={r.id} className={`${cols} px-3 py-2 border-t border-slate-100`}>{row}</div>;
+      })}
+      {total && recs.length > 0 && <div className="px-3 py-1.5 border-t border-slate-100 bg-slate-50 text-right text-slate-600">合計 <b className="text-rose-600">{sum}</b> 點</div>}
+     </div>
+    </div>
+  );
+}
+
+// 約談單清單（待我簽核、待我簽名共用）
+const REVIEW_TALK_COLS = 'grid grid-cols-[5.5rem_9.5rem_minmax(18rem,1fr)_5.5rem_6.5rem_4.5rem] items-center gap-3';
+function ReviewTalkRows({ talks, records = [], info, action, onAction, actionCls }) {
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-x-auto text-sm bg-white">
+     <div className="min-w-[46rem]">
+      <div className={`${REVIEW_TALK_COLS} px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400`}>
+        <span>類型</span><span>單號</span><span>受約談人</span><span>約談日</span><span>{info.label}</span><span />
+      </div>
+      {talks.map(t => (
+        <div key={t.id} className={`${REVIEW_TALK_COLS} px-3 py-2 border-t border-slate-100`}>
+          <span><span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193' : '評核約談'}</span></span>
+          <span className="font-mono text-xs text-slate-600 truncate">{t.no || '—'}</span>
+          <span className="flex items-center gap-2 min-w-0 whitespace-nowrap"><b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-400">{t.empNo}</span>
+            <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} /></span>
+          <span className="tabular-nums text-slate-500">{t.talkDate || '—'}</span>
+          <span className="text-xs text-slate-600">{info.value(t, records.filter(r => t.recordIds.includes(r.id)))}</span>
+          <span className="text-right"><button onClick={() => onAction(t)} className={`px-3 py-1 rounded-lg text-white text-xs font-semibold ${actionCls}`}>{action}</button></span>
+        </div>
+      ))}
+     </div>
+    </div>
+  );
+}
+
 function ReviewUnitTags({ dept, grp, vendor }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs flex-wrap">
-      {dept && <span className="px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">{dept}</span>}
-      {grp && <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{grp}</span>}
-      {vendor && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{vendor}</span>}
+      {dept && <span className="whitespace-nowrap px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">{dept}</span>}
+      {grp && <span className="whitespace-nowrap px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{grp}</span>}
+      {vendor && <span className="whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{vendor}</span>}
     </span>
   );
 }
@@ -12139,7 +12199,6 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   const preMgrs = talk?.mgrs ?? [];
   // 委外幹部只能簽廠商主管／幹部、協力商人力主管
   const mayPad = p => !vendorMode || p === 'v' || p === 'h';
-  const total = recs.filter(r => mode !== 'review' || picked.has(r.id)).reduce((a, r) => a + r.points, 0);
   const mgrBody = REVIEW_LEVEL_CHAIN.map(level => ({ level, users: [...(mgrPick[level] ?? [])] })).filter(m => m.users.length);
 
   const ensureTalk = async () => talk ?? reviewApi('/api/review/talks', {
@@ -12200,19 +12259,9 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
         <div className="divide-y divide-[#EFEBE3]">
           {kind === 'review' && (
             <section className="px-6 py-4 space-y-2">
-              <h3 className="font-semibold text-slate-700">本次處理的評核紀錄</h3>
-              {recs.map(r => (
-                <label key={r.id} className="flex items-center gap-3 text-sm border border-slate-200 rounded-lg px-3 py-2">
-                  {mode === 'review' && <input type="checkbox" checked={picked.has(r.id)} onChange={e => { touch(); setPicked(s => { const n = new Set(s); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; }); }} className="w-4 h-4" />}
-                  <span className="tabular-nums text-slate-500">{r.workDate}</span>
-                  <span className="font-mono text-[11px] text-slate-400">{r.no}</span>
-                  <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
-                  <span className="flex-1 truncate">{reviewStrip(r.item.text)}</span>
-                  <span className="text-xs text-slate-500">{reviewNthLabel(r.nth)}</span>
-                  <span className="font-bold text-rose-600">{r.points} 點</span>
-                </label>
-              ))}
-              <div className="text-sm text-right text-slate-600">合計 <b className="text-rose-600 text-lg">{total}</b> 點</div>
+              <h3 className="font-semibold text-slate-700">本次處理的評核紀錄{mode === 'review' && <span className="ml-2 text-xs font-normal text-slate-400">勾選本次要約談的紀錄</span>}</h3>
+              <ReviewRecTable recs={recs} picked={picked}
+                onToggle={mode === 'review' ? (id, on) => { touch(); setPicked(s => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n; }); } : undefined} />
             </section>
           )}
           {kind === 'review' && (
@@ -12424,12 +12473,7 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
           </div>
           {talk.kind === 'review' ? (
             <>
-              {recs.map(r => (
-                <div key={r.id} className="flex gap-3 border border-slate-200 rounded-lg px-3 py-2">
-                  <span className="tabular-nums text-slate-500">{r.workDate}</span><span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
-                  <span className="flex-1 truncate">{reviewStrip(r.item.text)}</span><span className="font-bold text-rose-600">{r.points} 點</span>
-                </div>
-              ))}
+              <ReviewRecTable recs={recs} />
               <div className="grid grid-cols-[6rem_1fr] gap-y-1 text-slate-700">
                 <span className="text-slate-400">約談日期</span><span>{talk.talkDate}</span>
                 <span className="text-slate-400">約談事由</span><span>{c.reason || '—'}</span>
@@ -12531,6 +12575,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
           <button onClick={() => setModal({ mode: 'review', talk: u.draft, person: u, records: u.recs })}
             className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white">{u.draft ? '繼續約談' : '約談'}（{u.recs.length} 筆）</button>
         </div>
+        <div className="overflow-x-auto"><div className="min-w-[44rem]">
         <div className={`${REVIEW_REC_GRID} px-4 py-1.5 border-t border-[#EFEBE3] bg-white text-[11px] text-slate-400`}>
           <span /><span>開立編號</span><span>作業日</span><span>項目</span><span>評核內容</span>
           <span className="text-right">點數</span><span className="text-right">第幾次</span><span />
@@ -12554,6 +12599,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
             </div>
           </details>
         ))}
+        </div></div>
       </div>
     );
   };
@@ -12570,25 +12616,26 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
       <div key={u.key} className={`bg-white border rounded-2xl overflow-hidden ${fm ? 'border-violet-200' : 'border-[#DDD9D0]'}`}>
         <div className={`px-4 py-3 flex items-center gap-3 flex-wrap ${fm ? 'bg-violet-50/50' : 'bg-[#FAF8F4]'}`}>
           <span className={`text-xs px-1.5 py-0.5 rounded text-white ${fm ? 'bg-violet-600' : 'bg-blue-600'}`}>{fm ? 'FM-193 接談紀錄' : '評核約談'}</span>
+          {t.no && <span className="font-mono text-xs text-slate-600">{t.no}</span>}
           <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
           <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
           {badge(t.status)}
-          <span className="ml-auto text-xs text-slate-500">{fm ? `${t.no}・接談 ${t.talkDate || '—'}` : `${t.no ? `${t.no}・` : ''}約談 ${t.talkDate}・${recs.length} 筆・${recs.reduce((a, r) => a + r.points, 0)} 點`}</span>
+          <span className="ml-auto text-sm text-slate-600">{fm ? `接談 ${t.talkDate || '—'}` : <>約談 {t.talkDate}・{recs.length} 筆・共 <b className="text-rose-600">{recs.reduce((a, r) => a + r.points, 0)}</b> 點</>}</span>
           {t.status === 'mgr' && <span className="text-xs text-violet-700">送呈 {reviewMgrText(t)}</span>}
           {fm && t.status === 'todo' && voidBtn(t.createdBy, () => setVoiding({ kind: 'talk', id: t.id, title: `FM-193 接談紀錄 ${t.no}`, desc: `${t.name}・${(t.content.issue || '').slice(0, 40)}` }), 'px-3 py-1.5 rounded-lg text-sm')}
           <button onClick={open} className={`px-4 py-1.5 rounded-lg text-sm font-semibold ${t.status === 'done' || (t.status === 'mgr' && !mine)
             ? 'border border-slate-300 text-slate-600' : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white'}`}>{action}</button>
         </div>
-        <details className="border-t border-[#EFEBE3] group">
-          <summary className="px-4 py-2 flex items-center gap-3 text-sm cursor-pointer list-none">
-            <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
-            <span className="flex-1 truncate text-slate-700">{fm ? `主訴問題：${t.content.issue || '—'}` : recs.map(r => `${r.item.code} ${reviewStrip(r.item.text)}`).join('；')}</span>
-          </summary>
-          <div className="px-12 pb-3 text-sm space-y-1 text-slate-700">
-            {fm ? <><div className="whitespace-pre-wrap">{t.content.issue}</div><div className="text-xs text-slate-500">約定／決議事項：{t.content.resolution || '—'}</div></>
-              : recs.map(r => <div key={r.id} className="text-xs"><span className="font-mono font-bold text-blue-700">{r.item.code}</span> {reviewStrip(r.item.text)}・{r.points} 點・{reviewNthLabel(r.nth)}</div>)}
-          </div>
-        </details>
+        <div className="px-4 py-3 border-t border-[#EFEBE3]">
+          {fm ? (
+            <div className="border border-slate-200 rounded-lg overflow-hidden text-sm">
+              <div className="grid grid-cols-2 gap-3 px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400"><span>主訴問題／事件內容</span><span>約定／決議事項</span></div>
+              <div className="grid grid-cols-2 gap-3 px-3 py-2 border-t border-slate-100 text-slate-700">
+                <span className="line-clamp-2 whitespace-pre-wrap">{t.content.issue || '—'}</span><span className="line-clamp-2 whitespace-pre-wrap">{t.content.resolution || '—'}</span>
+              </div>
+            </div>
+          ) : <ReviewRecTable recs={recs} total={false} />}
+        </div>
       </div>
     );
   };
@@ -12597,12 +12644,13 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
     return (
       <div key={u.key} className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-500">
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500 text-white">已作廢</span>
-          <span className={`text-xs px-1.5 py-0.5 rounded ${t ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>{t ? 'FM-193' : '理貨評核'}</span>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${t ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>{t ? 'FM-193 接談紀錄' : '理貨評核'}</span>
+          <span className="font-mono text-xs line-through">{(t ?? r).no || '—'}</span>
           <b className="text-slate-600 line-through">{u.name}</b><span className="font-mono text-xs">{u.empNo}</span>
           <ReviewUnitTags dept={u.dept} grp={u.grp} vendor={u.vendor} />
-          <span className="line-through">{t ? t.no : `${r.no} ${r.workDate} ${r.item.code} ${r.points} 點`}</span>
-          <span className="ml-auto text-xs">{info.byName || info.by}・{reviewFmtTime(info.at)}</span>
+          {badge('void')}
+          <span className="line-through">{t ? `接談 ${t.talkDate || '—'}` : `${r.workDate} ${r.item.code} ${r.points} 點`}</span>
+          <span className="ml-auto text-xs">作廢：{info.byName || info.by}・{reviewFmtTime(info.at)}</span>
         </div>
         <div className="mt-1 text-xs">作廢原因：<span className="text-slate-700">{info.reason}</span></div>
       </div>
@@ -12716,18 +12764,9 @@ function ReviewVendorSign() {
           <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
           {!data ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
             : pending.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">目前沒有需要您簽名的約談單</div>
-            : pending.map(t => {
-              const recs = data.records.filter(r => t.recordIds.includes(r.id));
-              return (
-                <div key={t.id} className="bg-white border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
-                  <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193 接談紀錄' : '評核約談'}</span>
-                  <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
-                  <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
-                  <span className="text-xs text-slate-500">{t.kind === 'fm' ? t.no : `約談 ${t.talkDate}・${recs.length} 筆`}</span>
-                  <button onClick={() => setModal({ talk: t, records: recs })} className="ml-auto px-4 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 text-white">簽名</button>
-                </div>
-              );
-            })}
+            : <ReviewTalkRows talks={pending} records={data.records} action="簽名" actionCls="bg-amber-500"
+                info={{ label: '處理內容', value: (t, recs) => t.kind === 'fm' ? '接談紀錄' : `${recs.length} 筆・${recs.reduce((a, r) => a + r.points, 0)} 點` }}
+                onAction={t => setModal({ talk: t, records: data.records.filter(r => t.recordIds.includes(r.id)) })} />}
         </div>
       )}
 
@@ -12821,16 +12860,8 @@ function ReviewInbox({ talks, me, onOpen }) {
         <span className="text-xs px-2 py-0.5 rounded-full bg-violet-600 text-white">{mine.length} 件</span>
         <span className="text-[11px] text-slate-500">同一級多位時，任一位簽核即送下一級</span>
       </div>
-      {mine.map(t => (
-        <div key={t.id} className="flex items-center gap-3 flex-wrap bg-white border border-violet-200 rounded-lg px-3 py-2 text-sm">
-          <span className={`text-xs px-1.5 py-0.5 rounded text-white ${t.kind === 'fm' ? 'bg-violet-600' : 'bg-blue-600'}`}>{t.kind === 'fm' ? 'FM-193' : '評核約談'}</span>
-          <b className="text-slate-800">{t.name}</b>
-          <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
-          <span className="text-xs text-slate-500">{t.no}{t.kind === 'fm' ? '' : `・約談 ${t.talkDate}`}</span>
-          <span className="ml-auto text-xs text-violet-700">目前：{reviewCurMgr(t)?.level}</span>
-          <button onClick={() => onOpen(t)} className="px-3 py-1 rounded-lg bg-violet-600 text-white text-xs font-semibold">簽核</button>
-        </div>
-      ))}
+      <ReviewTalkRows talks={mine} action="簽核" actionCls="bg-violet-600" onAction={onOpen}
+        info={{ label: '目前級別', value: t => <span className="text-violet-700 font-semibold">{reviewCurMgr(t)?.level}</span> }} />
     </div>
   );
 }
