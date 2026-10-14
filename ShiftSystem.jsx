@@ -11809,7 +11809,7 @@ function ReviewItemsTab() {
     const rd = new FileReader();
     rd.onload = ev => {
       try {
-        const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+        const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellFormula: false, cellHTML: false });
         readSheet(wb, file.name, 0);
       } catch { toast('無法讀取這個檔案，請確認是 Excel 檔', 'error'); }
     };
