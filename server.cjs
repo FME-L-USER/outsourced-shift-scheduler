@@ -241,6 +241,15 @@ async function initDB() {
       PRIMARY KEY (talk_id, party)
     )
   `);
+  // 舊版理貨評核（存在 app_state 內）清除前的永久封存；app_state_backup 只留最近 30 份，不適合長期保存
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS review_legacy_archive (
+      id         SERIAL      PRIMARY KEY,
+      data       JSONB       NOT NULL,
+      created_by TEXT        NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   // 理貨評核操作紀錄：解鎖（含失敗）、修改項目、修改聲明、變更密碼
   await pool.query(`
     CREATE TABLE IF NOT EXISTS review_audit (
@@ -2857,6 +2866,41 @@ async function reviewDisplayName(username) {
   const { rows } = await pool.query('SELECT display_name FROM users WHERE username=$1', [username]);
   return rows[0]?.display_name || username;
 }
+
+// ── 清除舊版理貨評核資料（管理員）────────────────────────
+// 舊版把評核紀錄、約談單等存在共用資料 app_state；新版改用獨立資料表，不再讀取。
+// 清除前先整份備份 app_state，並把舊欄位永久封存到 review_legacy_archive。
+const LEGACY_REVIEW_KEYS = ['reviewRecords', 'reviewTalks', 'reviewItems', 'reviewConsent', 'reviewBatch'];
+const legacyCount = data => Object.fromEntries(LEGACY_REVIEW_KEYS.filter(k => data?.[k] !== undefined && data?.[k] !== null)
+  .map(k => [k, Array.isArray(data[k]) ? data[k].length : 1]));
+app.get('/api/maintenance/legacy-review', requireAuth, requireAdmin, async (_req, res) => {
+  const { rows } = await pool.query("SELECT data FROM app_state WHERE id='main'");
+  const { rows: arc } = await pool.query('SELECT id, created_by, created_at FROM review_legacy_archive ORDER BY id DESC LIMIT 1');
+  res.json({ counts: legacyCount(rows[0]?.data), archived: arc[0] || null });
+});
+app.post('/api/maintenance/legacy-review/clear', requireAuth, requireAdmin, requireClientVersion, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query("SELECT data FROM app_state WHERE id='main' FOR UPDATE");
+    const data = rows[0]?.data;
+    const counts = legacyCount(data);
+    if (!Object.keys(counts).length) { await client.query('ROLLBACK'); return res.status(409).json({ error: '沒有舊版理貨評核資料需要清除' }); }
+    const legacy = Object.fromEntries(Object.keys(counts).map(k => [k, data[k]]));
+    await client.query('INSERT INTO app_state_backup (data, note) VALUES ($1, $2)', [data, 'before-clear-legacy-review']);
+    const { rows: arc } = await client.query(
+      'INSERT INTO review_legacy_archive (data, created_by) VALUES ($1, $2) RETURNING id, created_at', [legacy, req.user.username]);
+    // 只移除舊版理貨評核的欄位，其餘共用資料（班表、清冊、點名…）不動
+    await client.query(`UPDATE app_state SET data = data - $1::text[], updated_at = NOW() WHERE id='main'`, [Object.keys(counts)]);
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, 'legacy-clear', { counts, archiveId: arc[0].id });
+    res.json({ counts, archiveId: arc[0].id, archivedAt: arc[0].created_at });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('legacy-review clear error:', e.message);
+    res.status(500).json({ error: '清除失敗，資料未變更' });
+  } finally { client.release(); }
+});
 
 // 可送呈的主管與經辦名單（依帳號與權限的主管級別）
 app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req, res) => {

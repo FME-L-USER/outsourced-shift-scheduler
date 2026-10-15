@@ -13322,6 +13322,47 @@ function ReviewItemsTab() {
   );
 }
 
+// 系統設定：清除舊版理貨評核資料（僅管理員）。清除前伺服器會整份備份並永久封存舊資料
+const LEGACY_REVIEW_LABEL = { reviewRecords: '評核紀錄', reviewTalks: '約談單', reviewItems: '評核項目', reviewConsent: '約談聲明', reviewBatch: '計分批次' };
+function ReviewLegacyClear() {
+  const toast = useToast();
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => reviewApi('/api/maintenance/legacy-review').then(setSt).catch(e => setSt({ error: e.message })), []);
+  useEffect(() => { load(); }, [load]);
+  const counts = st?.counts ?? {};
+  const keys = Object.keys(counts);
+  const clear = async () => {
+    const list = keys.map(k => `${LEGACY_REVIEW_LABEL[k] ?? k} ${counts[k]} 筆`).join('、');
+    if (!await askConfirm(`確定清除舊版理貨評核資料？\n${list}\n\n清除前會先整份備份，舊資料另外永久封存；班表、清冊、點名等其他資料不受影響。`)) return;
+    setBusy(true);
+    try {
+      const r = await reviewApi('/api/maintenance/legacy-review/clear', { method: 'POST' });
+      toast(`已清除舊版理貨評核資料（封存編號 ${r.archiveId}）`, 'success');
+      await load();
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-xs text-slate-500">
+        舊版理貨評核把紀錄存在共用資料裡；新版改用獨立資料表，不會讀取這些舊資料。
+        <br />清除前系統會先整份備份共用資料，並把舊資料另外永久封存，必要時可以找回。
+      </p>
+      {st?.error ? <div className="text-red-600">{st.error}</div>
+        : !st ? <div className="text-slate-400">讀取中…</div>
+        : keys.length === 0 ? (
+          <div className="text-teal-700">✅ 沒有舊版理貨評核資料{st.archived ? `（已於 ${reviewFmtTime(st.archived.created_at)} 由 ${st.archived.created_by} 清除並封存，封存編號 ${st.archived.id}）` : ''}</div>
+        ) : (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-slate-700">目前有：{keys.map(k => <b key={k} className="mr-2">{LEGACY_REVIEW_LABEL[k] ?? k} {counts[k]} 筆</b>)}</span>
+            <button onClick={clear} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-50">清除舊版資料</button>
+          </div>
+        )}
+    </div>
+  );
+}
+
 // 系統設定：評核項目維護密碼（僅管理員；只存雜湊，畫面不顯示目前密碼）
 function ReviewPasswordSetting() {
   const toast = useToast();
@@ -13851,6 +13892,10 @@ function Settings() {
 
       {isAdminUser && (<SettingsSection title="理貨評核：評核項目維護密碼" desc="進入「理貨評核 → ④ 評核項目維護」時要輸入的密碼">
         <ReviewPasswordSetting />
+      </SettingsSection>)}
+
+      {isAdminUser && (<SettingsSection title="理貨評核：清除舊版資料" desc="舊版理貨評核存在共用資料中的紀錄，新版已不使用">
+        <ReviewLegacyClear />
       </SettingsSection>)}
 
       {/* ── 資料健檢與合併 ── */}
