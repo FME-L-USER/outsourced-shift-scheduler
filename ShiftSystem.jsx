@@ -12677,24 +12677,15 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
           <span className="text-[11px] text-slate-400">倉別、課別、組別、廠商依上方篩選列</span>
           <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、項目代號、編號" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-56" />
         </div>
-        <div className="flex items-center gap-2 flex-wrap border-t border-[#EFEBE3] pt-2">
-          <span className="text-xs font-semibold text-slate-500">約談流程</span>
-          <span className="text-[11px] text-slate-400">點步驟可切換清單</span>
-          {[['all', '全部'], ['void', '已作廢']].map(([k, l]) => (
-            <button key={k} onClick={() => setStatus(k)} className={`px-3 py-1 rounded-full text-sm border ${status === k
-              ? (k === 'void' ? 'bg-slate-600 text-white border-slate-600' : 'bg-blue-600 text-white border-blue-600') : 'bg-white text-slate-600 border-slate-200'}`}>{l} <b>{countOf(k)}</b></button>
-          ))}
-        </div>
-        <div className="flex items-stretch gap-1 text-xs overflow-x-auto">
-          {REVIEW_FLOW.map(([t, sub, st], i) => (
-            <React.Fragment key={t}>
-              <button disabled={!st} onClick={() => st && setStatus(st)}
-                className={`flex-1 min-w-[6.5rem] rounded-lg border px-2 py-1.5 text-left ${status === st ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50'} ${st ? 'hover:border-blue-400' : 'cursor-default'}`}>
-                <div className={`font-semibold ${status === st ? 'text-blue-700' : 'text-slate-700'}`}>{i < 5 ? `${i + 1}. ` : ''}{t}</div>
-                <div className="text-[10.5px] text-slate-400">{sub}{st ? <>　<b className="text-slate-600">{countOf(st)}</b></> : null}</div>
-              </button>
-              {i < REVIEW_FLOW.length - 1 && <span className="self-center text-slate-300">›</span>}
-            </React.Fragment>
+        {/* 狀態分頁：依約談流程排列（待約談 → 待簽核 → 待主管簽核 → 已完成），數字為目前件數 */}
+        <div className="flex items-center gap-1 flex-wrap border-t border-[#EFEBE3] pt-2 text-sm">
+          {[['all', '全部'], ['todo', '待約談'], ['pending', '待簽核'], ['mgr', '待主管簽核'], ['done', '已完成'], ['void', '已作廢']].map(([k, l]) => (
+            <button key={k} onClick={() => setStatus(k)}
+              className={`px-3 py-1 rounded-full border ${k === 'void' ? 'ml-auto' : ''} ${status === k
+                ? (k === 'void' ? 'bg-slate-600 text-white border-slate-600' : 'bg-blue-600 text-white border-blue-600')
+                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'}`}>
+              {l} <b>{countOf(k)}</b>
+            </button>
           ))}
         </div>
       </div>
