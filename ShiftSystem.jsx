@@ -12055,7 +12055,8 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
         ...reviewEmpBody(person), workDate: date, item, count, zeroPoints: zero, penalty: penalty ?? '',
         extra: { absType: extra.absType || reviewAbsType(item), time: extra.time, note: extra.note, by: extra.by || me.name } } });
       toast(`已開立 ${r.no}：${r.name} ${r.item.code}（${reviewNthLabel(r.nth)}，${r.points} 點），到「② 約談進度」約談`, 'success');
-      setItem(null); setCount(1); setZero(false); setPenalty(null); setExtra(x => ({ ...x, absType: '', time: '', note: '' }));
+      // 開立完清空人員與項目，避免下一筆誤開在同一人身上（作業日保留，方便連續登記）
+      setPerson(null); setItem(null); setCount(1); setZero(false); setPenalty(null); setExtra(x => ({ ...x, absType: '', time: '', note: '' }));
       await reload();
     } catch (e) { toast(e.message, 'error'); }
     finally { setBusy(false); }
