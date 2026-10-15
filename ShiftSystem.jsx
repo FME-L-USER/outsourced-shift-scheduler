@@ -11764,6 +11764,9 @@ const reviewTalkNo = (t, records) => t.kind === 'fm' ? (t.no || '')
   : records.filter(r => t.recordIds.includes(r.id)).map(r => r.no).filter(Boolean).join('、');
 const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vendor: p.vendor, dept: p.dept, grp: p.grp });
 
+// ② 約談進度清單：一列一個人／一張單（表頭與每一列共用，欄位對齊）
+// 操作、狀態放最前面：清單比畫面寬（iPad 直拿）時也不必橫向捲動就按得到
+const REVIEW_LIST_GRID = 'grid grid-cols-[1rem_6.5rem_5.5rem_8.5rem_10.5rem_5.5rem_minmax(7rem,1fr)_2.5rem] items-center gap-2';
 // 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
 const REVIEW_REC_GRID = 'grid grid-cols-[1rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem_3.5rem] items-center gap-3';
 
@@ -12596,49 +12599,57 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
     : <span title={`只有開立人（${createdBy}）或管理員可以作廢`} className={`${cls} border border-slate-200 text-slate-300 cursor-not-allowed`}>作廢</span>;
   const badge = st => <span className={`text-xs px-2 py-0.5 rounded-full border ${REVIEW_STATUS[st][1]}`}>{REVIEW_STATUS[st][0]}</span>;
 
-  const personCard = u => {
-    const total = u.recs.reduce((a, r) => a + r.points, 0);
-    return (
-      <div key={u.key} className="bg-white border border-[#DDD9D0] rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 flex items-center gap-3 flex-wrap bg-[#FAF8F4]">
-          <span className="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">理貨評核</span>
-          <b className="text-slate-800">{u.name}</b><span className="font-mono text-xs text-slate-500">{u.empNo}</span>
-          <ReviewUnitTags dept={u.dept} grp={u.grp} vendor={u.vendor} />
-          {badge('todo')}
-          {u.draft && <span className="text-xs px-2 py-0.5 rounded-full border bg-sky-50 border-sky-200 text-sky-700">📝 草稿 {reviewFmtTime(u.draft.updatedAt).slice(11)}</span>}
-          <span className="ml-auto text-sm text-slate-600">{u.recs.length} 筆・共 <b className="text-rose-600">{total}</b> 點</span>
-          <button onClick={() => setModal({ mode: 'review', talk: u.draft, person: u, records: u.recs })}
-            className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white">{u.draft ? '繼續約談' : '約談'}（{u.recs.length} 筆）</button>
-        </div>
-        <div className="overflow-x-auto"><div className="min-w-[44rem]">
-        <div className={`${REVIEW_REC_GRID} px-4 py-1.5 border-t border-[#EFEBE3] bg-white text-[11px] text-slate-400`}>
-          <span /><span>單號</span><span>作業日</span><span>項目</span><span>評核內容</span>
-          <span className="text-right">點數</span><span className="text-right">第幾次</span><span />
-        </div>
+  const stop = fn => e => { e.preventDefault(); e.stopPropagation(); fn(); };
+  const kindChip = (fm, label) => <span className={`text-[11px] px-1.5 py-0.5 rounded text-white ${fm ? 'bg-violet-600' : 'bg-blue-600'}`}>{label}</span>;
+  const who = (u, strike) => (
+    <span className="min-w-0 leading-tight">
+      <span className="flex items-baseline gap-1.5 min-w-0"><b className={`truncate ${strike ? 'line-through' : 'text-slate-800'}`}>{u.name}</b><span className="font-mono text-[11px] text-slate-400 shrink-0">{u.empNo}</span></span>
+      <span className="block text-[11px] truncate mt-0.5" title={[u.dept, u.grp, u.vendor].filter(Boolean).join('／')}>
+        <span className="text-teal-700">{u.dept || '—'}</span><span className="text-slate-300">／</span><span className="text-sky-700">{u.grp || '—'}</span><span className="text-slate-400">・{u.vendor}</span></span>
+    </span>
+  );
+  const dates = ds => { const a = [...ds].sort(); return <span className="tabular-nums text-slate-500 leading-tight">{a[0]}{a.length > 1 && a[a.length - 1] !== a[0] && <span className="block text-[11px]">～{a[a.length - 1]}</span>}</span>; };
+  const more = n => n > 1 && <span className="ml-1 text-[11px] px-1 rounded bg-slate-100 text-slate-500 whitespace-nowrap">等 {n} 筆</span>;
+  const btn = (label, onClick, cls) => <button onClick={stop(onClick)} className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap ${cls}`}>{label}</button>;
+  const lead = (st, act) => <><span className="min-w-0">{act}</span><span className="leading-tight min-w-0">{st}</span></>;
+  const row = (u, cells, detail, dim) => (
+    <details key={u.key} className={`border-t border-[#EFEBE3] group ${dim ? 'bg-slate-50 text-slate-500' : 'bg-white'}`}>
+      <summary className={`${REVIEW_LIST_GRID} px-3 py-2 text-sm cursor-pointer list-none`}>
+        <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>{cells}
+      </summary>
+      <div className="pl-9 pr-3 pb-3 text-sm space-y-2">{detail}</div>
+    </details>
+  );
+
+  const personRow = u => {
+    const r0 = u.recs[0];
+    return row(u, <>
+      {lead(<>{badge('todo')}{u.draft && <span className="block text-[11px] text-sky-700 mt-0.5">📝 草稿 {reviewFmtTime(u.draft.updatedAt).slice(11)}</span>}</>,
+        btn(`${u.draft ? '繼續約談' : '約談'}（${u.recs.length}）`, () => setModal({ mode: 'review', talk: u.draft, person: u, records: u.recs }), 'bg-blue-600 text-white'))}
+      <span className="min-w-0">{kindChip(false, '理貨評核')}<span className="block font-mono text-[11px] text-slate-600 truncate mt-0.5">{r0.no || '—'}{u.recs.length > 1 ? ` +${u.recs.length - 1}` : ''}</span></span>
+      {who(u)}{dates(u.dates)}
+      <span className="min-w-0 flex items-center"><span className="font-mono text-xs font-bold text-blue-700 mr-1.5 whitespace-nowrap shrink-0">{r0.item.code}</span><span className="truncate text-slate-700">{reviewStrip(r0.item.text)}</span>{more(u.recs.length)}</span>
+      <span className="font-bold text-rose-600 text-right">{u.recs.reduce((a, r) => a + r.points, 0)}</span>
+    </>, (
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
         {u.recs.map(r => (
-          <details key={r.id} className="border-t border-[#EFEBE3] group">
-            <summary className={`${REVIEW_REC_GRID} px-4 py-2 text-sm cursor-pointer list-none`}>
-              <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
+          <div key={r.id} className="px-3 py-2 border-t first:border-t-0 border-slate-100">
+            <div className="grid grid-cols-[3rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_5rem] items-center gap-3">
+              {voidBtn(r.createdBy, () => setVoiding({ kind: 'record', id: r.id, title: `理貨評核 ${r.no}　${r.workDate} ${r.item.code}（${r.points} 點）`, desc: `${r.name}・${reviewStrip(r.item.text)}` }), 'text-xs px-2 py-0.5 rounded text-center')}
               <span className="font-mono text-xs text-slate-600 truncate">{r.no || '—'}</span>
-              <span className="text-slate-500 tabular-nums">{r.workDate}</span>
+              <span className="tabular-nums text-slate-500">{r.workDate}</span>
               <span className="font-mono text-xs font-bold text-blue-700">{r.item.code}</span>
-              <span className="truncate text-slate-700">{reviewStrip(r.item.text)}</span>
+              <span className="truncate text-slate-700" title={reviewStrip(r.item.text)}>{reviewStrip(r.item.text)}</span>
               <span className="font-bold text-rose-600 text-right">{r.points} 點</span>
               <span className="text-xs text-slate-500 text-right">{reviewNthLabel(r.nth)}</span>
-              {voidBtn(r.createdBy, () => setVoiding({ kind: 'record', id: r.id, title: `理貨評核 ${r.no}　${r.workDate} ${r.item.code}（${r.points} 點）`, desc: `${r.name}・${reviewStrip(r.item.text)}` }), 'text-xs px-2 py-0.5 rounded')}
-            </summary>
-            <div className="px-12 pb-3 text-sm space-y-1">
-              <div className="text-slate-700">{reviewStrip(r.item.text)}</div>
-              <div className="text-xs text-slate-500">獎懲方式：<span className="text-slate-700">{r.penalty || '—'}</span></div>
-              <div className="text-xs text-slate-400">開立：{r.extra?.by || r.createdBy}・{reviewFmtTime(r.createdAt)}{r.extra?.note ? `・備註：${r.extra.note}` : ''}</div>
             </div>
-          </details>
+            <div className="text-[11px] text-slate-400 mt-0.5 pl-[3.75rem]">獎懲方式：<span className="text-slate-600">{r.penalty || '—'}</span>・開立：{r.extra?.by || r.createdBy} {reviewFmtTime(r.createdAt)}{r.extra?.note ? `・備註：${r.extra.note}` : ''}</div>
+          </div>
         ))}
-        </div></div>
       </div>
-    );
+    ));
   };
-  const talkCard = u => {
+  const talkRow = u => {
     const t = u.talk, fm = t.kind === 'fm';
     const recs = fm ? [] : recsOfTalk(t);
     const mine = reviewMyTurn(t, me.user);
@@ -12647,49 +12658,43 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
       if (t.status === 'mgr') openApprove(t);
       else setModal({ mode: t.status === 'todo' ? 'fm' : t.status === 'pending' ? 'cosign' : 'view', talk: t, person: t, records: recs });
     };
-    return (
-      <div key={u.key} className={`bg-white border rounded-2xl overflow-hidden ${fm ? 'border-violet-200' : 'border-[#DDD9D0]'}`}>
-        <div className={`px-4 py-3 flex items-center gap-3 flex-wrap ${fm ? 'bg-violet-50/50' : 'bg-[#FAF8F4]'}`}>
-          <span className={`text-xs px-1.5 py-0.5 rounded text-white ${fm ? 'bg-violet-600' : 'bg-blue-600'}`}>{fm ? 'FM-193 接談紀錄' : '評核約談'}</span>
-          {fm && t.no && <span className="font-mono text-xs text-slate-600">{t.no}</span>}
-          <b className="text-slate-800">{t.name}</b><span className="font-mono text-xs text-slate-500">{t.empNo}</span>
-          <ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} />
-          {badge(t.status)}
-          <span className="ml-auto text-sm text-slate-600">{fm ? `接談 ${t.talkDate || '—'}` : <>約談 {t.talkDate}・{recs.length} 筆・共 <b className="text-rose-600">{recs.reduce((a, r) => a + r.points, 0)}</b> 點</>}</span>
-          {t.status === 'mgr' && <span className="text-xs text-violet-700">送呈 {reviewMgrText(t)}</span>}
-          {fm && t.status === 'todo' && voidBtn(t.createdBy, () => setVoiding({ kind: 'talk', id: t.id, title: `FM-193 接談紀錄 ${t.no}`, desc: `${t.name}・${(t.content.issue || '').slice(0, 40)}` }), 'px-3 py-1.5 rounded-lg text-sm')}
-          <button onClick={open} className={`px-4 py-1.5 rounded-lg text-sm font-semibold ${t.status === 'done' || (t.status === 'mgr' && !mine)
-            ? 'border border-slate-300 text-slate-600' : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white'}`}>{action}</button>
+    const no = reviewTalkNo(t, data.records);
+    return row(u, <>
+      {lead(<>{badge(t.status)}{t.status === 'mgr' && <span className="block text-[11px] text-violet-700 mt-0.5">{reviewCurMgr(t)?.level}</span>}</>,
+        btn(action, open, t.status === 'done' || (t.status === 'mgr' && !mine) ? 'border border-slate-300 text-slate-600 bg-white'
+          : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white'))}
+      <span className="min-w-0">{kindChip(fm, fm ? 'FM-193' : '評核約談')}<span className="block font-mono text-[11px] text-slate-600 truncate mt-0.5" title={no}>{no || '—'}</span></span>
+      {who(t)}{dates([t.talkDate || '—'])}
+      <span className="min-w-0 flex items-center">{fm
+        ? <span className="truncate text-slate-700">{t.content.issue || '—'}</span>
+        : recs[0] ? <><span className="font-mono text-xs font-bold text-blue-700 mr-1.5 whitespace-nowrap shrink-0">{recs[0].item.code}</span><span className="truncate text-slate-700">{reviewStrip(recs[0].item.text)}</span>{more(recs.length)}</> : '—'}</span>
+      <span className="font-bold text-rose-600 text-right">{fm ? <span className="text-slate-300 font-normal">—</span> : recs.reduce((a, r) => a + r.points, 0)}</span>
+    </>, <>
+      {t.status === 'mgr' && <div className="text-xs text-violet-700">送呈 {reviewMgrText(t)}</div>}
+      {fm ? (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <div className="grid grid-cols-2 gap-3 px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400"><span>主訴問題／事件內容</span><span>約定／決議事項</span></div>
+          <div className="grid grid-cols-2 gap-3 px-3 py-2 border-t border-slate-100 text-slate-700">
+            <span className="line-clamp-3 whitespace-pre-wrap">{t.content.issue || '—'}</span><span className="line-clamp-3 whitespace-pre-wrap">{t.content.resolution || '—'}</span>
+          </div>
         </div>
-        <div className="px-4 py-3 border-t border-[#EFEBE3]">
-          {fm ? (
-            <div className="border border-slate-200 rounded-lg overflow-hidden text-sm">
-              <div className="grid grid-cols-2 gap-3 px-3 py-1.5 bg-slate-50 text-[11px] text-slate-400"><span>主訴問題／事件內容</span><span>約定／決議事項</span></div>
-              <div className="grid grid-cols-2 gap-3 px-3 py-2 border-t border-slate-100 text-slate-700">
-                <span className="line-clamp-2 whitespace-pre-wrap">{t.content.issue || '—'}</span><span className="line-clamp-2 whitespace-pre-wrap">{t.content.resolution || '—'}</span>
-              </div>
-            </div>
-          ) : <ReviewRecTable recs={recs} total={false} />}
-        </div>
-      </div>
-    );
+      ) : <ReviewRecTable recs={recs} total={false} />}
+      {fm && t.status === 'todo' && <div>{voidBtn(t.createdBy, () => setVoiding({ kind: 'talk', id: t.id, title: `FM-193 接談紀錄 ${t.no}`, desc: `${t.name}・${(t.content.issue || '').slice(0, 40)}` }), 'inline-block px-3 py-1 rounded-lg text-xs')}</div>}
+    </>);
   };
-  const voidCard = u => {
+  const voidRow = u => {
     const r = u.rec, t = u.talk, info = (r ?? t).voidInfo || {};
-    return (
-      <div key={u.key} className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-500">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className={`text-xs px-1.5 py-0.5 rounded ${t ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>{t ? 'FM-193 接談紀錄' : '理貨評核'}</span>
-          <span className="font-mono text-xs line-through">{(t ?? r).no || '—'}</span>
-          <b className="text-slate-600 line-through">{u.name}</b><span className="font-mono text-xs">{u.empNo}</span>
-          <ReviewUnitTags dept={u.dept} grp={u.grp} vendor={u.vendor} />
-          {badge('void')}
-          <span className="line-through">{t ? `接談 ${t.talkDate || '—'}` : `${r.workDate} ${r.item.code} ${r.points} 點`}</span>
-          <span className="ml-auto text-xs">作廢：{info.byName || info.by}・{reviewFmtTime(info.at)}</span>
-        </div>
-        <div className="mt-1 text-xs">作廢原因：<span className="text-slate-700">{info.reason}</span></div>
-      </div>
-    );
+    return row(u, <>
+      {lead(badge('void'), <span className="text-[11px] leading-tight">{info.byName || info.by}<span className="block">{reviewFmtTime(info.at).slice(5)}</span></span>)}
+      <span className="min-w-0"><span className={`text-[11px] px-1.5 py-0.5 rounded ${t ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>{t ? 'FM-193' : '理貨評核'}</span>
+        <span className="block font-mono text-[11px] line-through truncate mt-0.5">{(t ?? r).no || '—'}</span></span>
+      {who(u, true)}{dates(u.dates)}
+      <span className="truncate text-xs">作廢原因：<span className="text-slate-700">{info.reason}</span></span>
+      <span className="text-right line-through">{t ? '—' : r.points}</span>
+    </>, <>
+      <div className="text-xs">{t ? `接談 ${t.talkDate || '—'}・${(t.content?.issue || '').slice(0, 80)}` : `${r.workDate}　${r.item.code} ${reviewStrip(r.item.text)}（${r.points} 點）`}</div>
+      <div className="text-xs">作廢原因：<span className="text-slate-700">{info.reason}</span>　作廢：{info.byName || info.by}・{reviewFmtTime(info.at)}</div>
+    </>, true);
   };
 
   return (
@@ -12721,7 +12726,18 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
 
       {!data.loaded ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
         : shown.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">此條件下沒有紀錄</div>
-        : <div className="space-y-3">{shown.map(u => u.type === 'person' ? personCard(u) : u.type === 'talk' ? talkCard(u) : voidCard(u))}</div>}
+        : (
+          <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
+            <div className="min-w-[50rem]">
+              <div className={`${REVIEW_LIST_GRID} px-3 py-1.5 bg-[#FAF8F4] text-[11px] text-slate-400`}>
+                <span /><span>{status === 'void' ? '作廢人' : '操作'}</span><span>狀態</span><span>類型／單號</span><span>人員・課別／組別</span><span>日期</span><span>內容</span>
+                <span className="text-right">點數</span>
+              </div>
+              {shown.map(u => u.type === 'person' ? personRow(u) : u.type === 'talk' ? talkRow(u) : voidRow(u))}
+            </div>
+            <div className="px-3 py-1.5 border-t border-[#EFEBE3] text-[11px] text-slate-400">共 {shown.length} 列・點 ▸ 展開明細</div>
+          </div>
+        )}
 
       {modal && <ReviewTalkModal {...modal} managers={managers} staff={staff} warehouses={warehouses} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
       {voiding && <ReviewVoidModal title={voiding.title} desc={voiding.desc} onClose={() => setVoiding(null)} onConfirm={doVoid} />}
@@ -13462,13 +13478,21 @@ function ReviewPage() {
     admin: currentUser?.role === ROLES.ADMIN,
   }), [currentUser]);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (silent = false) => {
     try {
       const d = await reviewApi(`/api/review/list?from=${range.from}&to=${range.to}`);
       setData({ ...d, loaded: true });
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { if (!silent) toast(e.message, 'error'); }
   }, [range.from, range.to, toast]);
   useEffect(() => { reload(); }, [reload]);
+  // 別台裝置開立、約談、簽核後，這裡不必重新整理：畫面開著每 30 秒更新一次，切回本頁時立即更新
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible') reload(true); };
+    const id = setInterval(tick, 30000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [reload]);
   useEffect(() => {
     reviewApi('/api/review/managers').then(setManagers).catch(() => {});
     reviewApi('/api/review/staff').then(setStaff).catch(() => {});
