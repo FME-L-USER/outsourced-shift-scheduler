@@ -12614,8 +12614,11 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
   const lead = (st, act) => <><span className="min-w-0">{act}</span><span className="leading-tight min-w-0">{st}</span></>;
   const row = (u, cells, detail, dim) => (
     <details key={u.key} className={`border-t border-[#EFEBE3] group ${dim ? 'bg-slate-50 text-slate-500' : 'bg-white'}`}>
-      <summary className={`${REVIEW_LIST_GRID} px-3 py-2 text-sm cursor-pointer list-none`}>
-        <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>{cells}
+      {/* iPad Safari 的 summary 會多一個原生箭頭並當成格線的一欄，造成整列錯位：隱藏原生箭頭，格線放在內層 */}
+      <summary className="block list-none cursor-pointer [&::-webkit-details-marker]:hidden">
+        <div className={`${REVIEW_LIST_GRID} px-3 py-2 text-sm`}>
+          <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>{cells}
+        </div>
       </summary>
       <div className="pl-9 pr-3 pb-3 text-sm space-y-2">{detail}</div>
     </details>
