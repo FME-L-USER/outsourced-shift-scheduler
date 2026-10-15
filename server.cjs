@@ -223,6 +223,9 @@ async function initDB() {
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // 計分月份（⑤ 資料統計）：設定人與時間
+  await pool.query(`ALTER TABLE review_talks ADD COLUMN IF NOT EXISTS score_by TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE review_talks ADD COLUMN IF NOT EXISTS score_at TIMESTAMPTZ`);
   // FM-193 編號不重複；同一人同時只能有一份評核約談草稿（兩人同時開單也不會重複）
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_talks_no ON review_talks (no) WHERE no <> ''`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS review_talks_draft ON review_talks (emp_id) WHERE kind = 'review' AND status = 'todo'`);
@@ -2816,6 +2819,7 @@ function talkRow(t) {
     id: Number(t.id), kind: t.kind, no: t.no, empId: t.emp_id, empNo: t.emp_no, name: t.emp_name, vendor: t.vendor,
     dept: t.dept, grp: t.grp, talkDate: t.talk_date ? fmtYmd(t.talk_date) : '', content: t.content, recordIds: (t.record_ids || []).map(Number),
     status: t.status, signed: t.signed, mgrs: t.mgrs, voidInfo: t.void_info, scoreMonth: t.score_month,
+    scoreBy: t.score_by || '', scoreAt: t.score_at || null,
     createdBy: t.created_by, createdAt: t.created_at, updatedAt: t.updated_at,
   };
 }
@@ -3298,6 +3302,82 @@ app.post('/api/review/talks/:id/approve', requireAuth, requireManagerOrAdmin, re
     await client.query('ROLLBACK').catch(() => {});
     console.error('review/talks approve error:', e.message);
     res.status(500).json({ error: '簽核失敗' });
+  } finally { client.release(); }
+});
+
+// ── ③ 報表：一次取多張約談單的簽名影像（列印、預覽用）──
+app.get('/api/review/signs', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const ids = String(req.query.ids || '').split(',').map(Number).filter(Boolean).slice(0, 200);
+  if (!ids.length) return res.json({});
+  const { rows } = await pool.query(
+    'SELECT talk_id, party, image, consent, signer_name, signed_at FROM review_signs WHERE talk_id = ANY($1::bigint[])', [ids]);
+  const out = {};
+  for (const r of rows) (out[Number(r.talk_id)] ??= {})[r.party] = { image: r.image, consent: r.consent, name: r.signer_name, at: r.signed_at };
+  res.json(out);
+});
+
+// ── ⑤ 資料統計：計分月份與結轉關帳 ─────────────────────────
+// 計分月份只能選「上月／本月／下月」（台灣時間），已結轉的月份不能選，也不能再改；只有已完成的評核約談可以計分。
+const ymOf = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+function scoreMonthChoices() {
+  const d = twToday(), y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7));
+  const shift = k => { const t = y * 12 + (m - 1) + k; return ymOf(Math.floor(t / 12), t % 12 + 1); };
+  return [shift(-1), shift(0), shift(1)];
+}
+async function closedMonths(db = pool) {
+  const { rows } = await db.query(`SELECT value FROM review_config WHERE key='closedMonths'`);
+  return Array.isArray(rows[0]?.value?.months) ? rows[0].value.months : [];
+}
+app.get('/api/review/score-config', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+  const { rows } = await pool.query(`SELECT value, updated_by, updated_at FROM review_config WHERE key='closedMonths'`);
+  res.json({ choices: scoreMonthChoices(), closed: rows[0]?.value?.months || [], closedLog: rows[0]?.value?.log || [] });
+});
+app.put('/api/review/talks/:id/score', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const month = String(req.body?.month ?? '');
+  const choices = scoreMonthChoices();
+  if (month && !choices.includes(month)) return res.status(400).json({ error: '計分月份只能選上月、本月或下月' });
+  try {
+    const closed = await closedMonths();
+    if (month && closed.includes(month)) return res.status(409).json({ error: `${month} 已結轉，不能再計入` });
+    const { rows } = await pool.query('SELECT kind, status, score_month FROM review_talks WHERE id=$1', [Number(req.params.id) || 0]);
+    const t = rows[0];
+    if (!t || t.kind !== 'review') return res.status(404).json({ error: '找不到這張評核約談單' });
+    if (t.status !== 'done') return res.status(409).json({ error: '完成簽核後才能設定計分月份' });
+    if (t.score_month && closed.includes(t.score_month)) return res.status(409).json({ error: `${t.score_month} 已結轉，計分月份不能修改` });
+    const { rows: up } = await pool.query(
+      `UPDATE review_talks SET score_month=$2, score_by=$3, score_at=NOW() WHERE id=$1 RETURNING *`,
+      [Number(req.params.id), month, month ? req.user.username : '']);
+    await reviewAudit(req.user.username, 'score-month', { id: Number(req.params.id), month });
+    res.json(talkRow(up[0]));
+  } catch (e) {
+    console.error('review/score error:', e.message);
+    res.status(500).json({ error: '設定計分月份失敗' });
+  }
+});
+// 結轉（僅管理員）：該月份的計分月份鎖定，也不能再把其他約談計入；不提供解除
+app.post('/api/review/close-month', requireAuth, requireAdmin, requireClientVersion, async (req, res) => {
+  const month = String(req.body?.month ?? '');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: '月份格式不正確' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('review-close-month'))`);
+    const { rows } = await client.query(`SELECT value FROM review_config WHERE key='closedMonths'`);
+    const v = rows[0]?.value || { months: [], log: [] };
+    if ((v.months || []).includes(month)) { await client.query('ROLLBACK'); return res.status(409).json({ error: `${month} 已經結轉過` }); }
+    const { rows: c } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM review_talks WHERE kind='review' AND status='done' AND score_month=$1`, [month]);
+    const next = { months: [...(v.months || []), month].sort(), log: [...(v.log || []), { month, by: req.user.username, at: new Date().toISOString(), talks: c[0].n }] };
+    await client.query(
+      `INSERT INTO review_config (key, value, updated_by, updated_at) VALUES ('closedMonths', $1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, [next, req.user.username]);
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, 'close-month', { month, talks: c[0].n });
+    res.json({ closed: next.months, closedLog: next.log });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('review/close-month error:', e.message);
+    res.status(500).json({ error: '結轉失敗' });
   } finally { client.release(); }
 });
 
