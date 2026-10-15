@@ -2489,6 +2489,9 @@ app.get('/api/attendance', requireAuth, async (req, res) => {
 });
 
 // ── PUT /api/attendance （admin / area / vendor / worker 可寫）─────
+// 出勤紀錄上「已簽宣導告知單」的欄位：一旦簽署就不會被其他裝置的舊資料洗掉
+const SAFETY_ACK_KEYS = ['safetyAck', 'safetyAckAt', 'safetyAckVer', 'safetySigned'];
+
 app.put('/api/attendance', requireAuth, requireClientVersion, requireDataEpoch, async (req, res) => {
   const role = req.user?.role;
   if (!['admin','area','vendor','worker'].includes(role))
@@ -2562,14 +2565,34 @@ app.put('/api/attendance', requireAuth, requireClientVersion, requireDataEpoch, 
 
     for (const [date, dayMap] of Object.entries(attendData)) {
       if (!dayMap || Object.keys(dayMap).length === 0) continue;
-      await pool.query(
-        `UPDATE app_state
-            SET data = jsonb_set(data, ARRAY['attendData', $1],
-                  COALESCE(data->'attendData'->$1, '{}'::jsonb) || $2::jsonb),
-                updated_at = NOW()
-          WHERE id='main'`,
-        [String(date), JSON.stringify(dayMap)]
-      );
+      // 出勤紀錄以「整筆」覆蓋。別台裝置若拿著簽宣導單之前載入的舊紀錄存檔，會把「已簽宣導告知單」
+      // 的標記洗掉，當事人就被要求重簽。已簽的標記只會由簽名寫入、不會被取消，所以送來的紀錄
+      // 沒帶這些欄位時，保留資料庫裡原有的值（同一交易內鎖住再合併，避免兩台同時寫入互相覆蓋）。
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: cur } = await client.query(
+          `SELECT data->'attendData'->$1 AS day FROM app_state WHERE id='main' FOR UPDATE`, [String(date)]);
+        const day = cur[0]?.day ?? {};
+        const merged = {};
+        for (const [empId, rec] of Object.entries(dayMap)) {
+          const old = day?.[empId];
+          merged[empId] = (old?.safetyAck && rec && typeof rec === 'object' && !rec.safetyAck)
+            ? { ...rec, ...Object.fromEntries(SAFETY_ACK_KEYS.filter(k => old[k] !== undefined).map(k => [k, old[k]])) }
+            : rec;
+        }
+        await client.query(
+          `UPDATE app_state
+              SET data = jsonb_set(data, ARRAY['attendData', $1],
+                    COALESCE(data->'attendData'->$1, '{}'::jsonb) || $2::jsonb),
+                  updated_at = NOW()
+            WHERE id='main'`,
+          [String(date), JSON.stringify(merged)]);
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally { client.release(); }
     }
 
     // 臨時人力是清單，沒有逐筆識別；廠商只能換掉自己那幾筆，其餘保留。
@@ -3589,6 +3612,33 @@ app.post('/api/safety-sign', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('POST /api/safety-sign error:', e.message);
     res.status(500).json({ error: '儲存失敗' });
+  }
+});
+
+// 當日是否已簽（不含影像）：出勤紀錄上的「已簽」標記若被洗掉，簽到頁用這裡確認，不要求重簽。
+// 委外人員只能查自己；委外幹部限自己廠商；管理員／日翊不限
+app.get('/api/safety-sign/status', requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  const date = String(req.query.date ?? '');
+  const personId = String(req.query.personId ?? '').slice(0, 80);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !personId) return res.status(400).json({ error: '參數不正確' });
+  try {
+    if (role === 'worker') {
+      if (personId !== req.user.employeeId) return res.status(403).json({ error: '只能查詢本人' });
+    } else if (role === 'vendor') {
+      const { rows } = await pool.query("SELECT data->'employees' AS emps FROM app_state WHERE id='main'");
+      const emp = (rows[0]?.emps ?? []).find(e => e?.id === personId);
+      const mine = new Set((req.user.vendors ?? []).map(normNameSrv));
+      if (!emp || !mine.has(normNameSrv(emp.vendor))) return res.status(403).json({ error: '無權查詢此人員' });
+    } else if (role !== 'admin' && role !== 'area') {
+      return res.status(403).json({ error: '無存取權限' });
+    }
+    const { rows } = await pool.query(
+      'SELECT version, signed_at FROM safety_signs WHERE sign_date=$1 AND person_id=$2 ORDER BY signed_at', [date, personId]);
+    res.json({ signs: rows.map(r => ({ version: r.version, at: r.signed_at })) });
+  } catch (e) {
+    console.error('GET /api/safety-sign/status error:', e.message);
+    res.status(500).json({ error: '查詢失敗' });
   }
 });
 

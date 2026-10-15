@@ -8967,6 +8967,32 @@ async function postSafetySign(url, body) {
 }
 
 /** 告知單由未簽署變成已簽署時，捲動到簽到區塊 */
+/**
+ * 出勤紀錄上的「已簽」標記若遺失（例如被別台裝置的舊資料覆蓋），到伺服器的簽名資料表確認；
+ * 今天已簽目前版次就補回標記，不要求重簽。每人每日只查一次。
+ */
+function useSafetyRestore(date, personId, rec, apply) {
+  const doneRef = useRef('');
+  const acked = safetyAcked(rec);
+  useEffect(() => {
+    const key = `${date}|${personId}`;
+    if (!personId || acked || doneRef.current === key) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    doneRef.current = key;
+    fetch(`/api/safety-sign/status?date=${encodeURIComponent(date)}&personId=${encodeURIComponent(personId)}`,
+      { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const s = (d?.signs ?? []).find(x => x.version === SAFETY_NOTICE.version);
+        if (!s) return;
+        const t = new Date(s.at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        apply({ safetyAck: true, safetyAckAt: t, safetyAckVer: SAFETY_NOTICE.version, safetySigned: true });
+      })
+      .catch(() => { doneRef.current = ''; });
+  }, [date, personId, acked]);   // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 function useJumpWhenAcked(acked) {
   const ref = useRef(null);
   const prevRef = useRef(acked);
@@ -9520,6 +9546,7 @@ function WorkerSelfCheck() {
 
   const rec = attendData[todayStr]?.[empId] ?? {};
   const jumpRef = useJumpWhenAcked(safetyAcked(rec));
+  useSafetyRestore(todayStr, empId, rec, patch => setRec(patch));
   const setRec = patch => {
     const newRecord = { ...rec, ...patch };
     setAttendData(prev => ({
@@ -9681,6 +9708,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
   const emp = empId ? people.find(e => e.id === empId) : null;
   const rec = emp ? getRecord(emp) : {};
   const jumpRef = useJumpWhenAcked(!!emp && safetyAcked(rec));
+  useSafetyRestore(todayStr, emp?.id, rec, patch => emp && setRecord(emp, patch));
   const onSet = patch => {
     lastTouchRef.current = Date.now();
     setRecord(emp, patch);
