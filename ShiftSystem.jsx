@@ -1043,12 +1043,16 @@ function deptOfGroup(warehouses, groupName) {
       if ((d.groups ?? []).includes(groupName)) return { whId: w.id, whName: w.name, deptName: d.name };
   return null;
 }
-// 依上方篩選列（倉別／課別／組別／廠商）篩選當日臨時人員。
+// 臨時人力的作業區：派工匯入、手動新增都沒有作業區，選了特定作業區（例如正光）時不顯示；
+// 選「未設定作業區」時才顯示
+const extraInWorkArea = (e, area) => !area || (area === '__none__' ? !e.workArea : normName(e.workArea) === normName(area));
+// 依上方篩選列（倉別／課別／組別／作業區／廠商）篩選當日臨時人員。
 // 組別已不存在於任何課（例如拆分前的舊「運務組」）時，一旦有倉別或課別條件即不顯示，
 // 避免大肚理貨課的畫面上跑出運務課的臨時人力。
-function filterExtrasByScope(list, warehouses, selectedWarehouse, selectedDeptName, selectedGroup, selectedVendor) {
+function filterExtrasByScope(list, warehouses, selectedWarehouse, selectedDeptName, selectedGroup, selectedVendor, selectedWorkArea = null) {
   return (list ?? []).filter(e => {
     if (selectedVendor && e.vendor !== selectedVendor) return false;
+    if (!extraInWorkArea(e, selectedWorkArea)) return false;
     if (selectedGroup) return !e.group || e.group === selectedGroup;
     if (selectedDeptName || selectedWarehouse) {
       const owner = deptOfGroup(warehouses, e.group);
@@ -4108,7 +4112,7 @@ function Dashboard() {
     const dayExtras = (extras[attendDkPad] ?? []).filter(e => {
       const vendorOk = !selectedWarehouse || scopeVendors.has(e.vendor);
       const groupOk  = !selectedGroup || !e.group || e.group === selectedGroup;
-      return vendorOk && groupOk;
+      return vendorOk && groupOk && extraInWorkArea(e, selectedWorkArea);
     });
     dayExtras.forEach(e => {
       const v = e.vendor || '未分配';
@@ -10096,8 +10100,8 @@ function Attendance({ phoneOnly = false }) {
   }, [warehouses, selectedWarehouse, selectedDept]);
 
   const dateExtras = useMemo(() => filterExtrasByScope(extras[attendDate], warehouses,
-    selectedWarehouse, attendDeptName, selectedGroup, selectedVendor),
-    [extras, attendDate, warehouses, selectedWarehouse, attendDeptName, selectedGroup, selectedVendor]);
+    selectedWarehouse, attendDeptName, selectedGroup, selectedVendor, selectedWorkArea),
+    [extras, attendDate, warehouses, selectedWarehouse, attendDeptName, selectedGroup, selectedVendor, selectedWorkArea]);
 
   const vendorGroups = useMemo(() => {
     const map = {};
