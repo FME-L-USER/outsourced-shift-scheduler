@@ -12211,7 +12211,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   const [signs, setSigns] = useState({});
   // 委外幹部登入後送簽：簽名人姓名自動帶入登入者，不能修改
   const [names, setNames] = useState(() => vendorMode ? { v: me.name, h: me.name } : { v: talk?.signed?.v?.name ?? '', h: '' });
-  const [hSame, setHSame] = useState(false);
+  // 協力商人力主管一律同步廠商主管／幹部的簽名（同一人），不另外顯示簽名框
+  const hSame = true;
   const [resetKey, setResetKey] = useState(0);
   const [mgrPick, setMgrPick] = useState({});
   const [busy, setBusy] = useState(false);
@@ -12223,7 +12224,10 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
 
   const signed = talk?.signed ?? {};
   const parties = kind === 'fm'
-    ? [['w', '受談人員', consent.worker], ['v', '協力商主管／幹部', consent.vendor], ['h', '協力商人力主管', consent.vendor], ['r', `記錄人（${base.recorder || ''}）`, consent.recorder]]
+    ? [['w', '受談人員', consent.worker], ['v', '協力商主管／幹部', consent.vendor],
+       // 人力主管欄：只有以前另外簽過的舊單才顯示
+       ...(signed.h && !signed.h.same ? [['h', '協力商人力主管', consent.vendor]] : []),
+       ['r', `記錄人（${base.recorder || ''}）`, consent.recorder]]
     : [['w', '受約談人員（理貨員）', consent.worker], ['v', '廠商主管／幹部', consent.vendor]];
   const has = p => !!signed[p] || !!signs[p] || (p === 'h' && hSame && !!(signed.v || signs.v));
   const allSigned = parties.every(([p]) => has(p));
@@ -12231,7 +12235,7 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   const sigCb = useMemo(() => Object.fromEntries(['w', 'v', 'h', 'r'].map(p => [p, v => setSign(p, v)])), [setSign]);
   // 內容改了：本次已簽的簽名對應的是舊內容，清除重簽
   const touch = () => {
-    if (Object.values(signs).some(Boolean)) { setSigns({}); setHSame(false); setResetKey(k => k + 1); setWarn(true); }
+    if (Object.values(signs).some(Boolean)) { setSigns({}); setResetKey(k => k + 1); setWarn(true); }
   };
   const setC = patch => { touch(); setContent(c => ({ ...c, ...patch })); };
   const recs = mode === 'review' ? records : records.filter(r => talk?.recordIds?.includes(r.id));
@@ -12280,7 +12284,6 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
   const hint = !has('w') ? '下一步：受約談人員勾選聲明並簽名'
     : needMgr ? '下一步：勾選送呈主管（有人不在場時也要先選，補簽完即自動送出）'
     : !has('v') ? '下一步：廠商主管／幹部勾選聲明並簽名，或先送待簽核由廠商登入補簽'
-    : kind === 'fm' && !has('h') ? '下一步：協力商人力主管簽名（同一人可勾選同步）'
     : kind === 'fm' && !has('r') ? '下一步：記錄人勾選聲明並簽名' : '';
   const signable = mode !== 'view';
 
@@ -12369,12 +12372,6 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                   <div key={p} className="border border-slate-200 rounded-xl p-3 space-y-2">
                     <div className="font-semibold text-slate-700 text-sm flex items-center gap-2 flex-wrap">
                       {label}
-                      {p === 'h' && !done && signable && (
-                        <label className="ml-auto flex items-center gap-1 text-xs font-normal text-slate-500 cursor-pointer">
-                          <input type="checkbox" checked={hSame} onChange={e => { setHSame(e.target.checked); if (e.target.checked) setSign('h', null); }} className="w-4 h-4" />
-                          同步廠商主管／幹部簽名（同一人）
-                        </label>
-                      )}
                     </div>
                     {done ? (
                       <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">
@@ -12385,8 +12382,6 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
                       <div className="text-xs text-red-600">未簽</div>
                     ) : !mayPad(p) ? (
                       <div className="text-xs text-red-600">未簽（須由日翊於約談時簽署）</div>
-                    ) : p === 'h' && hSame ? (
-                      <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">✓ 已同步廠商主管／幹部的簽名，列印時人力主管欄帶入同一份簽名</div>
                     ) : (
                       <>
                         {(p === 'v' || p === 'h') && (vendorMode
@@ -12496,7 +12491,7 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
         </div>
         <div className="px-6 py-4 space-y-3 text-sm">
           <div className="flex gap-2 flex-wrap text-xs">
-            {Object.keys(talk.signed || {}).map(p => (
+            {Object.keys(talk.signed || {}).filter(p => !talk.signed[p]?.same).map(p => (
               <span key={p} className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">✓ {{ w: talk.kind === 'fm' ? '受談人員' : '理貨員', v: '廠商主管／幹部', h: '人力主管', r: '記錄人' }[p]}已簽</span>
             ))}
           </div>
