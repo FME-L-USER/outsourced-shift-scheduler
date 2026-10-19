@@ -179,10 +179,12 @@ function ConfirmHost() {
   );
 }
 
-function Modal({ children, onClose }) {
+// keyboard：內含密碼欄的對話框。iPad 跳出鍵盤時畫面會位移，點到遮罩就誤關，
+// 所以不以點遮罩關閉，並靠上顯示避免被鍵盤擋住
+function Modal({ children, onClose, keyboard = false }) {
   return createPortal(
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className={`fixed inset-0 bg-black/50 z-50 flex justify-center p-4 ${keyboard ? 'items-start pt-[10vh]' : 'items-center'}`}
+         onClick={e => { if (!keyboard && e.target === e.currentTarget) onClose(); }}>
       {children}
     </div>,
     document.body
@@ -4758,7 +4760,7 @@ function UnlockDialog({ hasPwd, onVerify, onOk, onClose }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} keyboard>
       {/* 需自備不透明底色：Modal 只提供半透明遮罩，少了這層會直接透出底下的班表 */}
       <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[340px]">
         <h3 className="font-bold text-slate-800 mb-1">🔓 快速解鎖</h3>
@@ -4777,7 +4779,8 @@ function UnlockDialog({ hasPwd, onVerify, onOk, onClose }) {
             <input type="password" value={pwd} autoFocus
               onChange={e => { setPwd(e.target.value); setErr(''); }}
               onKeyDown={e => { if (e.key === 'Enter') submit(); }}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm mb-2" />
+              autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-base mb-2" />
             {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
 
             <label className="block text-xs font-medium text-slate-600 mb-1">解鎖時間</label>
@@ -9757,7 +9760,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
         <span className="text-lg md:text-xl font-bold text-slate-700">📱 手機控管登記</span>
         <span className="text-xs md:text-sm text-slate-400">{todayStr}{scopeLabel ? `・${scopeLabel}` : ''}</span>
         <button onClick={() => { setExitOpen(true); setExitPwd(''); setExitErr(''); }}
-          className="ml-auto px-3 py-1.5 text-xs text-slate-400 border border-slate-200 rounded-lg hover:bg-slate-50">
+          className="ml-auto px-4 py-2.5 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50">
           離開點選模式
         </button>
       </div>
@@ -9892,7 +9895,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
 
       {/* 離開確認：須輸入解鎖密碼 */}
       {exitOpen && (
-        <div className="fixed inset-0 z-[9001] bg-black/40 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[9001] bg-black/40 flex items-start justify-center px-4 pt-[10vh]">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm space-y-3">
             <h3 className="text-lg font-bold text-slate-800">離開點選模式</h3>
             {unlockPwd ? (
@@ -9901,7 +9904,8 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                 <input type="password" autoFocus value={exitPwd}
                   onChange={e => { setExitPwd(e.target.value); setExitErr(''); }}
                   onKeyDown={e => { if (e.key === 'Enter') tryExit(); }}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                  autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base" />
                 {exitErr && <p className="text-sm text-rose-600">{exitErr}</p>}
               </>
             ) : (
