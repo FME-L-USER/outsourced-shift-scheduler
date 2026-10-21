@@ -13166,25 +13166,32 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
               <button onClick={() => setUnpicked(new Set(docList.map(t => t.id)))} className="px-2 py-0.5 border rounded text-xs">全不選</button>
             </div>
             {docList.length === 0 ? <div className="text-slate-400 text-center py-3">此條件下沒有{kind === 'fm' ? '接談紀錄' : '約談紀錄'}</div> : (
-              <div className="grid sm:grid-cols-2 gap-2">
-                {[...new Set(docList.map(t => t.empId))].map(empId => {
-                  const ds = docList.filter(t => t.empId === empId), p = ds[0];
-                  return (
-                    <div key={empId} className="border border-slate-200 rounded-lg p-2">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap"><b>{p.name}</b><span className="font-mono text-xs text-slate-400">{p.empNo}</span>
-                        <ReviewUnitTags dept={p.dept} grp={p.grp} vendor={p.vendor} plain />
-                        {ds.length > 1 && <button onClick={() => setUnpicked(new Set(docList.filter(t => t.empId !== empId).map(t => t.id)))} className="ml-auto text-xs text-blue-600 underline">只印此人</button>}</div>
-                      {ds.map(t => (
-                        <label key={t.id} className="flex items-center gap-2 py-0.5 cursor-pointer text-xs">
-                          <input type="checkbox" checked={!unpicked.has(t.id)} onChange={e => pickToggle(t.id, e.target.checked)} className="w-4 h-4" />
-                          <span className="tabular-nums">{t.talkDate}</span>
-                          <span className="font-mono text-slate-500 truncate">{t.kind === 'fm' ? t.no : recsOf(t).map(r => r.no).join('、')}</span>
-                          <span className="ml-auto">{reviewStatusChip(t.status)}</span>
-                        </label>
-                      ))}
-                    </div>
-                  );
-                })}
+              // 清單式：一份單據一列，同一人的單據排在一起
+              <div className="border border-slate-200 rounded-lg overflow-x-auto">
+                <table className="w-full text-sm min-w-[44rem]">
+                  <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+                    {['', '約談日', '單號', '受約談人', '課別／組別・廠商', '狀態', ''].map((h, i) => <th key={i} className={th}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {[...new Set(docList.map(t => t.empId))].flatMap(empId => {
+                      const ds = docList.filter(t => t.empId === empId);
+                      return ds.map((t, i) => (
+                        <tr key={t.id} className={`border-t border-[#EFEBE3] cursor-pointer hover:bg-blue-50/40 ${unpicked.has(t.id) ? 'text-slate-400' : ''}`}
+                          onClick={e => { if (e.target.closest('button,input')) return; pickToggle(t.id, unpicked.has(t.id)); }}>
+                          <td className="px-3 py-2 w-8"><input type="checkbox" checked={!unpicked.has(t.id)} onChange={e => pickToggle(t.id, e.target.checked)} className="w-4 h-4" /></td>
+                          <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-slate-600">{t.kind === 'fm' ? t.no : recsOf(t).map(r => <div key={r.id}>{r.no}</div>)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
+                          <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} plain /></td>
+                          <td className="px-3 py-2 whitespace-nowrap">{reviewStatusChip(t.status)}</td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {i === 0 && ds.length > 1 && <button onClick={() => setUnpicked(new Set(docList.filter(x => x.empId !== empId).map(x => x.id)))} className="text-xs text-blue-600 underline">只印此人</button>}
+                          </td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
