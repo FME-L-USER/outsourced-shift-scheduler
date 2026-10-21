@@ -11843,6 +11843,8 @@ const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vend
 // ② 約談進度清單：一列一個人／一張單（表頭與每一列共用，欄位對齊）
 // 操作、狀態放最前面：清單比畫面寬（iPad 直拿）時也不必橫向捲動就按得到
 const REVIEW_LIST_GRID = 'grid grid-cols-[1rem_6.5rem_5.5rem_8.5rem_10.5rem_5.5rem_minmax(7rem,1fr)_2.5rem] items-center gap-2';
+// 約談單、主管簽核視窗：除了標題（h2／h3），內文字一律同一個大小
+const REVIEW_MODAL_TEXT = 'text-sm [&_:is(p,span,div,label,td,th,input,select,textarea,button,b,li)]:text-sm [&_h3]:text-base';
 // 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
 const REVIEW_REC_GRID = 'grid grid-cols-[1rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem_3.5rem] items-center gap-3';
 
@@ -12363,13 +12365,13 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
 
   return createPortal(
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4">
-      <div className="bg-white rounded-2xl w-full max-w-3xl my-6 shadow-xl">
+      <div className={`bg-white rounded-2xl w-full max-w-3xl my-6 shadow-xl ${REVIEW_MODAL_TEXT}`}>
         <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
           <h2 className="text-lg font-bold text-slate-800">{kind === 'fm' ? 'FM-193 從業人員接談紀錄表' : '約談單'}</h2>
           {kind === 'fm' && talk?.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
           <span className="text-sm text-slate-600">{who.name}・<span className="font-mono text-xs">{who.empNo}</span></span>
           <ReviewUnitTags dept={who.dept} grp={who.grp} vendor={who.vendor} />
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600 text-xl">✕</button>
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600 !text-xl">✕</button>
         </div>
         <div className="px-6 py-2 border-b border-[#EFEBE3]"><ReviewFlowMini status={talk?.status === 'todo' || !talk ? 'todo' : talk.status} /></div>
         {warn && <div className="px-6 py-2 bg-rose-50 text-xs text-rose-700 border-b border-rose-200">內容已修改，原有的簽名已清除，請重新勾選聲明並簽名。</div>}
@@ -12555,13 +12557,13 @@ function ReviewApproveModal({ talk, records, me, onClose, reload }) {
   };
   return createPortal(
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl my-8 shadow-xl">
+      <div className={`bg-white rounded-2xl w-full max-w-2xl my-8 shadow-xl ${REVIEW_MODAL_TEXT}`}>
         <div className="px-6 py-4 border-b flex items-center gap-3 flex-wrap">
           <h2 className="text-lg font-bold text-slate-800">主管簽核</h2>
           {talk.kind === 'fm' && talk.no && <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">{talk.no}</span>}
           <span className="text-sm text-slate-600">{talk.name}・<span className="font-mono text-xs">{talk.empNo}</span></span>
           <ReviewUnitTags dept={talk.dept} grp={talk.grp} vendor={talk.vendor} />
-          <button onClick={onClose} className="ml-auto text-slate-400 text-xl">✕</button>
+          <button onClick={onClose} className="ml-auto text-slate-400 !text-xl">✕</button>
         </div>
         <div className="px-6 py-4 space-y-3 text-sm">
           <div className="flex gap-2 flex-wrap text-xs">
