@@ -9022,12 +9022,39 @@ function useJumpWhenAcked(acked) {
 }
 
 /** 電子簽名板：滑鼠或觸控手寫，輸出 PNG dataURL（畫布刻意維持小尺寸，避免影像過大） */
+/**
+ * iPad 簽名：手指停留稍久會被當成「長按選取文字」，跳出複製／查詢選單、選到旁邊的字。
+ * 簽名框攔下觸控的預設動作，簽名期間整頁暫時不可選取，並清掉已出現的選取。
+ */
+function useSignSurface(ref) {
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const stop = e => e.preventDefault();
+    const opts = { passive: false };
+    cv.addEventListener('touchstart', stop, opts);
+    cv.addEventListener('touchmove', stop, opts);
+    return () => {
+      cv.removeEventListener('touchstart', stop, opts);
+      cv.removeEventListener('touchmove', stop, opts);
+      signLock(false);
+    };
+  }, [ref]);
+}
+const signLock = on => {
+  const st = document.body.style;
+  st.webkitUserSelect = on ? 'none' : '';
+  st.userSelect = on ? 'none' : '';
+  if (on) window.getSelection?.()?.removeAllRanges();
+};
+
 function SignaturePad({ onChange, large = false }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastRef = useRef(null);
   const inkRef = useRef(0);   // 已畫的筆畫段數：只點一下不算簽名，避免送出空白簽名
   const [empty, setEmpty] = useState(true);
+  useSignSurface(canvasRef);
 
   const posOf = (e) => {
     const r = canvasRef.current.getBoundingClientRect();
@@ -9036,6 +9063,7 @@ function SignaturePad({ onChange, large = false }) {
   };
   const start = (e) => {
     e.preventDefault();
+    signLock(true);
     drawingRef.current = true;
     lastRef.current = posOf(e);
     canvasRef.current.setPointerCapture?.(e.pointerId);
@@ -9057,6 +9085,7 @@ function SignaturePad({ onChange, large = false }) {
     if (empty && inkRef.current >= 3) setEmpty(false);
   };
   const end = () => {
+    signLock(false);
     if (!drawingRef.current) return;
     drawingRef.current = false;
     onChange?.(inkRef.current >= 3 ? canvasRef.current.toDataURL('image/png') : '');
@@ -9070,7 +9099,7 @@ function SignaturePad({ onChange, large = false }) {
   };
 
   return (
-    <div>
+    <div className="select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
       <div className="flex items-center gap-2 mb-1">
         <span className={`${large ? 'text-base' : 'text-sm'} font-semibold text-slate-700`}>✍️ 請於框內簽名</span>
         {empty
@@ -9082,7 +9111,8 @@ function SignaturePad({ onChange, large = false }) {
             </button>}
       </div>
       <canvas ref={canvasRef} width={600} height={300}
-        onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end}
+        onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end} onPointerCancel={end}
+        onContextMenu={e => e.preventDefault()}
         className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
                     ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
         // 點選模式在矮的螢幕上限制簽名框高度（維持 2:1），確保「確認」按鈕不被擠出畫面
@@ -9185,7 +9215,7 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
   );
 
   return (
-    <div className={`rounded-xl border-2 ${acked ? 'border-emerald-200' : 'border-amber-300'} bg-white overflow-hidden
+    <div className={`select-none [-webkit-user-select:none] [-webkit-touch-callout:none] rounded-xl border-2 ${acked ? 'border-emerald-200' : 'border-amber-300'} bg-white overflow-hidden
                      ${large && !acked ? 'md:flex md:flex-col md:h-[calc(100dvh-285px)] md:min-h-[360px]' : ''}`}>
       <div className={`px-4 py-2.5 ${acked ? 'bg-emerald-50' : 'bg-amber-50'} flex items-center gap-2 flex-shrink-0`}>
         <span className={`font-bold ${large ? 'text-lg' : 'text-base'} text-slate-800`}>📋 {SAFETY_NOTICE.title}</span>
@@ -11997,6 +12027,8 @@ function ReviewSigPad({ consent, resetKey, onChange }) {
   const [agree, setAgree] = useState(false);
   const cvRef = useRef(null);
   const st = useRef({ down: false, last: null, ink: 0 });
+  useSignSurface(cvRef);
+  const finish = () => { signLock(false); const s = st.current; if (s.down && s.ink >= 3) onChange(cvRef.current.toDataURL('image/png')); s.down = false; };
   const clear = useCallback(() => {
     const cv = cvRef.current;
     if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
@@ -12012,7 +12044,7 @@ function ReviewSigPad({ consent, resetKey, onChange }) {
     return { x: (e.clientX - r.left) * cv.width / r.width, y: (e.clientY - r.top) * cv.height / r.height };
   };
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
       <label className="flex gap-2 text-xs text-slate-700 leading-relaxed bg-slate-50 rounded-lg p-2 cursor-pointer">
         <input type="checkbox" checked={agree} onChange={e => { setAgree(e.target.checked); if (!e.target.checked) clear(); }} className="mt-0.5 w-4 h-4 shrink-0" />
         {consent}
@@ -12020,7 +12052,8 @@ function ReviewSigPad({ consent, resetKey, onChange }) {
       <div className="relative">
         <canvas ref={cvRef} width={600} height={220}
           className="w-full h-28 border-2 border-dashed border-slate-300 rounded-lg bg-white touch-none"
-          onPointerDown={e => { if (!agree) return; st.current = { down: true, last: pos(e), ink: 0 }; e.currentTarget.setPointerCapture?.(e.pointerId); }}
+          onPointerDown={e => { if (!agree) return; e.preventDefault(); signLock(true); st.current = { down: true, last: pos(e), ink: 0 }; e.currentTarget.setPointerCapture?.(e.pointerId); }}
+          onContextMenu={e => e.preventDefault()}
           onPointerMove={e => {
             const s = st.current; if (!s.down) return;
             const c = cvRef.current.getContext('2d'), p = pos(e);
@@ -12028,8 +12061,7 @@ function ReviewSigPad({ consent, resetKey, onChange }) {
             c.beginPath(); c.moveTo(s.last.x, s.last.y); c.lineTo(p.x, p.y); c.stroke();
             s.last = p; s.ink++;
           }}
-          onPointerUp={() => { const s = st.current; if (s.down && s.ink >= 3) onChange(cvRef.current.toDataURL('image/png')); s.down = false; }}
-          onPointerLeave={() => { const s = st.current; if (s.down && s.ink >= 3) onChange(cvRef.current.toDataURL('image/png')); s.down = false; }} />
+          onPointerUp={finish} onPointerLeave={finish} onPointerCancel={finish} />
         {!agree && <div className="absolute inset-0 rounded-lg bg-slate-100/90 flex items-center justify-center text-sm text-slate-500">🔒 請先勾選上方聲明</div>}
         {agree && <button type="button" onClick={clear} className="absolute top-1 right-1 px-2 py-0.5 text-xs text-red-600 bg-white/90 border border-red-200 rounded">清除簽名</button>}
       </div>
