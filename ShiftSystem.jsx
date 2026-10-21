@@ -11842,7 +11842,7 @@ const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vend
 
 // ② 約談進度清單：一列一個人／一張單（表頭與每一列共用，欄位對齊）
 // 操作、狀態放最前面：清單比畫面寬（iPad 直拿）時也不必橫向捲動就按得到
-const REVIEW_LIST_GRID = 'grid grid-cols-[1rem_6.5rem_5.5rem_8.5rem_10.5rem_5.5rem_minmax(7rem,1fr)_2.5rem] items-center gap-2';
+const REVIEW_LIST_GRID = 'grid grid-cols-[1rem_9.5rem_5.5rem_8.5rem_10.5rem_5.5rem_minmax(7rem,1fr)_2.5rem] items-center gap-2';
 // 約談單、主管簽核視窗：除了標題（h2／h3），內文字一律同一個大小；
 // 淺灰字（欄位名稱、表頭、提示）在 iPad 上看不清楚，一律加深；段落標題用淺灰圓角色塊
 const REVIEW_MODAL_TEXT = 'text-sm [&_:is(p,span,div,label,td,th,input,select,textarea,button,b,li)]:text-sm [&_h3]:text-base'
@@ -12748,8 +12748,12 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
     const no = reviewTalkNo(t, data.records);
     return row(u, <>
       {lead(<>{badge(t.status)}{t.status === 'mgr' && <span className="block text-[11px] text-violet-700 mt-0.5">{reviewCurMgr(t)?.level}</span>}</>,
-        btn(action, open, t.status === 'done' || (t.status === 'mgr' && !mine) ? 'border border-slate-300 text-slate-600 bg-white'
-          : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white'))}
+        <span className="flex items-center gap-1">
+          {btn(action, open, t.status === 'done' || (t.status === 'mgr' && !mine) ? 'border border-slate-300 text-slate-600 bg-white'
+            : fm || t.status === 'mgr' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white')}
+          {/* 尚未完成的單也可檢視目前的正式文件（未簽的欄位顯示「未簽」） */}
+          {action !== '檢視' && btn('檢視', () => setDocView(t), 'border border-slate-300 text-slate-600 bg-white !px-2')}
+        </span>)}
       <span className="min-w-0">{kindChip(fm, fm ? 'FM-193' : '評核約談')}<span className="block font-mono text-[11px] text-slate-600 truncate mt-0.5" title={no}>{no || '—'}</span></span>
       {who(t)}{dates([t.talkDate || '—'])}
       <span className="min-w-0 flex items-center">{fm
@@ -12815,7 +12819,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
         : shown.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">此條件下沒有紀錄</div>
         : (
           <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
-            <div className="min-w-[50rem]">
+            <div className="min-w-[53rem]">
               <div className={`${REVIEW_LIST_GRID} px-3 py-1.5 bg-[#FAF8F4] text-[11px] text-slate-400`}>
                 <span /><span>{status === 'void' ? '作廢人' : '操作'}</span><span>狀態</span><span>類型／單號</span><span>人員・課別／組別</span><span>日期</span><span>內容</span>
                 <span className="text-right">點數</span>
