@@ -12184,7 +12184,7 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
           <section className="p-5 flex gap-4">
             <Num n={1} c="bg-blue-600" />
             <div className="flex-1 space-y-3">
-              <h3 className="font-semibold text-slate-800">誰、哪一天</h3>
+              <h3 className="font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">誰、哪一天</h3>
               <div className="flex gap-3 flex-wrap items-end">
                 <label><span className={L}>作業日</span><input type="date" value={date} onChange={e => setDate(e.target.value)} className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" /></label>
                 <div className="flex-1 min-w-[260px]"><span className={L}>人員（依上方倉別／課別／組別／廠商篩選）</span><ReviewPersonPicker emps={emps} value={person} onChange={setPerson} /></div>
@@ -12194,14 +12194,14 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
           <section className="p-5 flex gap-4">
             <Num n={2} c="bg-blue-600" />
             <div className="flex-1 space-y-3">
-              <h3 className="font-semibold text-slate-800">違反哪一項</h3>
+              <h3 className="font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">違反哪一項</h3>
               <ReviewItemPicker items={items} value={item} onChange={x => { setItem(x); setPenalty(null); }} />
             </div>
           </section>
           <section className="p-5 flex gap-4">
             <Num n={3} c="bg-blue-600" />
             <div className="flex-1 space-y-3 text-sm">
-              <h3 className="font-semibold text-slate-800">點數與獎懲</h3>
+              <h3 className="font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">點數與獎懲</h3>
               <div className="flex items-center gap-4 flex-wrap">
                 <label className="flex items-center gap-2"><span className="text-slate-500">次數</span>
                   <input type="number" min="1" max="99" value={count} onChange={e => setCount(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
@@ -12237,7 +12237,7 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
           <section className="p-5 flex gap-4">
             <Num n={1} c="bg-violet-600" />
             <div className="flex-1 space-y-3 text-sm">
-              <h3 className="font-semibold text-slate-800">接談對象</h3>
+              <h3 className="font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">接談對象</h3>
               <div className="flex items-center gap-x-5 gap-y-2 flex-wrap">
                 {['初次接談', '非初次接談'].map(k => (
                   <label key={k} className="flex items-center gap-1.5"><input type="radio" checked={fm.fmKind === k} onChange={() => setFm({ ...fm, fmKind: k, ref: k === '初次接談' ? '' : fm.ref })} /> {k}</label>
@@ -12254,7 +12254,7 @@ function ReviewNewTab({ items, records, staff, warehouses, emps, me, reload }) {
           <section className="p-5 flex gap-4">
             <Num n={2} c="bg-violet-600" />
             <div className="flex-1 grid sm:grid-cols-3 gap-3 text-sm">
-              <h3 className="sm:col-span-3 font-semibold text-slate-800">接談內容</h3>
+              <h3 className="sm:col-span-3 font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">接談內容</h3>
               <label><span className={L}>接談日期</span><input type="date" value={fmDate} onChange={e => setFmDate(e.target.value)} className={I} /></label>
               <label><span className={L}>接談地點</span><input value={fm.place} onChange={e => setFm({ ...fm, place: e.target.value })} className={I} /></label>
               <label><span className={L}>接談人姓名（{fmPerson ? '該員所屬倉別的日翊人員' : '請先選人員'}）</span>
