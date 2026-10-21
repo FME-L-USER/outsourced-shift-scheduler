@@ -13457,11 +13457,20 @@ function ReviewVendorSign() {
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null);
   const me = { user: currentUser?.username ?? '', name: currentUser?.name || currentUser?.username || '', admin: false };
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     try { setData(await reviewApi('/api/review/vendor-pending')); }
-    catch (e) { toast(e.message, 'error'); setData({ talks: [], records: [], consent: REVIEW_CONSENT_DEFAULT }); }
+    catch (e) { if (silent) return; toast(e.message, 'error'); setData(d => d ?? { talks: [], records: [], consent: REVIEW_CONSENT_DEFAULT }); }
   }, [toast]);
   useEffect(() => { load(); }, [load]);
+  // 日翊按「後送」後，廠商這頁不必重新整理：畫面開著每 30 秒更新，切回本頁時立即更新（簽名視窗開著時不更新）
+  const modalOpenRef = useRef(false);
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible' && !modalOpenRef.current) load(true); };
+    const id = setInterval(tick, 30000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [load]);
 
   // ── 查詢總表 ──
   const [range, setRange] = useState(() => { const p = reviewPresets()[2]; return { from: p[1], to: p[2] }; });
@@ -13493,6 +13502,7 @@ function ReviewVendorSign() {
     XLSX.writeFile(wb, `理貨評核_${kind === 'records' ? '評核紀錄' : '已完成約談單'}_${range.from}~${range.to}.xlsx`);
   };
   const pending = data?.talks ?? [];
+  modalOpenRef.current = !!modal;
 
   return (
     <div className="p-6 space-y-4 max-w-6xl">
@@ -13505,9 +13515,16 @@ function ReviewVendorSign() {
 
       {tab === 'sign' && (
         <div className="space-y-3">
-          <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm text-slate-500">約談時廠商主管／幹部不在場的約談單，請在這裡勾選聲明並簽名；簽完會自動送呈日翊主管簽核。</p>
+            <button onClick={() => load()} className="ml-auto px-3 py-1 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50">🔄 重新整理</button>
+          </div>
           {!data ? <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>
-            : pending.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm">目前沒有需要您簽名的約談單</div>
+            : pending.length === 0 ? (
+              <div className="bg-white border rounded-2xl p-8 text-center text-slate-400 text-sm space-y-1">
+                <div>目前沒有需要您簽名的約談單</div>
+                <div className="text-xs">此帳號授權廠商：{(data.vendors ?? []).length ? data.vendors.join('、') : <span className="text-rose-600">尚未設定（請管理員在帳號與權限設定）</span>}</div>
+              </div>)
             : <ReviewTalkRows talks={pending} records={data.records} action="簽名" actionCls="bg-amber-500"
                 info={{ label: '處理內容', value: (t, recs) => t.kind === 'fm' ? '接談紀錄' : `${recs.length} 筆・${recs.reduce((a, r) => a + r.points, 0)} 點` }}
                 onAction={t => setModal({ talk: t, records: data.records.filter(r => t.recordIds.includes(r.id)) })} />}

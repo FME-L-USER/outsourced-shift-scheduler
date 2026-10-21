@@ -2944,15 +2944,24 @@ app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req,
 });
 
 // 委外幹部：自己廠商的待簽核約談單（後送簽）
+// 委外幹部的授權廠商：以資料庫帳號的現值為準（登入後才調整授權廠商也立即生效），
+// 名稱比對忽略空白（避免「承奕 」與「承奕」對不上）
+async function reviewVendorScope(req) {
+  const { rows } = await pool.query('SELECT vendors FROM users WHERE username=$1', [req.user.username]);
+  const list = rows[0]?.vendors ?? req.user.vendors ?? [];
+  return { list, set: new Set(list.map(normNameSrv).filter(Boolean)) };
+}
+
 app.get('/api/review/vendor-pending', requireAuth, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ error: '僅限委外幹部' });
-  const vendors = req.user.vendors || [];
   try {
-    const { rows: talks } = await pool.query(`SELECT * FROM review_talks WHERE status='pending' AND vendor = ANY($1::text[]) ORDER BY id`, [vendors]);
+    const scope = await reviewVendorScope(req);
+    const { rows: all } = await pool.query(`SELECT * FROM review_talks WHERE status='pending' ORDER BY id`);
+    const talks = all.filter(t => scope.set.has(normNameSrv(t.vendor)));
     const ids = [...new Set(talks.flatMap(t => (t.record_ids || []).map(Number)))];
     const { rows: recs } = ids.length ? await pool.query('SELECT * FROM review_records WHERE id = ANY($1::bigint[])', [ids]) : { rows: [] };
     const cfg = await reviewConfig('consent');
-    res.json({ talks: talks.map(talkRow), records: recs.map(recordRow), consent: { ...REVIEW_CONSENT_FALLBACK, ...(cfg?.value || {}) } });
+    res.json({ talks: talks.map(talkRow), records: recs.map(recordRow), consent: { ...REVIEW_CONSENT_FALLBACK, ...(cfg?.value || {}) }, vendors: scope.list });
   } catch (e) {
     console.error('review/vendor-pending error:', e.message);
     res.status(500).json({ error: '讀取待簽核約談單失敗' });
@@ -2964,16 +2973,17 @@ app.get('/api/review/vendor-pending', requireAuth, async (req, res) => {
 // 只回總表需要的欄位，不含簽名影像、簽名人、開立人與主管指示等內部資訊；作廢的不列出。
 app.get('/api/review/vendor-list', requireAuth, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ error: '僅限委外幹部' });
-  const vendors = req.user.vendors || [];
   const from = isYmd(req.query.from) ? req.query.from : '1900-01-01';
   const to   = isYmd(req.query.to)   ? req.query.to   : '2999-12-31';
   try {
-    const { rows: recs } = await pool.query(
-      `SELECT * FROM review_records WHERE vendor = ANY($1::text[]) AND status <> 'void' AND work_date BETWEEN $2 AND $3 ORDER BY work_date, id`,
-      [vendors, from, to]);
-    const { rows: talks } = await pool.query(
-      `SELECT * FROM review_talks WHERE vendor = ANY($1::text[]) AND status <> 'void' AND (kind = 'review' OR status = 'done')
-         AND (status <> 'todo' OR kind = 'review') ORDER BY id`, [vendors]);
+    const scope = await reviewVendorScope(req);
+    const mine = x => scope.set.has(normNameSrv(x.vendor));
+    const recs = (await pool.query(
+      `SELECT * FROM review_records WHERE status <> 'void' AND work_date BETWEEN $1 AND $2 ORDER BY work_date, id`,
+      [from, to])).rows.filter(mine);
+    const talks = (await pool.query(
+      `SELECT * FROM review_talks WHERE status <> 'void' AND (kind = 'review' OR status = 'done')
+         AND (status <> 'todo' OR kind = 'review') ORDER BY id`)).rows.filter(mine);
     const byRec = new Map();
     for (const t of talks) for (const id of t.record_ids || []) byRec.set(Number(id), t);
     const stepOf = t => !t ? 'todo' : t.status === 'todo' ? 'todo' : t.status;
@@ -3226,6 +3236,7 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
   const cfg = await reviewConfig('consent');
   // 委外幹部登入後送簽：簽名人姓名一律用登入帳號的姓名，不採用畫面送來的值
   const vendorName = isVendor ? await reviewDisplayName(req.user.username) : '';
+  const vendorScope = isVendor ? await reviewVendorScope(req) : null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -3233,7 +3244,7 @@ app.post('/api/review/talks/:id/sign', requireAuth, requireReviewSigner, require
     const t = rows[0];
     if (!t) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這張約談單' }); }
     if (!['todo', 'pending'].includes(t.status)) { await client.query('ROLLBACK'); return res.status(409).json({ error: '這張約談單已送出，請重新整理' }); }
-    if (isVendor && (t.status !== 'pending' || !(req.user.vendors || []).includes(t.vendor))) {
+    if (isVendor && (t.status !== 'pending' || !vendorScope.set.has(normNameSrv(t.vendor)))) {
       await client.query('ROLLBACK'); return res.status(403).json({ error: '只能補簽自己廠商的待簽核約談單' });
     }
     // 委外幹部只能簽「廠商主管／幹部」與「協力商人力主管」
