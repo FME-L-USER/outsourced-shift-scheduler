@@ -9116,7 +9116,7 @@ function SignaturePad({ onChange, large = false }) {
         className={`w-full bg-white border-2 rounded-xl touch-none cursor-crosshair
                     ${empty ? 'border-dashed border-slate-300' : 'border-slate-400'}`}
         // 點選模式在矮的螢幕上限制簽名框高度（維持 2:1），確保「確認」按鈕不被擠出畫面
-        style={{ aspectRatio: '2 / 1', ...(large ? { maxWidth: 'max(220px, calc((100dvh - 600px) * 2))', marginInline: 'auto', display: 'block' } : {}) }} />
+        style={{ aspectRatio: '2 / 1', ...(large ? { maxWidth: 'max(260px, calc((100dvh - 520px) * 2))', marginInline: 'auto', display: 'block' } : {}) }} />
     </div>
   );
 }
@@ -9226,13 +9226,13 @@ function SafetyNotice({ rec, onAck, onSign, large = false, onActivity }) {
       {large && !acked ? (
         // 電腦／iPad（點選模式）：左側告知單內文捲動、右側勾選與簽名，整個畫面一頁看完
         <div className="flex flex-col md:flex-row md:flex-1 md:min-h-0">
-          <div className="flex flex-col md:flex-[1.15] md:min-w-0 md:min-h-0">
+          <div className="flex flex-col md:flex-1 md:min-w-0 md:min-h-0">
             <p className="px-4 pt-2 text-sm text-amber-800 flex-shrink-0">
               請閱讀以下宣導事項，勾選並完成電子簽名後才能簽到與登記手機。
             </p>
             {bodyEl}
           </div>
-          <div className="md:flex-1 md:min-w-0 md:overflow-y-auto flex flex-col">{footerEl}</div>
+          <div className="md:flex-[1.3] md:min-w-0 md:overflow-y-auto flex flex-col">{footerEl}</div>
         </div>
       ) : (
         <>
@@ -9811,7 +9811,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-3">
-        <div className="max-w-5xl mx-auto space-y-5 md:space-y-3">
+        <div className={`${empId ? 'max-w-7xl' : 'max-w-5xl'} mx-auto space-y-5 md:space-y-3`}>
           {/* 標題列：上一步／步驟／搜尋 */}
           <div className="flex items-center gap-3 flex-wrap">
             {step > 1 && (
