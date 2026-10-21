@@ -12632,6 +12632,8 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
   const [preset, setPreset] = useState('今年');
   const [modal, setModal] = useState(null);       // { mode, talk, person, records }
   const [voiding, setVoiding] = useState(null);   // { kind: 'record'|'talk', id, title, desc }
+  const [docView, setDocView] = useState(null);   // 檢視：與報表匯出相同的正式文件
+  const [docSigns, setDocSigns] = useState({});
   const canVoid = createdBy => me.admin || createdBy === me.user;
 
   // 清單單位：待約談的人（合併同一人的評核紀錄＋草稿）、各張約談單、作廢紀錄
@@ -12739,7 +12741,8 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
     const mine = reviewMyTurn(t, me.user);
     const action = t.status === 'todo' ? '修改／簽名' : t.status === 'pending' ? '補簽' : t.status === 'mgr' ? (mine ? `${reviewCurMgr(t).level}簽核` : '檢視') : '檢視';
     const open = () => {
-      if (t.status === 'mgr') openApprove(t);
+      if (action === '檢視') setDocView(t);
+      else if (t.status === 'mgr') openApprove(t);
       else setModal({ mode: t.status === 'todo' ? 'fm' : t.status === 'pending' ? 'cosign' : 'view', talk: t, person: t, records: recs });
     };
     const no = reviewTalkNo(t, data.records);
@@ -12825,6 +12828,7 @@ function ReviewTalkTab({ data, managers, staff, warehouses, consent, me, scopeOk
 
       {modal && <ReviewTalkModal {...modal} managers={managers} staff={staff} warehouses={warehouses} consent={consent} me={me} onClose={() => setModal(null)} reload={reload} />}
       {voiding && <ReviewVoidModal title={voiding.title} desc={voiding.desc} onClose={() => setVoiding(null)} onConfirm={doVoid} />}
+      {docView && <ReviewDocViewer talk={docView} recs={recsOfTalk(docView)} consent={consent} signs={docSigns} setSigns={setDocSigns} onClose={() => setDocView(null)} />}
     </div>
   );
 }
@@ -13188,23 +13192,29 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
         </>
       )}
 
-      {viewing && createPortal(
-        <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) setViewing(null); }}>
-          <div className="max-w-4xl mx-auto my-6">
-            <div className="flex justify-end gap-2 mb-2">
-              <button onClick={async () => {
-                let sg = signs[viewing.id];
-                if (!sg) { try { sg = (await reviewApi(`/api/review/signs?ids=${viewing.id}`))[viewing.id] ?? {}; setSigns(s => ({ ...s, [viewing.id]: sg })); } catch (e) { toast(e.message, 'error'); return; } }
-                const fm = viewing.kind === 'fm';
-                reviewPrintWindow(fm ? 'FM-193 接談紀錄表' : '理貨評核約談紀錄表', fm ? reviewFmHtml(viewing, sg, consent) : reviewDocHtml(viewing, recsOf(viewing), sg, consent));
-              }} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-semibold">🖨 列印這份</button>
-              <button onClick={() => setViewing(null)} className="px-4 py-1.5 bg-white rounded-lg text-sm">關閉</button>
-            </div>
-            <ReviewDocPreview talk={viewing} recs={recsOf(viewing)} consent={consent} signs={signs} setSigns={setSigns} />
-          </div>
-        </div>, document.body)}
+      {viewing && <ReviewDocViewer talk={viewing} recs={recsOf(viewing)} consent={consent} signs={signs} setSigns={setSigns} onClose={() => setViewing(null)} />}
     </div>
   );
+}
+/** 正式文件檢視視窗（約談紀錄表／FM-193）：② 約談進度與 ③ 報表匯出共用，格式與列印相同 */
+function ReviewDocViewer({ talk, recs, consent, signs, setSigns, onClose }) {
+  const toast = useToast();
+  const print = async () => {
+    let sg = signs[talk.id];
+    if (!sg) { try { sg = (await reviewApi(`/api/review/signs?ids=${talk.id}`))[talk.id] ?? {}; setSigns(s => ({ ...s, [talk.id]: sg })); } catch (e) { toast(e.message, 'error'); return; } }
+    const fm = talk.kind === 'fm';
+    if (!reviewPrintWindow(fm ? 'FM-193 接談紀錄表' : '理貨評核約談紀錄表', fm ? reviewFmHtml(talk, sg, consent) : reviewDocHtml(talk, recs, sg, consent))) toast('瀏覽器擋下了列印視窗，請允許彈出視窗', 'error');
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="max-w-4xl mx-auto my-6">
+        <div className="flex justify-end gap-2 mb-2">
+          <button onClick={print} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-semibold">🖨 列印這份</button>
+          <button onClick={onClose} className="px-4 py-1.5 bg-white rounded-lg text-sm">關閉</button>
+        </div>
+        <ReviewDocPreview talk={talk} recs={recs} consent={consent} signs={signs} setSigns={setSigns} />
+      </div>
+    </div>, document.body);
 }
 function ReviewDocPreview({ talk, recs, consent, signs, setSigns }) {
   useEffect(() => {
