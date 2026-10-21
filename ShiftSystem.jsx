@@ -12381,30 +12381,90 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
         <div className="px-6 py-2 border-b border-[#EFEBE3]"><ReviewFlowMini status={talk?.status === 'todo' || !talk ? 'todo' : talk.status} /></div>
         {warn && <div className="px-6 py-2 bg-rose-50 text-xs text-rose-700 border-b border-rose-200">內容已修改，原有的簽名已清除，請重新勾選聲明並簽名。</div>}
         <div className="divide-y divide-[#EFEBE3]">
-          {kind === 'review' && (
-            <section className="px-6 py-4 space-y-2">
-              <div className="flex items-center gap-2 flex-wrap"><h3 className="font-semibold text-slate-700">本次處理的評核紀錄</h3>
-                {mode === 'review' && <span className="text-xs text-slate-400">勾選本次要約談的紀錄</span>}</div>
-              <ReviewRecTable recs={recs} picked={picked}
-                onToggle={mode === 'review' ? (id, on) => { touch(); setPicked(s => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n; }); } : undefined} />
-            </section>
-          )}
-          {kind === 'review' && (
-            <section className="px-6 py-4 grid sm:grid-cols-3 gap-3 text-sm">
-              <h3 className="sm:col-span-3 font-semibold text-slate-700">約談資訊</h3>
-              {editable ? <>
-                <label><span className="block text-xs text-slate-500 mb-1">約談日期</span><input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={I} /></label>
-                <label><span className="block text-xs text-slate-500 mb-1">約談人（該員所屬倉別的日翊人員）</span>
-                  <ReviewTalkerSelect options={talkers} value={content.talker} onChange={v => setC({ talker: v })} className={I} />
-                </label>
-                <label><span className="block text-xs text-slate-500 mb-1">約談事由</span><input value={content.reason} onChange={e => setC({ reason: e.target.value })} className={I} /></label>
-                <label className="sm:col-span-3"><span className="block text-xs text-slate-500 mb-1">約談內容</span><textarea rows={3} value={content.content} onChange={e => setC({ content: e.target.value })} placeholder="說明缺失、當事人陳述、要求改善事項…" className={I} /></label>
-                <label className="sm:col-span-3"><span className="block text-xs text-slate-500 mb-1">結果／改善事項</span><input value={content.result} onChange={e => setC({ result: e.target.value })} className={I} /></label>
-              </> : <div className="sm:col-span-3 grid grid-cols-[6rem_1fr] sm:grid-cols-[6rem_1fr_6rem_1fr] gap-x-3 gap-y-1.5">
-                {ro('約談日期', talk.talkDate)}{ro('約談人', base.talker)}{ro('約談事由', base.reason, true)}{ro('約談內容', base.content, true)}{ro('結果', base.result, true)}
-              </div>}
-            </section>
-          )}
+          {/* 理貨評核約談：版面與正式約談紀錄表（報表匯出、檢視、列印）一致，欄位直接在表格內填寫 */}
+          {kind === 'review' && (() => {
+            const T = 'border border-slate-500 px-2 py-1.5 align-middle';
+            const H = `${T} bg-slate-100 font-semibold text-slate-700 whitespace-nowrap text-center`;
+            const F = 'w-full border border-[#DDD9D0] rounded px-2 py-1 bg-white';
+            const sumPts = recs.filter(r => picked.has(r.id)).reduce((a, r) => a + r.points, 0);
+            return (
+              <section className="px-6 py-5 space-y-3 text-slate-800">
+                <div className="text-center">
+                  <div className="!text-lg font-bold tracking-wide">理貨評核約談紀錄表</div>
+                  <div className="text-slate-600">日翊文化行銷股份有限公司　物流本部</div>
+                </div>
+                <table className="w-full border-collapse table-fixed">
+                  <colgroup><col className="w-28" /><col /><col className="w-28" /><col /></colgroup>
+                  <tbody>
+                    <tr>
+                      <th className={H}>約談日期</th>
+                      <td className={T}>{editable ? <input type="date" value={talkDate} onChange={e => { touch(); setTalkDate(e.target.value); }} className={F} /> : reviewRocDate(talk.talkDate)}</td>
+                      <th className={H}>約談人</th>
+                      <td className={T}>{editable ? <ReviewTalkerSelect options={talkers} value={content.talker} onChange={v => setC({ talker: v })} className={F} /> : (base.talker || '—')}</td>
+                    </tr>
+                    <tr>
+                      <th className={H}>受約談人</th>
+                      <td className={T}>{who.name}（{who.empNo}）</td>
+                      <th className={H}>課別／組別</th>
+                      <td className={T}>{who.dept}／{who.grp}・{who.vendor}</td>
+                    </tr>
+                    <tr>
+                      <th className={H}>約談事由</th>
+                      <td className={T} colSpan={3}>{editable ? <input value={content.reason} onChange={e => setC({ reason: e.target.value })} className={F} /> : (base.reason || '—')}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="font-semibold">本次處理之評核紀錄{mode === 'review' && <span className="ml-2 font-normal text-slate-500">（勾選本次要約談的紀錄）</span>}</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse min-w-[40rem]">
+                    <thead><tr>
+                      {mode === 'review' && <th className={`${H} w-8`} />}
+                      {['單號', '作業日', '項目', '評核內容', '點數', '第幾次', '獎懲方式'].map(h => <th key={h} className={H}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {recs.length === 0 && <tr><td colSpan={8} className={`${T} text-center text-slate-500`}>沒有評核紀錄</td></tr>}
+                      {recs.map(r => (
+                        <tr key={r.id} className={mode === 'review' && !picked.has(r.id) ? 'text-slate-400' : ''}>
+                          {mode === 'review' && <td className={`${T} text-center`}>
+                            <input type="checkbox" checked={picked.has(r.id)} className="w-4 h-4"
+                              onChange={e => { const on = e.target.checked; touch(); setPicked(st => { const n = new Set(st); on ? n.add(r.id) : n.delete(r.id); return n; }); }} /></td>}
+                          <td className={`${T} font-mono whitespace-nowrap`}>{r.no || '—'}</td>
+                          <td className={`${T} whitespace-nowrap text-center`}>{reviewRocDate(r.workDate)}</td>
+                          <td className={`${T} text-center`}>{r.item.code}</td>
+                          <td className={T}>{reviewStrip(r.item.text)}</td>
+                          <td className={`${T} text-center font-bold`}>{r.points}</td>
+                          <td className={`${T} text-center whitespace-nowrap`}>{reviewNthLabel(r.nth)}</td>
+                          <td className={T}>{r.penalty || '—'}</td>
+                        </tr>
+                      ))}
+                      {recs.length > 0 && <tr>
+                        <td colSpan={mode === 'review' ? 5 : 4} className={`${T} text-right font-semibold`}>合計</td>
+                        <td className={`${T} text-center font-bold text-red-700`}>{sumPts}</td>
+                        <td colSpan={2} className={T} />
+                      </tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                <table className="w-full border-collapse table-fixed">
+                  <colgroup><col className="w-28" /><col /></colgroup>
+                  <tbody>
+                    <tr>
+                      <th className={H}>約談內容</th>
+                      <td className={T}>{editable
+                        ? <textarea rows={3} value={content.content} onChange={e => setC({ content: e.target.value })} placeholder="說明缺失、當事人陳述、要求改善事項…" className={F} />
+                        : <span className="whitespace-pre-wrap">{base.content || '—'}</span>}</td>
+                    </tr>
+                    <tr>
+                      <th className={H}>結果／改善事項</th>
+                      <td className={T}>{editable ? <input value={content.result} onChange={e => setC({ result: e.target.value })} className={F} /> : <span className="whitespace-pre-wrap">{base.result || '—'}</span>}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+            );
+          })()}
           {kind === 'fm' && (
             <section className="px-6 py-4 text-sm">
               <div className="flex items-center gap-2 mb-2"><h3 className="font-semibold text-slate-700">接談紀錄內容</h3>
@@ -12439,11 +12499,11 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
           )}
 
           {/* 簽名 */}
-          <section className="px-6 py-4 space-y-3">
-            <h3 className="font-semibold text-slate-700">{kind === 'fm' ? '本次接談簽名' : '本次約談簽名'}</h3>
+          <section className={`px-6 space-y-3 ${kind === 'review' ? 'pb-4 !border-t-0' : 'py-4'}`}>
+            {kind === 'fm' && <h3 className="font-semibold text-slate-700">本次接談簽名</h3>}
             {kind === 'review' && (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 leading-relaxed space-y-0.5">
-                <div className="font-semibold text-slate-600">備註</div>
+              <div className="border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 leading-relaxed space-y-0.5">
+                <div className="font-semibold text-slate-700">備註</div>
                 {REVIEW_NOTES_115.map(n => <div key={n}>{n}</div>)}
               </div>
             )}
@@ -12451,9 +12511,9 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
               {parties.map(([p, label, text]) => {
                 const done = signed[p];
                 return (
-                  <div key={p} className="border border-slate-200 rounded-xl p-3 space-y-2">
+                  <div key={p} className={`p-3 space-y-2 ${kind === 'review' ? 'border border-slate-500' : 'border border-slate-200 rounded-xl'}`}>
                     <div className="font-semibold text-slate-700 text-sm flex items-center gap-2 flex-wrap">
-                      {label}
+                      {kind === 'review' ? `${label}簽名${done?.name ? '：' + done.name : ''}` : label}
                     </div>
                     {done ? (
                       <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1.5">
