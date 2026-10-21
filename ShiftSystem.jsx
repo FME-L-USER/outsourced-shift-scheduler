@@ -13107,12 +13107,13 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
         <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-              {['約談日', '單號', '受約談人', '課別／組別', '廠商', '處理項目', '扣點', '約談事由', '結果／改善事項', '狀態', '計分月份', ''].map(h => <th key={h} className={th}>{h}</th>)}
+              {['', '約談日', '單號', '受約談人', '課別／組別', '廠商', '處理項目', '扣點', '約談事由', '結果／改善事項', '狀態', '計分月份'].map(h => <th key={h} className={th}>{h}</th>)}
             </tr></thead>
             <tbody>
               {talks.length === 0 && <tr><td colSpan={12} className="px-3 py-8 text-center text-slate-400">此條件下沒有資料</td></tr>}
               {talks.map(t => { const rs = recsOf(t); return (
                 <tr key={t.id} className="border-t border-[#EFEBE3]">
+                  <td className="px-3 py-2"><button onClick={() => setViewing(t)} className="px-2 py-0.5 rounded border border-blue-300 text-blue-700 text-xs hover:bg-blue-50 whitespace-nowrap">📄 檢視</button></td>
                   <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-600">{rs.map(r => <div key={r.id}>{r.no}</div>)}</td>
                   <td className="px-3 py-2 whitespace-nowrap"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
@@ -13124,7 +13125,6 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
                   <td className="px-3 py-2 max-w-[14rem] truncate" title={t.content.result}>{t.content.result || '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{reviewStatusChip(t.status)}</td>
                   <td className={`px-3 py-2 whitespace-nowrap text-center ${t.scoreMonth ? 'font-semibold text-amber-700' : 'text-slate-400'}`}>{reviewRoc(t.scoreMonth) || '未計分'}</td>
-                  <td className="px-3 py-2"><button onClick={() => setViewing(t)} className="px-2 py-0.5 rounded border border-blue-300 text-blue-700 text-xs hover:bg-blue-50 whitespace-nowrap">📄 檢視</button></td>
                 </tr>); })}
             </tbody>
           </table>
