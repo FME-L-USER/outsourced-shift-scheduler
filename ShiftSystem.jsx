@@ -17640,7 +17640,7 @@ function EditableName({ value, onSave, saving }) {
 }
 
 function AccountManagement() {
-  const { users, setUsers, vendors, warehouses, currentUser, employees,
+  const { users, setUsers, vendors, warehouses, currentUser, employees, setEmployees,
           setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor } = useApp();
   const vendorNames = vendors.map(v => v.name);
   const toast = useToast();
@@ -17740,6 +17740,28 @@ function AccountManagement() {
     } finally {
       setSavingNameFor(null);
     }
+  };
+
+  // 廠商帳號：登入以資料庫為準，姓名寫入資料庫帳號（不經 vendor-register，避免連帶覆寫密碼），本機清單同步更新
+  const updateVendorName = async (u, name) => {
+    const db = apiUsers.find(a => a.username === u.username);
+    if (!db) {
+      // 資料庫沒有此帳號（該帳號本來就無法登入）：只更新本機清單
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, name } : x));
+      toast(`${u.username} 姓名已改為「${name}」；資料庫找不到此帳號，目前無法登入，請確認帳號是否已建立`, 'warn');
+      return true;
+    }
+    const ok = await updateApiUserName(db.id, name);
+    if (ok) setUsers(prev => prev.map(x => x.id === u.id ? { ...x, name } : x));
+    return ok;
+  };
+  // 委外人員：姓名就是人員清冊的姓名（班表、點名等處一併更新）
+  const updateWorkerName = async (emp, name) => {
+    const t = String(name).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 50);
+    if (!t) { toast('姓名不可空白', 'error'); return false; }
+    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, name: t } : e));
+    toast(`${emp.empId || ''} 姓名已改為「${t}」（人員清冊同步更新）`, 'success');
+    return true;
   };
 
   const updateApiUserMgr = async (userId, level) => {
@@ -18440,7 +18462,7 @@ function AccountManagement() {
                 <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-[#F5F2EC]"
                      style={{ gridTemplateColumns: '120px 1fr 1fr 100px 90px 140px' }}>
                   <span className="font-mono text-sm text-slate-700">{emp.empId}</span>
-                  <span className="text-sm text-slate-700">{emp.name}</span>
+                  <span className="min-w-0"><EditableName value={emp.name || ''} onSave={name => updateWorkerName(emp, name)} /></span>
                   <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
                   <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
                   {(() => {
@@ -18800,7 +18822,9 @@ function AccountManagement() {
                    style={{ gridTemplateColumns: '1fr 1fr 90px 90px 160px 130px 120px' }}>
 
                 <span className="font-mono font-bold text-slate-800 text-sm truncate">{u.username}</span>
-                <span className="text-slate-600 text-sm truncate">{u.name}</span>
+                {u.role === ROLES.VENDOR
+                  ? <span className="min-w-0"><EditableName value={u.name || ''} saving={savingNameFor === apiUsers.find(a => a.username === u.username)?.id} onSave={name => updateVendorName(u, name)} /></span>
+                  : <span className="text-slate-600 text-sm truncate">{u.name}</span>}
 
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>
                   {roleLabel[u.role]}
