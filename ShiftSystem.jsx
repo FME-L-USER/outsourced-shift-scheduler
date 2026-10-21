@@ -11911,7 +11911,9 @@ function ReviewTalkRows({ talks, records = [], info, action, onAction, actionCls
   );
 }
 
-function ReviewUnitTags({ dept, grp, vendor }) {
+function ReviewUnitTags({ dept, grp, vendor, plain = false }) {
+  // plain：報表表格內只顯示文字，不加色塊
+  if (plain) return <span className="whitespace-nowrap text-slate-700">{[dept, grp].filter(Boolean).join('／') || '—'}{vendor ? `・${vendor}` : ''}</span>;
   return (
     <span className="inline-flex items-center gap-1 text-xs flex-wrap">
       {dept && <span className="whitespace-nowrap px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">{dept}</span>}
@@ -13117,7 +13119,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
                   <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-600">{rs.map(r => <div key={r.id}>{r.no}</div>)}</td>
                   <td className="px-3 py-2 whitespace-nowrap"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
-                  <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} /></td>
+                  <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} plain /></td>
                   <td className="px-3 py-2 whitespace-nowrap">{t.vendor}</td>
                   <td className="px-3 py-2 font-mono text-xs text-blue-700 whitespace-nowrap">{rs.map(r => r.item.code).join('、')}</td>
                   <td className="px-3 py-2 text-center font-bold text-rose-600">{rs.reduce((a, r) => a + r.points, 0)}</td>
@@ -13142,7 +13144,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
               {people.map(p => (
                 <tr key={p.empNo + p.name} className="border-t border-[#EFEBE3]">
                   <td className="px-3 py-2 whitespace-nowrap"><b>{p.name}</b> <span className="font-mono text-xs text-slate-400">{p.empNo}</span></td>
-                  <td className="px-3 py-2"><ReviewUnitTags dept={p.dept} grp={p.grp} /></td>
+                  <td className="px-3 py-2"><ReviewUnitTags dept={p.dept} grp={p.grp} plain /></td>
                   <td className="px-3 py-2">{p.vendor}</td>
                   <td className="px-3 py-2 text-center">{p.n}</td>
                   <td className="px-3 py-2 text-center font-bold text-rose-600">{p.pts}</td>
@@ -13352,7 +13354,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
                     <td className="px-3 py-2 tabular-nums">{t.talkDate}</td>
                     <td className="px-3 py-2 font-mono text-xs text-slate-600">{rs.map(r => <div key={r.id}>{r.no}</div>)}</td>
                     <td className="px-3 py-2"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
-                    <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} /></td>
+                    <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} plain /></td>
                     <td className="px-3 py-2">{t.vendor}</td>
                     <td className="px-3 py-2 font-mono text-xs text-blue-700">{rs.map(r => r.item.code).join('、')}</td>
                     <td className="px-3 py-2 text-center font-bold text-rose-600">{ptsOf(t)}</td>
@@ -13504,7 +13506,7 @@ function ReviewVendorSign() {
                       <td className="px-3 py-2 text-xs">{t.kind === 'fm' ? 'FM-193' : '評核約談'}</td>
                       <td className="px-3 py-2 font-mono text-xs text-slate-500 max-w-[12rem] truncate" title={t.no}>{t.no || '—'}</td>
                       <td className="px-3 py-2"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
-                      <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} /></td>
+                      <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} plain /></td>
                       <td className="px-3 py-2 font-mono text-xs text-blue-700">{t.codes || '—'}</td>
                       <td className="px-3 py-2 text-center font-bold text-rose-600">{t.kind === 'fm' ? '—' : t.points}</td>
                       <td className="px-3 py-2 max-w-xs truncate" title={t.reason}>{t.reason || '—'}</td>
