@@ -13077,6 +13077,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
       <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <ReviewPeriod range={range} setRange={setRange} />
+          <span className="text-[11px] text-slate-400">倉別、課別、組別、廠商依上方篩選列</span>
           <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、單號、項目代號" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-56" />
         </div>
         <div className="flex items-center gap-1 flex-wrap border-t border-[#EFEBE3] pt-2 text-sm">
@@ -13084,7 +13085,6 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
           {REVIEW_STATUS_CHIPS.map(([k, l]) => (
             <button key={k} onClick={() => setStatus(k)} className={`px-3 py-1 rounded-full border ${status === k ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'}`}>{l}</button>
           ))}
-          <span className="text-[11px] text-slate-400 ml-2">倉別、課別、組別、廠商依上方篩選列</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[['評核紀錄', recs.length, '筆', 'text-slate-800'], ['累計扣點', totalPts, '點', 'text-rose-600'],
