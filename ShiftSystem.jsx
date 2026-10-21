@@ -13346,89 +13346,87 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
   const th = 'px-3 py-2 text-left whitespace-nowrap';
   if (!cfg) return <div className="p-8 text-center text-slate-400 text-sm">讀取中…</div>;
 
+  const monthPts = inMonth.reduce((a, t) => a + ptsOf(t), 0);
+  const chip = (on, cls = 'bg-blue-600 text-white border-blue-600') => `px-3 py-1 rounded-full border text-sm ${on ? cls : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`;
   return (
     <div className="space-y-3">
-      <div className="bg-amber-50/60 border border-amber-200 rounded-2xl px-4 py-3 space-y-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <b className="text-amber-800">計分月份</b>
+      {/* 計分月份：選月份、看該月各廠商扣點、結轉 */}
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl">
+        <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
+          <b className="text-slate-700 mr-1">計分月份</b>
           {months.map(m => (
-            <button key={m} onClick={() => setMonth(m)} className={`px-3 py-1 rounded-lg border text-sm ${month === m ? 'bg-amber-500 text-white border-amber-500 font-semibold' : 'bg-white text-slate-600 border-slate-200'}`}>
+            <button key={m} onClick={() => setMonth(m)} className={chip(month === m, 'bg-amber-500 text-white border-amber-500 font-semibold')}>
               {reviewRoc(m)}{closed.includes(m) ? ' 🔒' : ''}</button>
           ))}
-          <span className="ml-auto text-xs text-slate-500">計分月份在下方明細設定，也會印在約談紀錄表最後</span>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap bg-white/70 rounded-xl px-3 py-2 text-sm">
-          {isClosed ? <span><b>{reviewRoc(month)}</b> 🔒 已結轉：這個月份的計分已鎖定，也不能再計入其他約談。</span>
-            : <span><b>{reviewRoc(month)}</b> 進行中：共 <b>{inMonth.length}</b> 份約談、扣點 <b className="text-rose-600">{inMonth.reduce((a, t) => a + ptsOf(t), 0)}</b> 點。</span>}
-          {me.admin && !isClosed && <button onClick={closeMonth} className="ml-auto px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-semibold">🔒 結轉 {reviewRoc(month)}…</button>}
-          {!me.admin && !isClosed && <span className="ml-auto text-xs text-slate-400">結轉由管理員執行</span>}
+          <span className="ml-auto text-sm text-slate-600">
+            {isClosed ? '🔒 已結轉' : '進行中'}・<b>{inMonth.length}</b> 份約談・扣 <b className="text-rose-600">{monthPts}</b> 點
+          </span>
+          {me.admin && !isClosed && <button onClick={closeMonth} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-semibold">🔒 結轉</button>}
         </div>
         {unset.length > 0 && (
-          <div className="text-sm rounded-xl border border-rose-200 bg-rose-50/60 px-3 py-2">
-            ⚠ 有 <b>{unset.length}</b> 份已完成的約談<b>尚未設定計分月份</b>，不會出現在任何月份的統計：
-            {unset.slice(0, 10).map(t => <span key={t.id} className="inline-block ml-2 px-2 py-0.5 rounded bg-white border border-rose-200">{t.name} {t.talkDate}</span>)}
-            {unset.length > 10 && <span className="ml-2 text-xs">…等 {unset.length} 份</span>}
-            {notDone.length > 0 && <span className="block text-xs text-slate-500 mt-1">另有 {notDone.length} 份尚未完成簽核，完成後才能計分。</span>}
+          <div className="mx-4 mb-3 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-700 flex items-center gap-2 flex-wrap">
+            ⚠ <b>{unset.length}</b> 份已完成的約談尚未設定計分月份
+            <button onClick={() => setScore('n')} className="ml-auto px-2 py-0.5 rounded border border-rose-300 bg-white text-xs">只看未計分</button>
           </div>
         )}
+        <div className="border-t border-[#EFEBE3]">
+          {byVendor.length === 0
+            ? <div className="px-4 py-3 text-sm text-slate-400">{reviewRoc(month)} 還沒有計分的約談</div>
+            : <table className="w-full text-sm">
+                <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>{['廠商', '約談份數', '評核件數', '扣點合計', '涉及人數'].map((h, i) => <th key={h} className={i ? 'px-3 py-2 text-center' : th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {byVendor.map(v => (
+                    <tr key={v.vendor} className="border-t border-[#EFEBE3] text-center"><td className="px-3 py-2 text-left font-medium">{v.vendor}</td><td>{v.talks}</td><td>{v.recs}</td>
+                      <td className="font-bold text-rose-600">{v.pts}</td><td>{v.ppl.size}</td></tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 text-center font-bold"><td className="px-3 py-2 text-left">總計</td>
+                    <td>{byVendor.reduce((a, v) => a + v.talks, 0)}</td><td>{byVendor.reduce((a, v) => a + v.recs, 0)}</td>
+                    <td className="text-rose-600">{monthPts}</td><td>{new Set(inMonth.map(t => t.empId)).size}</td></tr>
+                </tbody>
+              </table>}
+        </div>
       </div>
 
-      <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
-        <div className="px-4 py-2 text-sm font-semibold text-slate-700 border-b border-[#EFEBE3]">各廠商扣點累計（計分月份 {reviewRoc(month)}）</div>
-        <table className="w-full text-sm">
-          <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>{['廠商', '約談份數', '評核件數', '扣點合計', '涉及人數'].map((h, i) => <th key={h} className={i ? 'px-3 py-2 text-center' : th}>{h}</th>)}</tr></thead>
-          <tbody>
-            {byVendor.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">這個月份沒有計分的約談</td></tr>}
-            {byVendor.map(v => (
-              <tr key={v.vendor} className="border-t border-[#EFEBE3] text-center"><td className="px-3 py-2 text-left font-medium">{v.vendor}</td><td>{v.talks}</td><td>{v.recs}</td>
-                <td className="font-bold text-rose-600">{v.pts}</td><td>{v.ppl.size}</td></tr>
-            ))}
-            {byVendor.length > 0 && (
-              <tr className="border-t-2 border-slate-300 bg-slate-50 text-center font-bold"><td className="px-3 py-2 text-left">總計</td>
-                <td>{byVendor.reduce((a, v) => a + v.talks, 0)}</td><td>{byVendor.reduce((a, v) => a + v.recs, 0)}</td>
-                <td className="text-rose-600">{byVendor.reduce((a, v) => a + v.pts, 0)}</td><td>{new Set(inMonth.map(t => t.empId)).size}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
+      {/* 明細：在這裡設定每份約談的計分月份 */}
       <div className="bg-white border border-[#DDD9D0] rounded-2xl">
         <div className="px-4 py-3 border-b border-[#EFEBE3] space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <b className="text-sm text-slate-700">明細（{detail.length} 份，未計分的排在最前面）</b>
+            <b className="text-slate-700">明細 {detail.length} 份</b>
             <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、單號" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48" />
             <button onClick={exportExcel} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold">📊 匯出 Excel</button>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <ReviewPeriod range={range} setRange={setRange} />
-            <span className="ml-3 font-semibold text-slate-700 text-sm">計分</span>
-            <select value={score} onChange={e => setScore(e.target.value)} className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm">
-              <option value="">全部</option><option value="y">已計分</option><option value="n">未計分</option></select>
-            <span className="text-[11px] text-slate-400">期間依約談日；倉別、課別、組別、廠商依上方篩選列</span>
+            <span className="ml-2 font-semibold text-slate-700 text-sm">計分</span>
+            {[['', '全部'], ['n', '未計分'], ['y', '已計分']].map(([k, l]) => (
+              <button key={k} onClick={() => setScore(k)} className={chip(score === k)}>{l}</button>
+            ))}
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm whitespace-nowrap">
+          <table className="w-full text-sm">
             <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-              {['約談日', '單號', '受約談人', '課別／組別', '廠商', '處理項目', '扣點', '簽核', '計分月份'].map(h => <th key={h} className={th}>{h}</th>)}
+              {['約談日', '受約談人', '單號・項目', '扣點', '簽核', '計分月份'].map(h => <th key={h} className={th}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {detail.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-400">此條件下沒有資料</td></tr>}
+              {detail.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">此條件下沒有資料</td></tr>}
               {detail.map(t => {
                 const rs = recsOf(t), locked = closed.includes(t.scoreMonth);
                 return (
-                  <tr key={t.id} className={`border-t border-[#EFEBE3] ${t.status === 'done' && !t.scoreMonth ? 'bg-rose-50/40' : t.scoreMonth === month ? 'bg-amber-50/40' : ''}`}>
-                    <td className="px-3 py-2 tabular-nums">{t.talkDate}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-600">{rs.map(r => <div key={r.id}>{r.no}</div>)}</td>
-                    <td className="px-3 py-2"><b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span></td>
-                    <td className="px-3 py-2"><ReviewUnitTags dept={t.dept} grp={t.grp} plain /></td>
-                    <td className="px-3 py-2">{t.vendor}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-blue-700">{rs.map(r => r.item.code).join('、')}</td>
+                  <tr key={t.id} className={`border-t border-[#EFEBE3] ${t.status === 'done' && !t.scoreMonth ? 'bg-rose-50/40' : ''}`}>
+                    <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span>
+                      <div className="text-xs text-slate-500"><ReviewUnitTags dept={t.dept} grp={t.grp} vendor={t.vendor} plain /></div>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-600 whitespace-nowrap">
+                      {rs.map(r => <div key={r.id}>{r.no} <span className="text-blue-700 font-bold">{r.item.code}</span></div>)}
+                    </td>
                     <td className="px-3 py-2 text-center font-bold text-rose-600">{ptsOf(t)}</td>
-                    <td className="px-3 py-2">{reviewStatusChip(t.status)}</td>
-                    <td className="px-3 py-2 text-center">
-                      {t.status !== 'done' ? <span className="text-xs text-slate-400">完成簽核後才能計分</span>
-                        : locked ? <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-xs font-semibold">{reviewRoc(t.scoreMonth)} 🔒 已結轉</span>
+                    <td className="px-3 py-2 whitespace-nowrap">{reviewStatusChip(t.status)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {t.status !== 'done' ? <span className="text-xs text-slate-400">簽核完成後可設定</span>
+                        : locked ? <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-xs font-semibold">{reviewRoc(t.scoreMonth)} 🔒</span>
                         : <select value={t.scoreMonth || ''} onChange={e => setScoreMonth(t, e.target.value)}
                             className={`border rounded-lg px-1.5 py-0.5 text-xs ${t.scoreMonth ? 'border-amber-300 text-amber-800 font-semibold' : 'border-rose-300 text-rose-600'}`}>
                             <option value="">未計分</option>
