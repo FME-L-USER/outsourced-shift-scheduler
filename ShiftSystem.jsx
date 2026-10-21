@@ -12867,7 +12867,7 @@ const mgrCell = m => !m ? '<td style="text-align:center;color:#cbd5e1">—</td>'
   : `<td style="text-align:center;height:46px"><span class="red">待簽核</span><div class="muted">${escHtml(m.names.map(n => n.name).join('、'))}</div></td>`;
 const mgrNotes = t => (t.mgrs || []).filter(m => m.note).map(m => `<div style="font-size:11px;margin-top:3px">主管指示（${escHtml(m.byName)} ${escHtml(m.level)}）：${escHtml(m.note)}</div>`).join('');
 
-/** 理貨評核約談紀錄表（正式格式，含電子簽名、聲明、主管簽核、計分月份） */
+/** 理貨評核約談紀錄表（正式格式，含電子簽名、聲明、主管簽核；計分月份不列在表單上） */
 function reviewDocHtml(t, recs, signs, consent) {
   const c = t.content || {}, sg = signs || {};
   const total = recs.reduce((a, r) => a + r.points, 0);
@@ -12899,8 +12899,6 @@ function reviewDocHtml(t, recs, signs, consent) {
       <tr>${['協理', '經理', '副理', '課長'].map(l => mgrCell(lv(l))).join('')}<td style="text-align:center"><b>${escHtml(c.talker || '—')}</b><div class="muted">約談人</div></td></tr>
     </tbody></table>
     ${mgrNotes(t)}
-    <div class="score"><b style="color:#92400e">計分月份</b><span style="font-size:15px;font-weight:700;color:${t.scoreMonth ? '#b45309' : '#94a3b8'}">${escHtml(reviewRoc(t.scoreMonth) || '未計分')}</span>
-      <span class="muted" style="margin-left:auto">${t.scoreBy ? `設定：${escHtml(t.scoreBy)} ${escHtml(reviewFmtTime(t.scoreAt))}` : ''}</span></div>
   </section>`;
 }
 
@@ -12985,7 +12983,7 @@ function ReviewPeriod({ range, setRange }) {
 const REVIEW_REPORT_KINDS = [
   ['summary', '理貨評核約談紀錄總表', '期間內的評核約談一覽：約談日、受約談人、處理項目、事由、結果、簽核狀態與計分月份。'],
   ['people', '人員累計表', '每人一列：評核件數、累計扣點與違規分類，依累計點數由高到低。'],
-  ['docs', '約談紀錄表', '每份約談一頁的正式文件：處理之評核紀錄、約談內容、雙方電子簽名與聲明、主管簽核與計分月份。'],
+  ['docs', '約談紀錄表', '每份約談一頁的正式文件：處理之評核紀錄、約談內容、雙方電子簽名與聲明、主管簽核。'],
   ['fm', 'FM-193 接談紀錄表', '非理貨評核的接談紀錄，依 FM-193 原表單格式列印，每份一頁，含電子簽名與聲明。'],
 ];
 function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
