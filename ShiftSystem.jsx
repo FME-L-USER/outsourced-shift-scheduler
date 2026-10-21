@@ -13027,15 +13027,6 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
 
   const docList = kind === 'fm' ? fms : talks;
   const picked = docList.filter(t => !unpicked.has(t.id));
-  // 預覽要用的簽名：只取目前勾選的、尚未載入的
-  useEffect(() => {
-    if (kind !== 'docs' && kind !== 'fm') return;
-    const need = picked.map(t => t.id).filter(id => !signs[id]).slice(0, 60);
-    if (!need.length) return;
-    reviewApi(`/api/review/signs?ids=${need.join(',')}`).then(d => setSigns(s => ({ ...s, ...Object.fromEntries(need.map(id => [id, d[id] ?? {}])) })))
-      .catch(e => toast(e.message, 'error'));
-  }, [kind, picked.map(t => t.id).join(',')]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const docHtmlOf = t => t.kind === 'fm' ? reviewFmHtml(t, signs[t.id], consent) : reviewDocHtml(t, recsOf(t), signs[t.id], consent);
 
   const totalPts = recs.reduce((a, r) => a + r.points, 0);
   const printDocs = async () => {
@@ -13170,7 +13161,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
               <div className="border border-slate-200 rounded-lg overflow-x-auto">
                 <table className="w-full text-sm min-w-[44rem]">
                   <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-                    {['', '約談日', '單號', '受約談人', '課別／組別・廠商', '狀態', ''].map((h, i) => <th key={i} className={th}>{h}</th>)}
+                    {['', '', '約談日', '單號', '受約談人', '課別／組別・廠商', '狀態', ''].map((h, i) => <th key={i} className={th}>{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {[...new Set(docList.map(t => t.empId))].flatMap(empId => {
@@ -13178,6 +13169,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
                       return ds.map((t, i) => (
                         <tr key={t.id} className={`border-t border-[#EFEBE3] cursor-pointer hover:bg-blue-50/40 ${unpicked.has(t.id) ? 'text-slate-400' : ''}`}
                           onClick={e => { if (e.target.closest('button,input')) return; pickToggle(t.id, unpicked.has(t.id)); }}>
+                          <td className="px-3 py-2 w-16"><button onClick={() => setViewing(t)} className="px-2 py-0.5 rounded border border-blue-300 text-blue-700 text-xs hover:bg-blue-50 whitespace-nowrap">📄 檢視</button></td>
                           <td className="px-3 py-2 w-8"><input type="checkbox" checked={!unpicked.has(t.id)} onChange={e => pickToggle(t.id, e.target.checked)} className="w-4 h-4" /></td>
                           <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-600">{t.kind === 'fm' ? t.no : recsOf(t).map(r => <div key={r.id}>{r.no}</div>)}</td>
@@ -13195,11 +13187,6 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
               </div>
             )}
           </div>
-          <div className="bg-slate-300/60 rounded-2xl p-4 overflow-x-auto">
-            <style>{REVIEW_DOC_CSS}</style>
-            <div className="bg-white shadow-md mx-auto p-6" style={{ maxWidth: 1000, minWidth: 760 }}
-              dangerouslySetInnerHTML={{ __html: picked.length ? picked.map(docHtmlOf).join('') : '<p style="text-align:center;color:#94a3b8;padding:24px">請在上方勾選要列印的文件</p>' }} />
-          </div>
         </>
       )}
 
@@ -13210,7 +13197,8 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
               <button onClick={async () => {
                 let sg = signs[viewing.id];
                 if (!sg) { try { sg = (await reviewApi(`/api/review/signs?ids=${viewing.id}`))[viewing.id] ?? {}; setSigns(s => ({ ...s, [viewing.id]: sg })); } catch (e) { toast(e.message, 'error'); return; } }
-                reviewPrintWindow('理貨評核約談紀錄表', reviewDocHtml(viewing, recsOf(viewing), sg, consent));
+                const fm = viewing.kind === 'fm';
+                reviewPrintWindow(fm ? 'FM-193 接談紀錄表' : '理貨評核約談紀錄表', fm ? reviewFmHtml(viewing, sg, consent) : reviewDocHtml(viewing, recsOf(viewing), sg, consent));
               }} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-semibold">🖨 列印這份</button>
               <button onClick={() => setViewing(null)} className="px-4 py-1.5 bg-white rounded-lg text-sm">關閉</button>
             </div>
@@ -13228,7 +13216,7 @@ function ReviewDocPreview({ talk, recs, consent, signs, setSigns }) {
   return (
     <div className="bg-white shadow-xl p-6">
       <style>{REVIEW_DOC_CSS}</style>
-      <div dangerouslySetInnerHTML={{ __html: reviewDocHtml(talk, recs, signs[talk.id], consent) }} />
+      <div dangerouslySetInnerHTML={{ __html: talk.kind === 'fm' ? reviewFmHtml(talk, signs[talk.id], consent) : reviewDocHtml(talk, recs, signs[talk.id], consent) }} />
     </div>
   );
 }
