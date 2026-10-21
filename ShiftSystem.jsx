@@ -11844,8 +11844,9 @@ const reviewEmpBody = p => ({ empId: p.empId, empNo: p.empNo, name: p.name, vend
 // 操作、狀態放最前面：清單比畫面寬（iPad 直拿）時也不必橫向捲動就按得到
 const REVIEW_LIST_GRID = 'grid grid-cols-[1rem_6.5rem_5.5rem_8.5rem_10.5rem_5.5rem_minmax(7rem,1fr)_2.5rem] items-center gap-2';
 // 約談單、主管簽核視窗：除了標題（h2／h3），內文字一律同一個大小；
-// 淺灰字（欄位名稱、表頭、提示）在 iPad 上看不清楚，一律加深
+// 淺灰字（欄位名稱、表頭、提示）在 iPad 上看不清楚，一律加深；段落標題用淺灰圓角色塊
 const REVIEW_MODAL_TEXT = 'text-sm [&_:is(p,span,div,label,td,th,input,select,textarea,button,b,li)]:text-sm [&_h3]:text-base'
+  + ' [&_h3]:w-fit [&_h3]:bg-[#E4E4E4] [&_h3]:rounded-full [&_h3]:px-4 [&_h3]:py-1'
   + ' [&_.text-slate-300]:text-slate-500 [&_.text-slate-400]:text-slate-600 [&_.text-slate-500]:text-slate-700 [&_.text-slate-600]:text-slate-700';
 // 人員卡片內評核紀錄的欄位（表頭與每一列共用，欄位對齊）
 const REVIEW_REC_GRID = 'grid grid-cols-[1rem_8.5rem_5.5rem_2.5rem_minmax(0,1fr)_3.5rem_6rem_3.5rem] items-center gap-3';
@@ -12380,7 +12381,8 @@ function ReviewTalkModal({ mode, talk, person, records, managers, staff, warehou
         <div className="divide-y divide-[#EFEBE3]">
           {kind === 'review' && (
             <section className="px-6 py-4 space-y-2">
-              <h3 className="font-semibold text-slate-700">本次處理的評核紀錄{mode === 'review' && <span className="ml-2 text-xs font-normal text-slate-400">勾選本次要約談的紀錄</span>}</h3>
+              <div className="flex items-center gap-2 flex-wrap"><h3 className="font-semibold text-slate-700">本次處理的評核紀錄</h3>
+                {mode === 'review' && <span className="text-xs text-slate-400">勾選本次要約談的紀錄</span>}</div>
               <ReviewRecTable recs={recs} picked={picked}
                 onToggle={mode === 'review' ? (id, on) => { touch(); setPicked(s => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n; }); } : undefined} />
             </section>
