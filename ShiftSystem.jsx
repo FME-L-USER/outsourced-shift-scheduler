@@ -13172,7 +13172,7 @@ function ReviewReportTab({ data, consent, scopeOk, range, setRange }) {
                   return (
                     <div key={empId} className="border border-slate-200 rounded-lg p-2">
                       <div className="flex items-center gap-2 mb-1 flex-wrap"><b>{p.name}</b><span className="font-mono text-xs text-slate-400">{p.empNo}</span>
-                        <ReviewUnitTags dept={p.dept} grp={p.grp} vendor={p.vendor} />
+                        <ReviewUnitTags dept={p.dept} grp={p.grp} vendor={p.vendor} plain />
                         {ds.length > 1 && <button onClick={() => setUnpicked(new Set(docList.filter(t => t.empId !== empId).map(t => t.id)))} className="ml-auto text-xs text-blue-600 underline">只印此人</button>}</div>
                       {ds.map(t => (
                         <label key={t.id} className="flex items-center gap-2 py-0.5 cursor-pointer text-xs">
