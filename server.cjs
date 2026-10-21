@@ -3362,6 +3362,8 @@ app.get('/api/review/score-config', requireAuth, requireManagerOrAdmin, async (_
   const { rows } = await pool.query(`SELECT value, updated_by, updated_at FROM review_config WHERE key='closedMonths'`);
   res.json({ choices: scoreMonthChoices(), closed: rows[0]?.value?.months || [], closedLog: rows[0]?.value?.log || [] });
 });
+// 可登記計分月份、列入結轉的約談狀態：待主管簽核、已完成
+const REVIEW_SCORABLE = ['mgr', 'done'];
 app.put('/api/review/talks/:id/score', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
   const month = String(req.body?.month ?? '');
   const choices = scoreMonthChoices();
@@ -3372,7 +3374,8 @@ app.put('/api/review/talks/:id/score', requireAuth, requireManagerOrAdmin, requi
     const { rows } = await pool.query('SELECT kind, status, score_month FROM review_talks WHERE id=$1', [Number(req.params.id) || 0]);
     const t = rows[0];
     if (!t || t.kind !== 'review') return res.status(404).json({ error: '找不到這張評核約談單' });
-    if (t.status !== 'done') return res.status(409).json({ error: '完成簽核後才能設定計分月份' });
+    // 待主管簽核（受約談人、廠商已簽）即可登記計分月份；尚未約談或待簽核的不行
+    if (!REVIEW_SCORABLE.includes(t.status)) return res.status(409).json({ error: '受約談人與廠商簽名完成後才能設定計分月份' });
     if (t.score_month && closed.includes(t.score_month)) return res.status(409).json({ error: `${t.score_month} 已結轉，計分月份不能修改` });
     const { rows: up } = await pool.query(
       `UPDATE review_talks SET score_month=$2, score_by=$3, score_at=NOW() WHERE id=$1 RETURNING *`,
@@ -3396,7 +3399,7 @@ app.post('/api/review/close-month', requireAuth, requireAdmin, requireClientVers
     const v = rows[0]?.value || { months: [], log: [] };
     if ((v.months || []).includes(month)) { await client.query('ROLLBACK'); return res.status(409).json({ error: `${month} 已經結轉過` }); }
     const { rows: c } = await client.query(
-      `SELECT COUNT(*)::int AS n FROM review_talks WHERE kind='review' AND status='done' AND score_month=$1`, [month]);
+      `SELECT COUNT(*)::int AS n FROM review_talks WHERE kind='review' AND status = ANY($2::text[]) AND score_month=$1`, [month, REVIEW_SCORABLE]);
     const next = { months: [...(v.months || []), month].sort(), log: [...(v.log || []), { month, by: req.user.username, at: new Date().toISOString(), talks: c[0].n }] };
     await client.query(
       `INSERT INTO review_config (key, value, updated_by, updated_at) VALUES ('closedMonths', $1, $2, NOW())

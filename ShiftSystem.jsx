@@ -13309,8 +13309,10 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
   const closed = cfg?.closed ?? [];
   const reviewTalks = data.talks.filter(t => t.kind === 'review' && t.status !== 'todo' && t.status !== 'void' && scopeOk(t));
   const months = [...new Set([...(cfg?.choices ?? []), ...reviewTalks.map(t => t.scoreMonth).filter(Boolean), ...closed])].sort().reverse();
-  const inMonth = reviewTalks.filter(t => t.status === 'done' && t.scoreMonth === month);
-  const unset = reviewTalks.filter(t => t.status === 'done' && !t.scoreMonth);
+  // 待主管簽核與已完成都可登記計分月份、列入結轉
+  const scorable = t => t.status === 'mgr' || t.status === 'done';
+  const inMonth = reviewTalks.filter(t => scorable(t) && t.scoreMonth === month);
+  const unset = reviewTalks.filter(t => scorable(t) && !t.scoreMonth);
   const notDone = reviewTalks.filter(t => t.status !== 'done');
   const isClosed = closed.includes(month);
   const byVendor = useMemo(() => {
@@ -13326,7 +13328,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
   const detail = reviewTalks.filter(t => t.talkDate >= range.from && t.talkDate <= range.to
     && (!score || (score === 'y') === !!t.scoreMonth)
     && (!q || [t.name, t.empNo, ...recsOf(t).map(r => r.no)].some(v => String(v ?? '').toLowerCase().includes(q))))
-    .sort((a, b) => ((!!a.scoreMonth || a.status !== 'done') - (!!b.scoreMonth || b.status !== 'done')) || b.talkDate.localeCompare(a.talkDate));
+    .sort((a, b) => ((!!a.scoreMonth || !scorable(a)) - (!!b.scoreMonth || !scorable(b))) || b.talkDate.localeCompare(a.talkDate));
   const label = { 0: '上月', 1: '本月', 2: '下月' };
 
   const setScoreMonth = async (t, m) => {
@@ -13334,7 +13336,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
     catch (e) { toast(e.message, 'error'); }
   };
   const closeMonth = async () => {
-    if (!await askConfirm(`結轉 ${reviewRoc(month)}？\n本月份共 ${inMonth.length} 份約談、扣點 ${inMonth.reduce((a, t) => a + ptsOf(t), 0)} 點。\n\n結轉後：這些約談的計分月份不能再修改，其他約談也不能再選 ${reviewRoc(month)}。結轉無法復原。${unset.length ? `\n\n⚠ 還有 ${unset.length} 份已完成的約談尚未設定計分月份。` : ''}`)) return;
+    if (!await askConfirm(`結轉 ${reviewRoc(month)}？\n本月份共 ${inMonth.length} 份約談、扣點 ${inMonth.reduce((a, t) => a + ptsOf(t), 0)} 點。\n\n結轉後：這些約談的計分月份不能再修改，其他約談也不能再選 ${reviewRoc(month)}。結轉無法復原。${unset.length ? `\n\n⚠ 還有 ${unset.length} 份待主管簽核／已完成的約談尚未設定計分月份。` : ''}`)) return;
     try { const c = await reviewApi('/api/review/close-month', { method: 'POST', body: { month } }); setCfg(x => ({ ...x, ...c })); toast(`已結轉 ${reviewRoc(month)}`, 'success'); }
     catch (e) { toast(e.message, 'error'); }
   };
@@ -13365,7 +13367,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
         </div>
         {unset.length > 0 && (
           <div className="mx-4 mb-3 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-700 flex items-center gap-2 flex-wrap">
-            ⚠ <b>{unset.length}</b> 份已完成的約談尚未設定計分月份
+            ⚠ <b>{unset.length}</b> 份待主管簽核／已完成的約談尚未設定計分月份
             <button onClick={() => setScore('n')} className="ml-auto px-2 py-0.5 rounded border border-rose-300 bg-white text-xs">只看未計分</button>
           </div>
         )}
@@ -13413,7 +13415,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
               {detail.map(t => {
                 const rs = recsOf(t), locked = closed.includes(t.scoreMonth);
                 return (
-                  <tr key={t.id} className={`border-t border-[#EFEBE3] ${t.status === 'done' && !t.scoreMonth ? 'bg-rose-50/40' : ''}`}>
+                  <tr key={t.id} className={`border-t border-[#EFEBE3] ${scorable(t) && !t.scoreMonth ? 'bg-rose-50/40' : ''}`}>
                     <td className="px-3 py-2 tabular-nums whitespace-nowrap">{t.talkDate}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <b>{t.name}</b> <span className="font-mono text-xs text-slate-400">{t.empNo}</span>
@@ -13425,7 +13427,7 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
                     <td className="px-3 py-2 text-center font-bold text-rose-600">{ptsOf(t)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{reviewStatusChip(t.status)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      {t.status !== 'done' ? <span className="text-xs text-slate-400">簽核完成後可設定</span>
+                      {!scorable(t) ? <span className="text-xs text-slate-400">雙方簽名後可設定</span>
                         : locked ? <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-xs font-semibold">{reviewRoc(t.scoreMonth)} 🔒</span>
                         : <select value={t.scoreMonth || ''} onChange={e => setScoreMonth(t, e.target.value)}
                             className={`border rounded-lg px-1.5 py-0.5 text-xs ${t.scoreMonth ? 'border-amber-300 text-amber-800 font-semibold' : 'border-rose-300 text-rose-600'}`}>
