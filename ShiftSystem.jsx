@@ -13375,15 +13375,15 @@ function ReviewStatsTab({ data, me, scopeOk, range, setRange, reload }) {
           {byVendor.length === 0
             ? <div className="px-4 py-3 text-sm text-slate-400">{reviewRoc(month)} 還沒有計分的約談</div>
             : <table className="w-full text-sm">
-                <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>{['廠商', '約談份數', '評核件數', '扣點合計', '涉及人數'].map((h, i) => <th key={h} className={i ? 'px-3 py-2 text-center' : th}>{h}</th>)}</tr></thead>
+                <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>{['廠商', '扣點合計', '約談份數', '評核件數', '涉及人數'].map((h, i) => <th key={h} className={i ? 'px-3 py-2 text-center' : th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {byVendor.map(v => (
-                    <tr key={v.vendor} className="border-t border-[#EFEBE3] text-center"><td className="px-3 py-2 text-left font-medium">{v.vendor}</td><td>{v.talks}</td><td>{v.recs}</td>
-                      <td className="font-bold text-rose-600">{v.pts}</td><td>{v.ppl.size}</td></tr>
+                    <tr key={v.vendor} className="border-t border-[#EFEBE3] text-center"><td className="px-3 py-2 text-left font-medium">{v.vendor}</td>
+                      <td className="font-bold text-rose-600">{v.pts}</td><td>{v.talks}</td><td>{v.recs}</td><td>{v.ppl.size}</td></tr>
                   ))}
                   <tr className="border-t-2 border-slate-300 bg-slate-50 text-center font-bold"><td className="px-3 py-2 text-left">總計</td>
-                    <td>{byVendor.reduce((a, v) => a + v.talks, 0)}</td><td>{byVendor.reduce((a, v) => a + v.recs, 0)}</td>
-                    <td className="text-rose-600">{monthPts}</td><td>{new Set(inMonth.map(t => t.empId)).size}</td></tr>
+                    <td className="text-rose-600">{monthPts}</td>
+                    <td>{byVendor.reduce((a, v) => a + v.talks, 0)}</td><td>{byVendor.reduce((a, v) => a + v.recs, 0)}</td><td>{new Set(inMonth.map(t => t.empId)).size}</td></tr>
                 </tbody>
               </table>}
         </div>
