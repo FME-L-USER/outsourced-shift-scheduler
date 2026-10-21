@@ -8779,9 +8779,12 @@ function ImportPane({ todayStr }) {
 }
 
 function StatsPane({ attendDate, selectedGroup, totalCount, presentCount, absentCount, attendRate, groupOptions, exportStats }) {
-  const [rDate,  setRDate]  = useState(attendDate);
+  const [rFrom,  setRFrom]  = useState(attendDate);
+  const [rTo,    setRTo]    = useState(attendDate);
   const [rGroup, setRGroup] = useState(selectedGroup ?? '');
   useEffect(() => { setRGroup(selectedGroup ?? ''); }, [selectedGroup]);
+  // 點名日期換了（含跨日）就跟著換，避免停在舊日期
+  useEffect(() => { setRFrom(attendDate); setRTo(attendDate); }, [attendDate]);
   return (
     <div className="space-y-5">
       <div className="bg-white border border-[#DDD9D0] rounded-xl p-5">
@@ -8815,9 +8818,16 @@ function StatsPane({ attendDate, selectedGroup, totalCount, presentCount, absent
         <h3 className="font-semibold text-slate-700 mb-4">產出 Excel 統計報表</h3>
         <div className="flex flex-wrap gap-3 items-end">
           <div>
-            <label className="block text-xs text-slate-500 mb-1">報表日期</label>
-            <input type="date" value={rDate} onChange={e => setRDate(e.target.value)}
-              className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+            <label className="block text-xs text-slate-500 mb-1">報表日期（起 ～ 迄）</label>
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={rFrom} max={rTo || undefined}
+                onChange={e => { const v = e.target.value; setRFrom(v); if (v && rTo && v > rTo) setRTo(v); }}
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+              <span className="text-slate-400">～</span>
+              <input type="date" value={rTo} min={rFrom || undefined}
+                onChange={e => { const v = e.target.value; setRTo(v); if (v && rFrom && v < rFrom) setRFrom(v); }}
+                className="border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm" />
+            </div>
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">報表組別</label>
@@ -8827,12 +8837,12 @@ function StatsPane({ attendDate, selectedGroup, totalCount, presentCount, absent
               {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
-          <button onClick={() => exportStats(rDate, rGroup)}
+          <button onClick={() => exportStats(rFrom, rTo, rGroup)}
             className="px-4 py-2 bg-[#1a2f5e] hover:bg-[#1e3870] text-white rounded-lg text-sm font-medium">
             📥 下載 Excel
           </button>
         </div>
-        <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」與「請假與異常名單」兩個分頁</p>
+        <p className="text-xs text-slate-400 mt-3">包含「出勤人數統計」（逐日依廠商，多日另列期間合計）與「請假與異常名單」兩個分頁；區間最多 62 天</p>
       </div>
     </div>
   );
@@ -10278,69 +10288,98 @@ function Attendance({ phoneOnly = false }) {
       selectedWorkArea, selectedVendor, schedule, attendData]);
 
   // ── 統計 Excel
-  const exportStats = (reportDate, reportGroup) => {
+  const STATS_MAX_DAYS = 62;
+  const exportStats = (fromDate, toDate, reportGroup) => {
     try {
-      const emps = rollCallList(reportDate, reportGroup);
-      // 與回報文字一致：臨時人力依作業組別篩選；未指定組別者不屬於任何一組
-      const exExtras = (extras[reportDate] ?? []).filter(e => !reportGroup || e.group === reportGroup);
-      const exUngrouped = reportGroup ? (extras[reportDate] ?? []).filter(e => !e.group) : [];
-      const getData = id => recordFor(reportDate, id);
-
-      const s1 = [['廠商', '應到', '實到', '缺勤', '到班率']];
-      const vm = {};
-      emps.forEach(e => {
-        const v = e.vendor || '未分配';
-        if (!vm[v]) vm[v] = { t: 0, p: 0 };
-        vm[v].t++; if (getData(e.id).present) vm[v].p++;
-      });
-      exExtras.forEach(e => {
-        const v = e.vendor || '手動新增';
-        if (!vm[v]) vm[v] = { t: 0, p: 0 };
-        vm[v].t++; if (e.present) vm[v].p++;
-      });
-      let tt = 0, tp = 0;
-      sortVendorNames(Object.keys(vm)).forEach(v => {
-        const d = vm[v];
-        tt += d.t; tp += d.p;
-        s1.push([v, d.t, d.p, d.t - d.p, d.t > 0 ? `${Math.round((d.p/d.t)*100)}%` : '—']);
-      });
-      s1.push(['合計', tt, tp, tt - tp, tt > 0 ? `${Math.round((tp/tt)*100)}%` : '—']);
-      if (exUngrouped.length > 0) {
-        s1.push([]);
-        s1.push([`※ 另有 ${exUngrouped.length} 位臨時人力未指定作業組別，未計入本統計：`
-                 + exUngrouped.map(e => e.name).join('、')]);
+      if (!fromDate || !toDate || fromDate > toDate) { toast('請選擇正確的起訖日期', 'error'); return; }
+      const dates = [];
+      for (let d = new Date(fromDate + 'T00:00:00'); dates.length <= STATS_MAX_DAYS; d.setDate(d.getDate() + 1)) {
+        const dk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (dk > toDate) break;
+        dates.push(dk);
       }
+      if (dates.length > STATS_MAX_DAYS) { toast(`日期區間最多 ${STATS_MAX_DAYS} 天`, 'error'); return; }
+      const rate = (p, t) => (t > 0 ? `${Math.round((p / t) * 100)}%` : '—');
 
+      const s1 = [['日期', '廠商', '應到', '實到', '缺勤', '到班率']];
       const s2 = [['日期', '廠商', '員工編號', '姓名', '出勤狀況', '假別/遲到狀態', '備註']];
-      emps.forEach(emp => {
-        const rec = getData(emp.id);
-        const abnormal = !rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus);
-        if (!abnormal) return;
-        // 未點名與缺勤要分開：前者是「還沒確認」，後者是「確認沒來」，
-        // 混在一起會讓請假統計失真。
-        const status = rec._noRecord ? '未點名' : (rec.present ? '出勤' : '缺勤');
-        s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
-          status,
-          rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
-          rec.note || '']);
+      const sum = {};                 // 期間合計（依廠商）
+      const ungroupedNotes = [];
+      dates.forEach(reportDate => {
+        const emps = rollCallList(reportDate, reportGroup);
+        // 臨時人力依上方篩選列（倉別／課別／作業區／廠商）與作業組別篩選；未指定組別者不屬於任何一組
+        const dayExtras = filterExtrasByScope(extras[reportDate], warehouses,
+          selectedWarehouse, attendDeptName, null, selectedVendor, selectedWorkArea);
+        const exExtras = dayExtras.filter(e => !reportGroup || e.group === reportGroup);
+        const exUngrouped = reportGroup ? dayExtras.filter(e => !e.group) : [];
+        if (exUngrouped.length) ungroupedNotes.push(`${reportDate}：${exUngrouped.map(e => e.name).join('、')}`);
+        const getData = id => recordFor(reportDate, id);
+
+        const vm = {};
+        const add = (v, present) => {
+          if (!vm[v]) vm[v] = { t: 0, p: 0 };
+          vm[v].t++; if (present) vm[v].p++;
+        };
+        emps.forEach(e => add(e.vendor || '未分配', getData(e.id).present));
+        exExtras.forEach(e => add(e.vendor || '手動新增', e.present));
+        let tt = 0, tp = 0;
+        sortVendorNames(Object.keys(vm)).forEach(v => {
+          const d = vm[v];
+          tt += d.t; tp += d.p;
+          if (!sum[v]) sum[v] = { t: 0, p: 0 };
+          sum[v].t += d.t; sum[v].p += d.p;
+          s1.push([reportDate, v, d.t, d.p, d.t - d.p, rate(d.p, d.t)]);
+        });
+        s1.push([reportDate, '當日合計', tt, tp, tt - tp, rate(tp, tt)]);
+
+        emps.forEach(emp => {
+          const rec = getData(emp.id);
+          const abnormal = !rec.present || (rec.lateEarly && rec.lateEarly !== defaultStatus);
+          if (!abnormal) return;
+          // 未點名與缺勤要分開：前者是「還沒確認」，後者是「確認沒來」，
+          // 混在一起會讓請假統計失真。
+          const status = rec._noRecord ? '未點名' : (rec.present ? '出勤' : '缺勤');
+          s2.push([reportDate, emp.vendor || '未分配', emp.empId ?? '', emp.name,
+            status,
+            rec.present ? (rec.lateEarly || '') : (rec.absType || ''),
+            rec.note || '']);
+        });
+        exExtras.forEach(e => {
+          if (!e.present || (e.lateEarly && e.lateEarly !== defaultStatus)) {
+            s2.push([reportDate, e.vendor || '', '', e.name,
+              e.present ? '出勤' : '缺勤',
+              e.present ? (e.lateEarly || '') : (e.absType || ''),
+              e.note || '']);
+          }
+        });
       });
-      exExtras.forEach(e => {
-        if (!e.present || (e.lateEarly && e.lateEarly !== defaultStatus)) {
-          s2.push([reportDate, e.vendor || '', '', e.name,
-            e.present ? '出勤' : '缺勤',
-            e.present ? (e.lateEarly || '') : (e.absType || ''),
-            e.note || '']);
-        }
-      });
+      // 多日時另列期間合計（人次）
+      if (dates.length > 1) {
+        s1.push([]);
+        s1.push([`期間合計（${fromDate} ～ ${toDate}，人次）`]);
+        let tt = 0, tp = 0;
+        sortVendorNames(Object.keys(sum)).forEach(v => {
+          const d = sum[v];
+          tt += d.t; tp += d.p;
+          s1.push(['', v, d.t, d.p, d.t - d.p, rate(d.p, d.t)]);
+        });
+        s1.push(['', '期間合計', tt, tp, tt - tp, rate(tp, tt)]);
+      }
+      if (ungroupedNotes.length) {
+        s1.push([]);
+        s1.push(['※ 另有臨時人力未指定作業組別，未計入本統計：']);
+        ungroupedNotes.forEach(n => s1.push([n]));
+      }
 
       const wb = XLSX.utils.book_new();
       const ws1 = XLSX.utils.aoa_to_sheet(s1);
-      ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }];
+      ws1['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }];
       const ws2 = XLSX.utils.aoa_to_sheet(s2);
       ws2['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 20 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(wb, ws1, '出勤人數統計');
       XLSX.utils.book_append_sheet(wb, ws2, '請假與異常名單');
-      XLSX.writeFile(wb, `點名統計_${reportDate}${reportGroup ? '_' + reportGroup : ''}.xlsx`);
+      const range = fromDate === toDate ? fromDate : `${fromDate}~${toDate}`;
+      XLSX.writeFile(wb, `點名統計_${range}${reportGroup ? '_' + reportGroup : ''}.xlsx`);
       toast('匯出成功', 'success');
     } catch (err) { toast('匯出失敗：' + err.message, 'error'); }
   };
