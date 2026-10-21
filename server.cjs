@@ -1220,8 +1220,14 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = String(req.params.id).trim();
   if (!id) return res.status(400).json({ error: '無效的使用者 ID' });
-  const { role, approved, page_perms, fn_perms, allowed_warehouses, vendors, mgr_level } = req.body ?? {};
+  const { role, approved, page_perms, fn_perms, allowed_warehouses, vendors, mgr_level, display_name } = req.body ?? {};
   if (mgr_level !== undefined && !MGR_LEVELS.includes(mgr_level)) return res.status(400).json({ error: '主管級別不正確' });
+  // 顯示姓名：AD 不回傳姓名，由管理員填寫；AD 登入時不會覆蓋。去頭尾空白、最多 50 字，不可含控制字元
+  let displayName;
+  if (display_name !== undefined) {
+    displayName = String(display_name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 50);
+    if (!displayName) return res.status(400).json({ error: '姓名不可空白' });
+  }
 
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (!existing[0]) return res.status(404).json({ error: '找不到此帳號' });
@@ -1237,6 +1243,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (allowed_warehouses !== undefined) { vals.push(allowed_warehouses); sets.push(`allowed_warehouses=$${vals.length}`); }
   if (vendors           !== undefined) { vals.push(vendors);            sets.push(`vendors=$${vals.length}`); }
   if (mgr_level          !== undefined) { vals.push(mgr_level);          sets.push(`mgr_level=$${vals.length}`); }
+  if (displayName        !== undefined) { vals.push(displayName);        sets.push(`display_name=$${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: '無可更新欄位' });
 
   vals.push(id);

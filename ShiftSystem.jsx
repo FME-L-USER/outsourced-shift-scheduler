@@ -17609,6 +17609,36 @@ function ShiftCodeTable() {
 // PERMISSION MANAGEMENT
 // ─────────────────────────────────────────────
 
+/** 帳號姓名：點 ✏️ 就地修改，Enter 或「儲存」送出，Esc 或「取消」放棄 */
+function EditableName({ value, onSave, saving }) {
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(value ?? '');
+  useEffect(() => { if (!edit) setV(value ?? ''); }, [value, edit]);
+  const save = async () => {
+    const t = v.trim();
+    if (!t || t === (value ?? '')) { setEdit(false); return; }
+    if (await onSave(t)) setEdit(false);
+  };
+  if (!edit) {
+    return (
+      <button type="button" onClick={() => setEdit(true)} title="修改姓名"
+        className="group shrink-0 inline-flex items-center gap-1 text-sm text-slate-700 hover:text-blue-700">
+        {value || <span className="text-slate-400">（未填姓名）</span>}
+        <span className="text-xs text-slate-400 group-hover:text-blue-600">✏️</span>
+      </button>
+    );
+  }
+  return (
+    <span className="shrink-0 inline-flex items-center gap-1">
+      <input autoFocus value={v} maxLength={50} disabled={saving} onChange={e => setV(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEdit(false); }}
+        className="border border-blue-300 rounded-lg px-2 py-0.5 text-sm w-32" />
+      <button type="button" onClick={save} disabled={saving} className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-lg disabled:opacity-50">{saving ? '儲存中…' : '儲存'}</button>
+      <button type="button" onClick={() => setEdit(false)} disabled={saving} className="px-2 py-0.5 text-xs border border-slate-300 text-slate-500 rounded-lg">取消</button>
+    </span>
+  );
+}
+
 function AccountManagement() {
   const { users, setUsers, vendors, warehouses, currentUser, employees,
           setWorkerPwds, selectedWarehouse, selectedDept, selectedGroup, selectedWorkArea, selectedVendor } = useApp();
@@ -17688,6 +17718,30 @@ function AccountManagement() {
   };
 
   // 主管級別：協理／經理／副理／課長可被送呈理貨評核簽核；經辦為約談人
+  const [savingNameFor, setSavingNameFor] = useState(null);
+  const updateApiUserName = async (userId, name) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return false;
+    setSavingNameFor(userId);
+    try {
+      const r = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ display_name: name }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.error ?? '操作失敗', 'error'); return false; }
+      setApiUsers(prev => prev.map(u => u.id === d.id ? d : u));
+      toast(`${d.username} 姓名已改為「${d.display_name}」`, 'success');
+      return true;
+    } catch {
+      toast('操作失敗', 'error');
+      return false;
+    } finally {
+      setSavingNameFor(null);
+    }
+  };
+
   const updateApiUserMgr = async (userId, level) => {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
@@ -18541,7 +18595,8 @@ function AccountManagement() {
             {staffApiUsers.map(u => (
               <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
-                {u.display_name && <span className="text-sm text-slate-600 shrink-0">{u.display_name}</span>}
+                <EditableName value={u.display_name || ''}
+                  saving={savingNameFor === u.id} onSave={name => updateApiUserName(u.id, name)} />
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium w-fit ${roleBadge[u.role]}`}>{roleLabel[u.role]}</span>
                 <label className="shrink-0 flex items-center gap-1 text-xs text-slate-400" title="協理／經理／副理／課長可被送呈理貨評核簽核；經辦為約談人">
                   主管級別
