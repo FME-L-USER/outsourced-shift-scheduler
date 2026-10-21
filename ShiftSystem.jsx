@@ -180,7 +180,7 @@ function ConfirmHost() {
 }
 
 // keyboard：內含密碼欄的對話框。iPad 跳出鍵盤時畫面會位移，點到遮罩就誤關，
-// 所以不以點遮罩關閉，並靠上顯示避免被鍵盤擋住
+// 所以不以點遮罩關閉，並靠上顯示避免被鍵盤擋住（密碼欄須 16px 以上，否則 Safari 會自動放大畫面；本系統基準字級 14px，不能用 text-base）
 function Modal({ children, onClose, keyboard = false }) {
   return createPortal(
     <div className={`fixed inset-0 bg-black/50 z-50 flex justify-center p-4 ${keyboard ? 'items-start pt-[10vh]' : 'items-center'}`}
@@ -4780,7 +4780,7 @@ function UnlockDialog({ hasPwd, onVerify, onOk, onClose }) {
               onChange={e => { setPwd(e.target.value); setErr(''); }}
               onKeyDown={e => { if (e.key === 'Enter') submit(); }}
               autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-base mb-2" />
+              className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-[16px] mb-2" />
             {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
 
             <label className="block text-xs font-medium text-slate-600 mb-1">解鎖時間</label>
@@ -9905,7 +9905,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                   onChange={e => { setExitPwd(e.target.value); setExitErr(''); }}
                   onKeyDown={e => { if (e.key === 'Enter') tryExit(); }}
                   autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base" />
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-[16px]" />
                 {exitErr && <p className="text-sm text-rose-600">{exitErr}</p>}
               </>
             ) : (
