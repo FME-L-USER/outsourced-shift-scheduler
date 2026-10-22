@@ -17704,6 +17704,7 @@ function SurveyPage() {
   const [editing, setEditing] = useState(null);    // { survey|null, copy?: bool }
   const [extending, setExtending] = useState(null);
   const [proxy, setProxy] = useState(null);         // 代填：調查 id
+  const [results, setResults] = useState(null);     // 結果：調查 id
   const me = currentUser?.username ?? '';
   const admin = currentUser?.role === ROLES.ADMIN;
   const load = useCallback(async () => {
@@ -17722,6 +17723,7 @@ function SurveyPage() {
   const btn = (label, onClick, cls = 'border border-slate-300 text-slate-600 bg-white') =>
     <button key={label} onClick={onClick} className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${cls}`}>{label}</button>;
 
+  if (results) return <div className="p-6 max-w-6xl"><SurveyResults surveyId={results} onBack={async () => { setResults(null); await load(); }} /></div>;
   if (proxy) return <div className="p-6 max-w-5xl"><SurveyProxyList surveyId={proxy} onBack={async () => { setProxy(null); await load(); }} /></div>;
   if (editing) return <SurveyEditor init={editing} onClose={() => setEditing(null)} onSaved={async st => { setEditing(null); await load(); if (st) setStatus(st); }} />;
 
@@ -17751,7 +17753,7 @@ function SurveyPage() {
                 <tr key={x.id} className="border-t border-[#EFEBE3] align-top">
                   <td className="px-3 py-2"><div className="flex flex-wrap gap-1 w-36">
                     {x.status === 'deleted' ? (m && btn('還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white')) : <>
-                      {x.status !== 'draft' && btn('結果', () => toast('結果統計將在第 3 批上線', 'info'), 'bg-blue-600 text-white')}
+                      {x.status !== 'draft' && x.status !== 'upcoming' && btn('結果', () => setResults(x.id), 'bg-blue-600 text-white')}
                       {x.status === 'open' && btn('代填', () => setProxy(x.id), 'bg-amber-500 text-white')}
                       {m && x.status !== 'closed' && btn('編輯', () => setEditing({ survey: x }))}
                       {m && x.status === 'open' && btn('提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); })}
@@ -17765,7 +17767,7 @@ function SurveyPage() {
                   <td className="px-3 py-2 text-xs whitespace-nowrap">{svFmt(x.startAt)}<br />～ {svFmt(x.endAt)}</td>
                   <td className="px-3 py-2 text-xs text-slate-600 max-w-[16rem]">{svScopeText(x.scope, warehouses)}</td>
                   <td className="px-3 py-2 text-xs whitespace-nowrap">{[x.targets?.long && '長期', x.targets?.temp && '臨時'].filter(Boolean).join('＋')}</td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap"><b className="text-slate-800">{x.responses}</b> 人回覆</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap"><b className="text-slate-800">{x.responses}</b> 人回覆{x.frozenTotal != null && <span className="text-slate-500"> / {x.frozenTotal} 人</span>}</td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <span className={`text-xs px-2 py-0.5 rounded-full border ${SURVEY_STATUS[x.status][1]}`}>{SURVEY_STATUS[x.status][0]}</span>
                     {x.status === 'open' && <div className="text-[11px] text-rose-600 mt-0.5">{svLeft(x.endAt)}</div>}
@@ -17982,24 +17984,32 @@ function SurveyFillModal({ children, onClose }) {
 function SurveyFillPage() {
   const toast = useToast();
   const [list, setList] = useState(null);
-  const [sel, setSel] = useState(null);
-  const load = useCallback(() => reviewApi('/api/survey-fill/surveys').then(d => setList(d.surveys ?? [])).catch(e => { toast(e.message, 'error'); setList([]); }), [toast]);
+  const [sel, setSel] = useState(null);       // 代填
+  const [res, setRes] = useState(null);       // 結果
+  const load = useCallback(() => reviewApi('/api/survey-fill/surveys?all=1').then(d => setList(d.surveys ?? [])).catch(e => { toast(e.message, 'error'); setList([]); }), [toast]);
   useEffect(() => { load(); }, [load]);
+  if (res) return <div className="p-6 max-w-6xl"><SurveyResults surveyId={res} onBack={async () => { setRes(null); await load(); }} /></div>;
   if (sel) return <div className="p-6 max-w-5xl"><SurveyProxyList surveyId={sel} onBack={async () => { setSel(null); await load(); }} /></div>;
+  const open = (list ?? []).filter(x => x.status === 'open'), closed = (list ?? []).filter(x => x.status === 'closed');
+  const card = x => (
+    <div key={x.id} className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
+      <span className="flex-1 min-w-0"><b className="text-slate-800">{x.title}</b>
+        <span className={`block text-xs ${x.status === 'open' ? 'text-rose-600' : 'text-slate-500'}`}>{x.status === 'open' ? `${svFmt(x.endAt)} 截止・${svLeft(x.endAt)}` : `${svFmt(x.startAt)} ～ ${svFmt(x.endAt)}・已結束`}</span></span>
+      <span className="text-sm text-slate-600 whitespace-nowrap">已回覆 <b>{x.responded}</b> / {x.total}</span>
+      {x.status === 'open' && x.total - x.responded > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-xs whitespace-nowrap">未回覆 {x.total - x.responded}</span>}
+      {x.status === 'open' && <button onClick={() => setSel(x.id)} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-semibold">代填</button>}
+      <button onClick={() => setRes(x.id)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">結果</button>
+    </div>
+  );
   return (
     <div className="p-6 max-w-4xl space-y-3">
       <h2 className="text-xl font-bold text-slate-800">調查</h2>
-      <p className="text-sm text-slate-500">進行中的調查，可替自己廠商的人員填寫或修改；人員也可以自己登入填寫。</p>
-      {!list ? <div className="text-slate-400">讀取中…</div>
-        : list.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400">目前沒有進行中的調查</div>
-        : list.map(x => (
-          <button key={x.id} onClick={() => setSel(x.id)} className="w-full text-left bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-4 hover:border-teal-300">
-            <span className="flex-1 min-w-0"><b className="text-slate-800">{x.title}</b>
-              <span className="block text-xs text-rose-600">{svFmt(x.endAt)} 截止・{svLeft(x.endAt)}</span></span>
-            <span className="text-sm text-slate-600 whitespace-nowrap">已回覆 <b>{x.responded}</b> / {x.total}</span>
-            {x.total - x.responded > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-xs whitespace-nowrap">未回覆 {x.total - x.responded}</span>}
-          </button>
-        ))}
+      <p className="text-sm text-slate-500">進行中的調查，可替自己廠商的人員填寫或修改；人員也可以自己登入填寫。結果只包含自己廠商的人員。</p>
+      {!list ? <div className="text-slate-400">讀取中…</div> : <>
+        <div className="font-semibold text-slate-700">進行中</div>
+        {open.length ? open.map(card) : <div className="bg-white border rounded-2xl p-6 text-center text-slate-400 text-sm">目前沒有進行中的調查</div>}
+        {closed.length > 0 && <><div className="font-semibold text-slate-700 pt-2">已結束</div>{closed.map(card)}</>}
+      </>}
     </div>
   );
 }
@@ -18073,6 +18083,222 @@ function KioskSurveyBanner({ person, onActivity }) {
             onCancel={() => setFill(null)}
             onSubmit={async answers => {
               try { await svSubmit(fill.id, key, answers, true); toast('已送出回覆', 'success'); setFill(null); await load(); }
+              catch (e) { toast(e.message, 'error'); }
+            }} />
+        </SurveyFillModal>
+      )}
+    </div>
+  );
+}
+
+// ── 調查：結果統計與匯出 ─────────────────────────────
+const svTwTime = iso => { if (!iso) return ''; const d = new Date(new Date(iso).getTime() + 8 * 3600e3);
+  return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+const svPct = (n, t) => (t ? `${Math.round((n / t) * 100)}%` : '—');
+const svKindLabel = k => (k === 'temp' ? '臨時人力' : '長期');
+/** 各題統計（依目前篩選的人員） */
+function svStats(questions, people) {
+  const done = people.filter(p => p.response);
+  return questions.map(q => {
+    const vals = done.map(p => p.response.answers[q.id]).filter(v => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length));
+    if (q.type === 'single' || q.type === 'multi') {
+      const counts = q.options.map(o => [o, vals.filter(v => (Array.isArray(v) ? v.includes(o) : v === o)).length]);
+      return { q, counts, answered: vals.length };
+    }
+    if (q.type === 'number') {
+      const ns = vals.map(Number).filter(Number.isFinite);
+      return { q, answered: ns.length, avg: ns.length ? Math.round((ns.reduce((a, b) => a + b, 0) / ns.length) * 10) / 10 : null,
+        min: ns.length ? Math.min(...ns) : null, max: ns.length ? Math.max(...ns) : null };
+    }
+    return { q, answered: vals.length, texts: done.filter(p => p.response.answers[q.id]).map(p => ({ p, t: p.response.answers[q.id] })) };
+  });
+}
+/** 單選題的交叉表：依廠商或組別，各選項人數＋未回覆 */
+function svCross(q, people, by) {
+  const keyOf = p => (by === 'grp' ? (p.grp || '—') : p.kind === 'temp' ? `${p.vendor}（臨時）` : p.vendor || '—');
+  const m = new Map();
+  for (const p of people) {
+    const k = keyOf(p);
+    if (!m.has(k)) m.set(k, { k, opt: Object.fromEntries(q.options.map(o => [o, 0])), none: 0, total: 0 });
+    const r = m.get(k);
+    r.total++;
+    const v = p.response?.answers[q.id];
+    if (v != null && v !== '' && r.opt[v] !== undefined) r.opt[v]++; else r.none++;
+  }
+  return [...m.values()].sort((a, b) => b.total - a.total);
+}
+function svExportXlsx(survey, people, logs, filterText, warehouses) {
+  const qs = survey.questions;
+  const done = people.filter(p => p.response);
+  const byMethod = m => done.filter(p => p.response.method === m).length;
+  const now = new Date();
+  const info = [['項目', '內容'], ['標題', survey.title], ['說明', survey.description || ''], ['開始時間', svTwTime(survey.startAt)], ['結束時間', svTwTime(survey.endAt)],
+    ['狀態', SURVEY_STATUS[survey.status]?.[0] ?? ''], ['發布範圍', svScopeText(survey.scope, warehouses)],
+    ['對象', [survey.targets?.long && '長期委外人員', survey.targets?.temp && '臨時人力'].filter(Boolean).join('、')], ['建立人', survey.createdName || survey.createdBy],
+    ['匯出時間', svTwTime(now.toISOString())], ['匯出篩選', filterText], ['對象人數', people.length], ['已回覆', done.length], ['回覆率', svPct(done.length, people.length)],
+    ['本人回覆', byMethod('self')], ['幹部代填', byMethod('vendor')], ['日翊代填', byMethod('staff')], ['點選模式', byMethod('kiosk')], ['未回覆', people.length - done.length]];
+  const stat = [];
+  for (const [i, st] of svStats(qs, people).entries()) {
+    const q = st.q;
+    stat.push([`${i + 1}. ${q.title}（${SURVEY_TYPE_LABEL[q.type]}${q.required ? '・必填' : ''}）`]);
+    if (st.counts) {
+      stat.push(['選項', '人數', '占比（已回覆）']);
+      for (const [o, n] of st.counts) stat.push([o, n, svPct(n, done.length)]);
+      stat.push(['填答人數', st.answered, '']);
+      if (q.type === 'single') for (const [by, label] of [['vendor', '依廠商'], ['grp', '依組別']]) {
+        stat.push([]); stat.push([label, ...q.options, '未回覆', '合計']);
+        for (const r of svCross(q, people, by)) stat.push([r.k, ...q.options.map(o => r.opt[o]), r.none, r.total]);
+      }
+    } else if (q.type === 'number') {
+      stat.push(['平均', '最小', '最大', '填答人數']); stat.push([st.avg ?? '', st.min ?? '', st.max ?? '', st.answered]);
+    } else stat.push(['填答則數', st.answered]);
+    stat.push([]);
+  }
+  const detail = [['員編', '姓名', '長期／臨時', '倉別', '課別', '組別', '廠商', '回覆狀態', ...qs.map((q, i) => `${i + 1}. ${q.title}`), '填寫方式', '填寫人', '最後回覆時間']];
+  for (const p of people) detail.push([p.empNo, p.name, svKindLabel(p.kind), p.wh, p.dept, p.grp, p.vendor, p.response ? '已回覆' : '未回覆',
+    ...qs.map(q => (p.response ? svAnswerText(q, p.response.answers[q.id]) : '')),
+    p.response ? SV_METHOD[p.response.method] : '', p.response?.filledName ?? '', p.response ? svTwTime(p.response.updatedAt) : '']);
+  const none = [['員編', '姓名', '長期／臨時', '廠商', '課別', '組別'], ...people.filter(p => !p.response).map(p => [p.empNo, p.name, svKindLabel(p.kind), p.vendor, p.dept, p.grp])];
+  const pk = new Map(people.map(p => [p.key, p]));
+  const log = [['修改時間', '員編', '姓名', '廠商', '修改人', '填寫方式', '題目', '修改前', '修改後']];
+  for (const l of logs) {
+    const p = pk.get(l.key);
+    if (!p) continue;
+    for (const [i, q] of qs.entries()) {
+      const a = svAnswerText(q, l.before?.[q.id]), c = svAnswerText(q, l.after?.[q.id]);
+      if (a !== c) log.push([svTwTime(l.at), p.empNo, p.name, p.vendor, l.filledName || l.filledBy, SV_METHOD[l.method] ?? '', `${i + 1}. ${q.title}`, a, c]);
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  for (const [name, aoa, cols] of [['調查資訊', info, [14, 60]], ['統計', stat, [24, 12, 12, 12, 12, 12, 10]], ['明細', detail, [12, 10, 10, 10, 14, 14, 10, 10, ...qs.map(() => 18), 10, 12, 18]],
+    ['未回覆名單', none, [12, 10, 10, 10, 14, 14]], ['修改紀錄', log, [18, 12, 10, 10, 12, 10, 24, 18, 18]]]) {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = cols.map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  const t = new Date(now.getTime() + 8 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+  const title = String(survey.title).replace(/[\\/:*?"<>|\s]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || '調查';
+  XLSX.writeFile(wb, `調查_${title}_${t}.xlsx`);
+}
+
+function SurveyResults({ surveyId, onBack }) {
+  const { warehouses, currentUser } = useApp();
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [fGrp, setFGrp] = useState('');
+  const [fVendor, setFVendor] = useState('');
+  const [fKind, setFKind] = useState('');
+  const [onlyNone, setOnlyNone] = useState(false);
+  const [crossBy, setCrossBy] = useState('vendor');
+  const [moreText, setMoreText] = useState({});
+  const [fill, setFill] = useState(null);
+  const load = useCallback(() => reviewApi(`/api/surveys/${surveyId}/results`).then(setD).catch(e => { toast(e.message, 'error'); onBack(); }), [surveyId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+  if (!d) return <div className="p-8 text-center text-slate-400">讀取中…</div>;
+  const sv = d.survey;
+  const people = d.people.filter(p => (!fGrp || p.grp === fGrp) && (!fVendor || p.vendor === fVendor) && (!fKind || p.kind === fKind));
+  const done = people.filter(p => p.response);
+  const grps = [...new Set(d.people.map(p => p.grp).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  const vendors = sortVendorNames([...new Set(d.people.map(p => p.vendor).filter(Boolean))]);
+  const hasTemp = d.people.some(p => p.kind === 'temp');
+  const stats = svStats(sv.questions, people);
+  const filterText = [fGrp ? `組別：${fGrp}` : '組別：全部', fVendor ? `廠商：${fVendor}` : '廠商：全部', fKind ? `對象：${svKindLabel(fKind)}` : '對象：全部'].join('、');
+  const chip = (on, label, onClick) => <button key={label} onClick={onClick}
+    className={`px-3 py-1 rounded-full border text-sm ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'}`}>{label}</button>;
+  const bar = (label, n, total, color) => (
+    <div key={label} className="flex items-center gap-2 text-sm">
+      <span className="w-32 shrink-0 truncate" title={label}>{label}</span>
+      <div className="flex-1 h-3 rounded-full bg-slate-200 overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${total ? (n / total) * 100 : 0}%` }} /></div>
+      <span className="w-24 text-right text-xs"><b>{n}</b>（{svPct(n, total)}）</span>
+    </div>
+  );
+  const COLORS = ['bg-emerald-500', 'bg-rose-500', 'bg-amber-400', 'bg-sky-500', 'bg-violet-500', 'bg-teal-500', 'bg-slate-500'];
+  const rows = onlyNone ? people.filter(p => !p.response) : people;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={onBack} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600">← 返回</button>
+        <h2 className="text-xl font-bold text-slate-800">{sv.title}</h2>
+        <span className={`text-xs px-2 py-0.5 rounded-full border ${SURVEY_STATUS[sv.status][1]}`}>{SURVEY_STATUS[sv.status][0]}{sv.status === 'open' ? `・${svLeft(sv.endAt)}` : ''}</span>
+        <span className="text-xs text-slate-500">{svFmt(sv.startAt)} ～ {svFmt(sv.endAt)}{d.frozenAt ? `・名單已於結束時凍結` : ''}</span>
+        <button onClick={() => svExportXlsx(sv, people, d.logs, filterText, warehouses)} className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold">📊 匯出 Excel</button>
+      </div>
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 space-y-2">
+        {grps.length > 1 && <div className="flex items-center gap-2 flex-wrap"><span className="text-sm text-slate-600 w-10">組別</span>{chip(!fGrp, '全部', () => setFGrp(''))}{grps.map(g => chip(fGrp === g, g, () => setFGrp(g)))}</div>}
+        {vendors.length > 1 && <div className="flex items-center gap-2 flex-wrap"><span className="text-sm text-slate-600 w-10">廠商</span>{chip(!fVendor, '全部', () => setFVendor(''))}{vendors.map(v => chip(fVendor === v, v, () => setFVendor(v)))}</div>}
+        {hasTemp && <div className="flex items-center gap-2 flex-wrap"><span className="text-sm text-slate-600 w-10">對象</span>{chip(!fKind, '全部', () => setFKind(''))}{chip(fKind === 'long', '長期', () => setFKind('long'))}{chip(fKind === 'temp', '臨時人力', () => setFKind('temp'))}</div>}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[['回覆率', svPct(done.length, people.length), 'text-teal-700'], ['已回覆', `${done.length} / ${people.length} 人`, 'text-slate-800'],
+            ['本人回覆／代填', `${done.filter(p => p.response.method === 'self').length} ／ ${done.filter(p => p.response.method !== 'self').length}`, 'text-slate-800'],
+            ['未回覆', `${people.length - done.length} 人`, people.length - done.length ? 'text-rose-600' : 'text-slate-800']].map(([l, v, c]) => (
+            <div key={l} className="bg-slate-50 rounded-xl px-3 py-2"><div className="text-xs text-slate-500">{l}</div><div className={`text-xl font-bold ${c}`}>{v}</div></div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        {stats.map((st, i) => (
+          <div key={st.q.id} className="bg-white border border-[#DDD9D0] rounded-2xl p-4 space-y-2">
+            <b className="text-sm text-slate-800">{i + 1}. {st.q.title}<span className="ml-1 font-normal text-xs text-slate-500">（{SURVEY_TYPE_LABEL[st.q.type]}・填答 {st.answered} 人）</span></b>
+            {st.counts && st.counts.map(([o, n], k) => bar(o, n, done.length, COLORS[k % COLORS.length]))}
+            {st.q.type === 'single' && (() => {
+              const cross = svCross(st.q, people, crossBy);
+              return (
+                <div className="pt-1 space-y-1">
+                  <div className="flex items-center gap-1 text-xs">{[['vendor', '依廠商'], ['grp', '依組別']].map(([k, l]) => (
+                    <button key={k} onClick={() => setCrossBy(k)} className={`px-2 py-0.5 rounded border ${crossBy === k ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600'}`}>{l}</button>))}</div>
+                  <div className="overflow-x-auto"><table className="w-full text-xs border border-slate-200">
+                    <thead className="bg-[#F5F2EC] text-slate-500"><tr><th className="px-2 py-1 text-left">{crossBy === 'grp' ? '組別' : '廠商'}</th>
+                      {st.q.options.map(o => <th key={o} className="px-2 py-1 whitespace-nowrap">{o}</th>)}<th className="px-2 py-1 text-rose-600">未回覆</th></tr></thead>
+                    <tbody className="text-center">{cross.map(r => (
+                      <tr key={r.k} className="border-t"><td className="px-2 py-1 text-left whitespace-nowrap">{r.k}</td>
+                        {st.q.options.map(o => <td key={o}>{r.opt[o]}</td>)}<td className={r.none ? 'text-rose-600' : ''}>{r.none}</td></tr>))}</tbody>
+                  </table></div>
+                </div>);
+            })()}
+            {st.q.type === 'number' && (
+              <div className="grid grid-cols-4 gap-2 text-center text-sm">{[['平均', st.avg], ['最小', st.min], ['最大', st.max], ['填答', st.answered]].map(([l, v]) => (
+                <div key={l} className="bg-slate-50 rounded-lg py-1">{l}<br /><b>{v ?? '—'}{v != null && l !== '填答' && st.q.unit ? ` ${st.q.unit}` : ''}</b></div>))}</div>)}
+            {st.texts && (st.texts.length === 0 ? <div className="text-xs text-slate-400">沒有填答</div> : (
+              <ul className="text-sm space-y-1 text-slate-700">
+                {(moreText[st.q.id] ? st.texts : st.texts.slice(0, 5)).map(({ p, t }) => <li key={p.key}>・<b>{p.name}</b><span className="text-xs text-slate-400">（{p.vendor}）</span>：{t}</li>)}
+                {st.texts.length > 5 && !moreText[st.q.id] && <li><button onClick={() => setMoreText(m => ({ ...m, [st.q.id]: true }))} className="text-xs text-blue-600">看全部 {st.texts.length} 則…</button></li>}
+              </ul>))}
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl p-4 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap"><b className="text-sm text-slate-700">明細（{rows.length} 人）</b>
+          {chip(!onlyNone, '全部', () => setOnlyNone(false))}{chip(onlyNone, `只看未回覆 ${people.length - done.length}`, () => setOnlyNone(true))}
+          {d.logs.length > 0 && <span className="ml-auto text-xs text-slate-500">截止前修改過 {new Set(d.logs.map(l => l.key)).size} 人，修改紀錄在 Excel「修改紀錄」分頁</span>}</div>
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[48rem]">
+          <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+            {['', '人員', '廠商・組別', ...sv.questions.map((q, i) => `${i + 1}. ${q.title}`), '回覆'].map((h, i) => <th key={i} className="px-2 py-1.5 text-left max-w-[10rem] truncate" title={h}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={sv.questions.length + 4} className="px-3 py-6 text-center text-slate-400">沒有符合的人員</td></tr>}
+            {rows.map(p => (
+              <tr key={p.key} className="border-t border-[#EFEBE3] align-top">
+                <td className="px-2 py-1.5">{p.canFill && <button onClick={() => setFill(p)}
+                  className={`px-2 py-0.5 rounded text-xs font-semibold ${p.response ? 'border border-slate-300 text-slate-600' : 'bg-amber-500 text-white'}`}>{p.response ? '修改' : '代填'}</button>}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap"><b>{p.name}</b> <span className="text-xs text-slate-400">{p.kind === 'temp' ? '臨時' : p.empNo}</span>{p.left && <span className="ml-1 text-[11px] text-slate-400">（已不在名單）</span>}</td>
+                <td className="px-2 py-1.5 text-xs text-slate-600 whitespace-nowrap">{p.vendor}・{p.grp}</td>
+                {p.response ? sv.questions.map(q => <td key={q.id} className="px-2 py-1.5 text-xs max-w-[12rem]">{svAnswerText(q, p.response.answers[q.id]) || '—'}</td>)
+                  : <td colSpan={sv.questions.length} className="px-2 py-1.5 text-xs text-rose-600">未回覆</td>}
+                <td className="px-2 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">{p.response ? <>{SV_METHOD[p.response.method]}{p.response.method !== 'self' ? `：${p.response.filledName}` : ''}<br />{svFmt(p.response.updatedAt)}</> : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      </div>
+      {fill && (
+        <SurveyFillModal onClose={() => setFill(null)}>
+          <SurveyFillForm survey={sv} initial={fill.response?.answers} large={false}
+            who={`${fill.name}（${fill.kind === 'temp' ? '臨時人力' : fill.empNo}・${fill.vendor}）`} proxyName={currentUser?.name}
+            onCancel={() => setFill(null)}
+            onSubmit={async answers => {
+              try { await svSubmit(sv.id, fill.key, answers); toast(`已儲存 ${fill.name} 的回覆`, 'success'); setFill(null); await load(); }
               catch (e) { toast(e.message, 'error'); }
             }} />
         </SurveyFillModal>

@@ -3066,7 +3066,12 @@ app.get('/api/surveys', requireAuth, requireManagerOrAdmin, async (req, res) => 
   try {
     const { rows } = await pool.query(
       `SELECT s.*, (SELECT COUNT(*)::int FROM survey_responses r WHERE r.survey_id = s.id) AS n FROM surveys s ORDER BY s.start_at DESC, s.id DESC`);
-    res.json({ surveys: rows.filter(s => surveyInScope(req, s)).map(s => surveyRow(s, s.n)), now: new Date().toISOString() });
+    const out = [];
+    for (const x of rows.filter(s => surveyInScope(req, s))) {
+      const f = !x.frozen && surveyStatus(x) === 'closed' ? await surveyEnsureFrozen(x) : x;
+      out.push(surveyRow(f, x.n));
+    }
+    res.json({ surveys: out, now: new Date().toISOString() });
   } catch (e) {
     console.error('surveys list error:', e.message);
     res.status(500).json({ error: '讀取調查失敗' });
@@ -3155,7 +3160,10 @@ app.post('/api/surveys/:id/end', requireAuth, requireManagerOrAdmin, requireClie
       if (end <= new Date()) return res.status(400).json({ error: '延長的結束時間要晚於現在' });
       if (end <= new Date(s.start_at)) return res.status(400).json({ error: '結束時間要晚於開始時間' });
     }
-    const { rows: up } = await pool.query('UPDATE surveys SET end_at=$2, updated_by=$3, updated_at=NOW() WHERE id=$1 RETURNING *', [id, end, req.user.username]);
+    // 延長到未來＝重新開放，解除凍結的名單（再結束時會重新凍結）
+    let { rows: up } = await pool.query(
+      `UPDATE surveys SET end_at=$2, updated_by=$3, updated_at=NOW()${req.body?.now ? '' : ', frozen=NULL'} WHERE id=$1 RETURNING *`, [id, end, req.user.username]);
+    if (req.body?.now) up = [await surveyEnsureFrozen(up[0])];
     reviewAudit(req.user.username, req.body?.now ? 'survey-close' : 'survey-extend', { id, endAt: end.toISOString() });
     res.json(surveyRow(up[0]));
   } catch (e) {
@@ -3290,6 +3298,15 @@ function svCleanAnswers(questions, answers) {
   }
   return { answers: out };
 }
+/** 已結束、還沒凍結的調查：把當下的對象名單（含廠商／課別／組別）存起來，之後人員異動不影響這份調查 */
+async function surveyEnsureFrozen(s) {
+  if (!s || s.frozen || surveyStatus(s) !== 'closed') return s;
+  const people = await surveyTargets({ ...s, frozen: null });
+  const { rows } = await pool.query(`UPDATE surveys SET frozen=$2 WHERE id=$1 AND frozen IS NULL RETURNING *`,
+    [s.id, { at: new Date().toISOString(), people }]);
+  if (rows[0]) return rows[0];
+  return (await pool.query('SELECT * FROM surveys WHERE id=$1', [s.id])).rows[0];
+}
 const svPublic = s => ({ id: s.id, title: s.title, description: s.description, startAt: s.start_at, endAt: s.end_at, questions: s.questions, status: surveyStatus(s) });
 const svResp = r => r && ({ answers: r.answers, method: r.method, filledBy: r.filled_by, filledName: r.filled_name, updatedAt: r.updated_at, createdAt: r.created_at });
 
@@ -3316,7 +3333,12 @@ app.get('/api/survey-fill/mine', requireAuth, async (req, res) => {
 app.get('/api/survey-fill/surveys', requireAuth, async (req, res) => {
   if (!['admin', 'area', 'vendor'].includes(req.user.role)) return res.status(403).json({ error: '無存取權限' });
   try {
-    const { rows } = await pool.query(`SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() AND end_at >= NOW() ORDER BY end_at`);
+    // all=1：連同已結束的（幹部看結果用）
+    const { rows: list } = await pool.query(req.query.all
+      ? `SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() ORDER BY end_at DESC`
+      : `SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() AND end_at >= NOW() ORDER BY end_at`);
+    const rows = [];
+    for (const x of list) rows.push(await surveyEnsureFrozen(x));
     const out = [];
     for (const s of rows) {
       const fs = await surveyFillScope(req, s);
@@ -3367,6 +3389,40 @@ app.get('/api/survey-fill/kiosk', requireAuth, requireManagerOrAdmin, async (req
     res.status(500).json({ error: '讀取調查失敗' });
   }
 });
+// 結果：日翊／管理員看範圍內全部；幹部只看自己廠商（結束後仍可看）
+app.get('/api/surveys/:id/results', requireAuth, async (req, res) => {
+  const role = req.user.role;
+  if (!['admin', 'area', 'vendor'].includes(role)) return res.status(403).json({ error: '無存取權限' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1 AND deleted_at IS NULL AND published', [Number(req.params.id) || 0]);
+    let s = rows[0];
+    if (!s || (role !== 'vendor' && !surveyInScope(req, s))) return res.status(404).json({ error: '找不到這份調查' });
+    s = await surveyEnsureFrozen(s);
+    const vend = role === 'vendor' ? (await reviewVendorScope(req)).set : null;
+    const mine = p => !vend || vend.has(svNorm(p.vendor));
+    const people = (await surveyTargets(s)).filter(mine);
+    if (vend && !people.length) return res.status(404).json({ error: '找不到這份調查' });
+    const { rows: rs } = await pool.query('SELECT * FROM survey_responses WHERE survey_id=$1', [s.id]);
+    const keys = new Set(people.map(p => p.key));
+    // 已回覆但已不在名單上的人（例如進行中途離職）仍列出，避免回覆憑空消失
+    for (const r of rs) if (!keys.has(r.person_key) && mine(r)) {
+      people.push({ key: r.person_key, kind: r.kind, empId: r.emp_id, empNo: r.emp_no ?? '', name: r.name, vendor: r.vendor, wh: r.wh, dept: r.dept, grp: r.grp, area: '', left: true });
+      keys.add(r.person_key);
+    }
+    const byKey = new Map(rs.map(r => [r.person_key, r]));
+    const { rows: logs } = await pool.query('SELECT * FROM survey_response_log WHERE survey_id=$1 ORDER BY at', [s.id]);
+    const fs = surveyStatus(s) === 'open' ? await surveyFillScope(req, s) : null;
+    res.json({
+      survey: surveyRow(s, rs.length), frozenAt: s.frozen?.at ?? null,
+      people: people.map(p => ({ ...p, response: svResp(byKey.get(p.key)), canFill: !!fs && svCanFill(fs, p) })),
+      logs: logs.filter(l => keys.has(l.person_key)).map(l => ({ key: l.person_key, at: l.at, before: l.before, after: l.after, method: l.method, filledBy: l.filled_by, filledName: l.filled_name })),
+    });
+  } catch (e) {
+    console.error('survey results error:', e.message);
+    res.status(500).json({ error: '讀取結果失敗' });
+  }
+});
+
 // 送出／修改回覆。截止前可修改，每次修改另存修改紀錄
 app.post('/api/survey-fill/surveys/:id/respond', requireAuth, requireClientVersion, async (req, res) => {
   const id = Number(req.params.id) || 0;
