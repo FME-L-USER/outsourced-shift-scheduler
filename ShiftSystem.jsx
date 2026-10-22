@@ -18121,18 +18121,24 @@ function svStats(questions, people) {
   });
 }
 /** 單選題的交叉表：依廠商或組別，各選項人數＋未回覆 */
+const SV_CROSS = [['vendor', '依廠商'], ['grp', '依組別'], ['vg', '依廠商＋組別']];
 function svCross(q, people, by) {
-  const keyOf = p => (by === 'grp' ? (p.grp || '—') : p.kind === 'temp' ? `${p.vendor}（臨時）` : p.vendor || '—');
+  const vendorOf = p => (p.kind === 'temp' ? `${p.vendor}（臨時）` : p.vendor || '—');
   const m = new Map();
   for (const p of people) {
-    const k = keyOf(p);
-    if (!m.has(k)) m.set(k, { k, opt: Object.fromEntries(q.options.map(o => [o, 0])), none: 0, total: 0 });
+    const v = vendorOf(p), g = p.grp || '—';
+    const k = by === 'grp' ? g : by === 'vg' ? `${v}\u0000${g}` : v;
+    if (!m.has(k)) m.set(k, { k: by === 'grp' ? g : v, v, g, opt: Object.fromEntries(q.options.map(o => [o, 0])), none: 0, total: 0 });
     const r = m.get(k);
     r.total++;
-    const v = p.response?.answers[q.id];
-    if (v != null && v !== '' && r.opt[v] !== undefined) r.opt[v]++; else r.none++;
+    const a = p.response?.answers[q.id];
+    if (a != null && a !== '' && r.opt[a] !== undefined) r.opt[a]++; else r.none++;
   }
-  return [...m.values()].sort((a, b) => b.total - a.total);
+  const rows = [...m.values()];
+  if (by !== 'vg') return rows.sort((a, b) => b.total - a.total);
+  const vt = new Map();
+  for (const r of rows) vt.set(r.v, (vt.get(r.v) ?? 0) + r.total);
+  return rows.sort((a, b) => vt.get(b.v) - vt.get(a.v) || a.v.localeCompare(b.v) || b.total - a.total || a.g.localeCompare(b.g));
 }
 function svExportXlsx(survey, people, logs, filterText, warehouses) {
   const qs = survey.questions;
@@ -18152,9 +18158,15 @@ function svExportXlsx(survey, people, logs, filterText, warehouses) {
       stat.push(['選項', '人數', '占比（已回覆）']);
       for (const [o, n] of st.counts) stat.push([o, n, svPct(n, done.length)]);
       stat.push(['填答人數', st.answered, '']);
-      if (q.type === 'single') for (const [by, label] of [['vendor', '依廠商'], ['grp', '依組別']]) {
-        stat.push([]); stat.push([label, ...q.options, '未回覆', '合計']);
-        for (const r of svCross(q, people, by)) stat.push([r.k, ...q.options.map(o => r.opt[o]), r.none, r.total]);
+      if (q.type === 'single') for (const [by, label] of SV_CROSS) {
+        stat.push([]);
+        if (by === 'vg') {
+          stat.push(['廠商', '組別', ...q.options, '未回覆', '合計']);
+          for (const r of svCross(q, people, by)) stat.push([r.v, r.g, ...q.options.map(o => r.opt[o]), r.none, r.total]);
+        } else {
+          stat.push([label.replace('依', ''), ...q.options, '未回覆', '合計']);
+          for (const r of svCross(q, people, by)) stat.push([r.k, ...q.options.map(o => r.opt[o]), r.none, r.total]);
+        }
       }
     } else if (q.type === 'number') {
       stat.push(['平均', '最小', '最大', '填答人數']); stat.push([st.avg ?? '', st.min ?? '', st.max ?? '', st.answered]);
@@ -18214,7 +18226,7 @@ function SurveyResults({ surveyId, onBack }) {
     className={`px-3 py-1 rounded-full border text-sm ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'}`}>{label}</button>;
   const bar = (label, n, total, color) => (
     <div key={label} className="flex items-center gap-2 text-sm">
-      <span className="w-32 shrink-0 truncate" title={label}>{label}</span>
+      <span className="w-40 shrink-0 leading-snug break-words" title={label}>{label}</span>
       <div className="flex-1 h-3 rounded-full bg-slate-200 overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${total ? (n / total) * 100 : 0}%` }} /></div>
       <span className="w-24 text-right text-xs"><b>{n}</b>（{svPct(n, total)}）</span>
     </div>
@@ -18252,14 +18264,22 @@ function SurveyResults({ surveyId, onBack }) {
               const cross = svCross(st.q, people, crossBy);
               return (
                 <div className="pt-1 space-y-1">
-                  <div className="flex items-center gap-1 text-xs">{[['vendor', '依廠商'], ['grp', '依組別']].map(([k, l]) => (
+                  <div className="flex items-center gap-1 text-xs">{SV_CROSS.map(([k, l]) => (
                     <button key={k} onClick={() => setCrossBy(k)} className={`px-2 py-0.5 rounded border ${crossBy === k ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600'}`}>{l}</button>))}</div>
                   <div className="overflow-x-auto"><table className="w-full text-xs border border-slate-200">
-                    <thead className="bg-[#F5F2EC] text-slate-500"><tr><th className="px-2 py-1 text-left">{crossBy === 'grp' ? '組別' : '廠商'}</th>
-                      {st.q.options.map(o => <th key={o} className="px-2 py-1 whitespace-nowrap">{o}</th>)}<th className="px-2 py-1 text-rose-600">未回覆</th></tr></thead>
-                    <tbody className="text-center">{cross.map(r => (
-                      <tr key={r.k} className="border-t"><td className="px-2 py-1 text-left whitespace-nowrap">{r.k}</td>
-                        {st.q.options.map(o => <td key={o}>{r.opt[o]}</td>)}<td className={r.none ? 'text-rose-600' : ''}>{r.none}</td></tr>))}</tbody>
+                    <thead className="bg-[#F5F2EC] text-slate-500"><tr>
+                      {crossBy === 'vg' ? <><th className="px-2 py-1 text-left whitespace-nowrap">廠商</th><th className="px-2 py-1 text-left whitespace-nowrap">組別</th></>
+                        : <th className="px-2 py-1 text-left whitespace-nowrap">{crossBy === 'grp' ? '組別' : '廠商'}</th>}
+                      {st.q.options.map(o => <th key={o} className="px-2 py-1 whitespace-nowrap">{o}</th>)}<th className="px-2 py-1 text-rose-600 whitespace-nowrap">未回覆</th></tr></thead>
+                    <tbody className="text-center">{cross.map((r, ri) => {
+                      // 廠商＋組別：同一廠商只在第一列顯示名稱，換廠商時加粗分隔線
+                      const first = ri === 0 || cross[ri - 1].v !== r.v;
+                      return (
+                        <tr key={`${r.v}|${r.g}|${r.k}`} className={crossBy === 'vg' && first && ri ? 'border-t-2 border-slate-300' : 'border-t'}>
+                          {crossBy === 'vg' ? <><td className="px-2 py-1 text-left whitespace-nowrap font-semibold">{first ? r.v : ''}</td><td className="px-2 py-1 text-left whitespace-nowrap">{r.g}</td></>
+                            : <td className="px-2 py-1 text-left whitespace-nowrap">{r.k}</td>}
+                          {st.q.options.map(o => <td key={o}>{r.opt[o]}</td>)}<td className={r.none ? 'text-rose-600' : ''}>{r.none}</td></tr>);
+                    })}</tbody>
                   </table></div>
                 </div>);
             })()}
