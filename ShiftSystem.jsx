@@ -17733,7 +17733,7 @@ function SurveyPage() {
       <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-2 flex-wrap">
         {['open', 'upcoming', 'closed', 'draft', 'deleted'].map(st => (
           <button key={st} onClick={() => setStatus(st)}
-            className={`px-3 py-1 rounded-full border text-sm ${status === st ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'} ${st === 'deleted' ? 'ml-2' : ''}`}>
+            className={`px-5 py-2 rounded-full border text-[16px] font-semibold ${status === st ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'} ${st === 'deleted' ? 'ml-2' : ''}`}>
             {SURVEY_STATUS[st][0]} <b>{countOf(st)}</b></button>
         ))}
         <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 搜尋標題" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48" />
