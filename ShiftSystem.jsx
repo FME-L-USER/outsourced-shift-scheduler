@@ -17740,46 +17740,50 @@ function SurveyPage() {
         <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">＋ 建立調查</button>
       </div>
       <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
-        <table className="w-full text-sm min-w-[52rem]">
+        <table className="w-full text-sm min-w-[44rem]">
           <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
-            {['操作', '調查', '期間', '發布範圍', '對象', '回覆', '狀態'].map(h => <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>)}
+            {['操作', '調查', '期間', '發布範圍', '回覆'].map(h => <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>)}
           </tr></thead>
           <tbody>
-            {!data && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">讀取中…</td></tr>}
-            {data && shown.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">沒有{SURVEY_STATUS[status][0]}的調查</td></tr>}
+            {!data && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">讀取中…</td></tr>}
+            {data && shown.length === 0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">沒有{SURVEY_STATUS[status][0]}的調查</td></tr>}
             {shown.map(x => {
               const m = canManage(x);
+              // 常用的放按鈕，其餘收進「⋯」
+              const main = x.status === 'deleted' ? (m ? [['還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white']] : [])
+                : x.status === 'draft' ? (m ? [['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']] : [])
+                : [x.status !== 'upcoming' && ['結果', () => setResults(x.id), 'bg-blue-600 text-white'],
+                   x.status === 'open' && ['代填', () => setProxy(x.id), 'bg-amber-500 text-white'],
+                   x.status === 'upcoming' && m && ['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']].filter(Boolean);
+              const more = x.status === 'deleted' ? [] : [
+                m && x.status === 'open' && ['編輯', () => setEditing({ survey: x })],
+                m && x.status === 'open' && ['提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); }],
+                m && x.status !== 'draft' && ['延長', () => setExtending(x)],
+                ['複製', () => setEditing({ survey: x, copy: true })],
+                m && ['刪除', async () => { if (await askConfirm(`刪除「${x.title}」？\n刪除後會放在「已刪除」，可以還原。`)) act(x, 'delete', {}, '已刪除（可在「已刪除」還原）'); }, true],
+              ].filter(Boolean);
+              const sameDay = svToInput(x.startAt).slice(0, 10) === svToInput(x.endAt).slice(0, 10);
               return (
-                <tr key={x.id} className="border-t border-[#EFEBE3] align-top">
-                  <td className="px-3 py-2"><div className="flex flex-wrap gap-1 w-36">
-                    {x.status === 'deleted' ? (m && btn('還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white')) : <>
-                      {x.status !== 'draft' && x.status !== 'upcoming' && btn('結果', () => setResults(x.id), 'bg-blue-600 text-white')}
-                      {x.status === 'open' && btn('代填', () => setProxy(x.id), 'bg-amber-500 text-white')}
-                      {m && x.status !== 'closed' && btn('編輯', () => setEditing({ survey: x }))}
-                      {m && x.status === 'open' && btn('提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); })}
-                      {m && (x.status === 'open' || x.status === 'upcoming' || x.status === 'closed') && btn('延長', () => setExtending(x))}
-                      {btn('複製', () => setEditing({ survey: x, copy: true }))}
-                      {m && btn('刪除', async () => { if (await askConfirm(`刪除「${x.title}」？\n刪除後會放在「已刪除」，可以還原。`)) act(x, 'delete', {}, '已刪除（可在「已刪除」還原）'); }, 'border border-rose-200 text-rose-600 bg-white')}
-                    </>}
+                <tr key={x.id} className="border-t border-[#EFEBE3]">
+                  <td className="px-3 py-2"><div className="flex items-center gap-1 whitespace-nowrap">
+                    {main.map(([l, f, c]) => btn(l, f, c))}
+                    {more.length > 0 && <SurveyRowMenu items={more} />}
                   </div></td>
                   <td className="px-3 py-2"><b className="text-slate-800">{x.title}</b>
-                    <div className="text-xs text-slate-500">{x.questions.length} 題・建立：{x.createdName || x.createdBy}</div></td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap">{svFmt(x.startAt)}<br />～ {svFmt(x.endAt)}</td>
-                  <td className="px-3 py-2 text-xs text-slate-600 max-w-[16rem]">{svScopeText(x.scope, warehouses)}</td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap">{[x.targets?.long && '長期', x.targets?.temp && '臨時'].filter(Boolean).join('＋')}</td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap"><b className="text-slate-800">{x.responses}</b> 人回覆{x.frozenTotal != null && <span className="text-slate-500"> / {x.frozenTotal} 人</span>}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <span className={`text-xs px-2 py-0.5 rounded-full border ${SURVEY_STATUS[x.status][1]}`}>{SURVEY_STATUS[x.status][0]}</span>
-                    {x.status === 'open' && <div className="text-[11px] text-rose-600 mt-0.5">{svLeft(x.endAt)}</div>}
-                    {x.status === 'deleted' && <div className="text-[11px] text-slate-400 mt-0.5">{x.deletedBy} {svFmt(x.deletedAt)}</div>}
+                    <div className="text-xs text-slate-500">{x.questions.length} 題・{x.createdName || x.createdBy}{x.status === 'deleted' ? `・${x.deletedBy} 刪除` : ''}</div></td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    {svFmt(x.startAt)} ～ {sameDay ? svFmt(x.endAt).split(' ')[1] : svFmt(x.endAt)}
+                    {x.status === 'open' && <div className="text-rose-600">{svLeft(x.endAt)}</div>}
                   </td>
+                  <td className="px-3 py-2 text-xs text-slate-600 max-w-[20rem]">{svScopeText(x.scope, warehouses)}
+                    <span className="text-slate-400">・{[x.targets?.long && '長期', x.targets?.temp && '臨時'].filter(Boolean).join('＋')}</span></td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap"><b className="text-slate-800">{x.responses}</b>{x.frozenTotal != null ? ` / ${x.frozenTotal}` : ''} 人</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-slate-500">只列出發布範圍在您可用倉別內的調查；建立人與管理員可以編輯、結束、延長、刪除。</p>
       {extending && <SurveyExtendModal survey={extending} onClose={() => setExtending(null)}
         onSave={async endAt => { await act(extending, 'end', { endAt }, '已更新結束時間'); setExtending(null); }} />}
     </div>
@@ -18304,6 +18308,33 @@ function SurveyResults({ surveyId, onBack }) {
         </SurveyFillModal>
       )}
     </div>
+  );
+}
+
+/** 列上的「⋯」選單：浮在最上層（不被表格的捲動區裁掉），點外面就收起 */
+function SurveyRowMenu({ items }) {
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null), menuRef = useRef(null);
+  useEffect(() => {
+    if (!pos) return;
+    const off = e => { if (!menuRef.current?.contains(e.target) && !btnRef.current?.contains(e.target)) setPos(null); };
+    const close = () => setPos(null);
+    document.addEventListener('pointerdown', off);
+    window.addEventListener('scroll', close, true);
+    return () => { document.removeEventListener('pointerdown', off); window.removeEventListener('scroll', close, true); };
+  }, [pos]);
+  const toggle = () => { if (pos) { setPos(null); return; } const r = btnRef.current.getBoundingClientRect(); setPos({ left: r.left, top: r.bottom + 4 }); };
+  return (
+    <>
+      <button ref={btnRef} onClick={toggle} title="更多操作" className="px-2 py-0.5 rounded border border-slate-300 text-slate-600 bg-white text-xs">⋯</button>
+      {pos && createPortal(
+        <div ref={menuRef} style={{ position: 'fixed', left: pos.left, top: pos.top }} className="z-[60] bg-white border border-slate-200 rounded-lg shadow-lg py-1 min-w-[7rem]">
+          {items.map(([l, f, danger]) => (
+            <button key={l} onClick={() => { setPos(null); f(); }}
+              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${danger ? 'text-rose-600' : 'text-slate-700'}`}>{l}</button>
+          ))}
+        </div>, document.body)}
+    </>
   );
 }
 
