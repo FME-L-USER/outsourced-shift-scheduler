@@ -1710,7 +1710,8 @@ function LoginScreen({ users, onLogin, onRegister, vendors, employees, workerPwd
       </div>
 
       {/* 卡片 */}
-      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-6">
+      <div className="bg-white rounded-xl shadow-sm w-full max-w-sm p-6
+                      [&_label]:!text-[16px] [&_label]:!font-bold [&_:is(input,select)]:!text-[17px] [&_select]:!font-semibold [&_button]:!text-[17px] [&_button]:!font-bold">
 
         <form onSubmit={handleSubmit}>
 
@@ -2672,7 +2673,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
 
   return (
     <aside className={`flex flex-col text-white transition-all duration-300
-                       ${collapsed ? 'w-14' : 'w-44'} shrink-0 h-screen sticky top-0`}
+                       ${collapsed ? 'w-14' : 'w-48'} shrink-0 h-screen sticky top-0`}
            style={{background:'var(--sms-sidebar)'}}>
       {/* 標題列：標題／副標＋收合鈕 */}
       <div className="flex items-center gap-1.5 px-2.5 pt-3 pb-2.5">
@@ -2703,8 +2704,8 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
                             ? 'bg-white font-bold shadow-sm'
                             : 'text-white/80 hover:bg-white/10 hover:text-white'}`}
               style={active ? { color: 'var(--sms-sidebar)' } : undefined}>
-              <span className="text-base leading-none shrink-0">{item.icon}</span>
-              {!collapsed && <span className="truncate text-[13px]">{item.label}</span>}
+              <span className="text-lg leading-none shrink-0">{item.icon}</span>
+              {!collapsed && <span className="truncate text-[15px] font-bold">{item.label}</span>}
             </button>
           );
         })}
@@ -2722,7 +2723,7 @@ function Sidebar({ currentPage, onNavigate, currentUser, onLogout, onSave, colla
         )}
         {onSave && <SaveButton onSave={onSave} collapsed={collapsed} />}
         <button onClick={onLogout} title={collapsed ? '登出' : undefined}
-          className={`w-full flex items-center gap-2 rounded-full py-2 text-[13px] text-white/70
+          className={`w-full flex items-center gap-2 rounded-full py-2 text-[15px] font-bold text-white/70
                       hover:bg-white/10 hover:text-red-300 transition-colors
                       ${collapsed ? 'justify-center px-0' : 'px-3'}`}>
           <span className="text-sm leading-none">🚪</span>
@@ -3986,8 +3987,8 @@ function MobileNav({ currentPage, onNavigate, currentUser, onLogout, onSave, ope
             return (
               <button key={item.key}
                 onClick={() => { onNavigate(item.key); onClose(); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 text-sm rounded-full transition-colors
-                            ${active ? 'bg-white font-bold shadow-sm' : 'text-white/80 active:bg-white/10'}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-[17px] font-bold rounded-full transition-colors
+                            ${active ? 'bg-white shadow-sm' : 'text-white/80 active:bg-white/10'}`}
                 style={active ? { color: 'var(--sms-sidebar)' } : undefined}>
                 <span className="text-lg leading-none w-6 text-center">{item.icon}</span>
                 <span className="truncate">{item.label}</span>
