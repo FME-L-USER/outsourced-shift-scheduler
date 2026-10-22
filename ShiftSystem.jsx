@@ -18005,13 +18005,13 @@ function SurveyFillPage() {
       <span className="text-sm text-slate-600 whitespace-nowrap">已回覆 <b>{x.responded}</b> / {x.total}</span>
       {x.status === 'open' && x.total - x.responded > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-xs whitespace-nowrap">未回覆 {x.total - x.responded}</span>}
       {x.status === 'open' && <button onClick={() => setSel(x.id)} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-semibold">代填</button>}
-      <button onClick={() => setRes(x.id)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">結果</button>
+      {x.canResults && <button onClick={() => setRes(x.id)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">結果</button>}
     </div>
   );
   return (
     <div className="p-6 max-w-4xl space-y-3">
       <h2 className="text-xl font-bold text-slate-800">調查</h2>
-      <p className="text-sm text-slate-500">進行中的調查，可替自己廠商的人員填寫或修改；人員也可以自己登入填寫。結果只包含自己廠商的人員。</p>
+      <p className="text-sm text-slate-500">進行中的調查，可替自己廠商的人員填寫或修改；人員也可以自己登入填寫。有開放的調查才看得到結果，且只包含自己廠商的人員。</p>
       {!list ? <div className="text-slate-400">讀取中…</div> : <>
         <div className="font-semibold text-slate-700">進行中</div>
         {open.length ? open.map(card) : <div className="bg-white border rounded-2xl p-6 text-center text-slate-400 text-sm">目前沒有進行中的調查</div>}
@@ -18369,7 +18369,7 @@ function SurveyEditor({ init, onClose, onSaved }) {
     // 預設：現在開始、明天這個時間的整點結束
     const now = new Date(); now.setSeconds(0, 0);
     const end = new Date(now.getTime() + 24 * 3600e3); end.setMinutes(0, 0, 0); end.setTime(end.getTime() + 3600e3);
-    const base = src ? JSON.parse(JSON.stringify(src)) : { title: '', description: '', scope: svEmptyScope(), targets: { long: true, temp: false }, questions: [svNewQuestion('single')] };
+    const base = src ? JSON.parse(JSON.stringify(src)) : { title: '', description: '', scope: svEmptyScope(), targets: { long: true, temp: false }, questions: [svNewQuestion('single')], vendorResults: false };
     if (!isEdit) { base.startAt = now.toISOString(); base.endAt = end.toISOString(); }
     if (init.copy) { base.title = `${src.title}（複本）`; base.questions = base.questions.map(q => ({ ...q, id: svNewQuestion().id })); }
     base.scope = { ...svEmptyScope(), ...(base.scope ?? {}) };
@@ -18500,6 +18500,11 @@ function SurveyEditor({ init, onClose, onSaved }) {
             範圍：{svScopeText(sc, warehouses)}
             <br />目前符合條件：長期 <b>{longIn.length}</b> 人{byVendor.length > 0 && `（${byVendor.map(([v, n]) => `${v} ${n}`).join('・')}）`}
             {f.targets.temp && <>＋ 今天的臨時人力 <b>{tempIn.length}</b> 人（調查期間依每天點名表）</>}
+          </div>
+          {/* 已有人回覆也可以改 */}
+          <div className="flex items-center gap-4 flex-wrap"><span className="w-14 shrink-0 text-slate-600">結果</span>
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={!!f.vendorResults} onChange={e => set({ vendorResults: e.target.checked })} /> 廠商帳號可看結果（只含自己廠商的人）</label>
+            <span className="text-xs text-slate-400">不勾：廠商只能代填，看不到結果，結束後也不會出現在廠商的清單</span>
           </div>
         </section>
 

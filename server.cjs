@@ -312,6 +312,8 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS survey_response_log_idx ON survey_response_log (survey_id, person_key, at)`);
+  // 廠商帳號可否看結果（每份調查設定，預設不開放）
+  await pool.query(`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS vendor_results BOOLEAN NOT NULL DEFAULT false`);
   // 理貨評核操作紀錄：解鎖（含失敗）、修改項目、修改聲明、變更密碼
   await pool.query(`
     CREATE TABLE IF NOT EXISTS review_audit (
@@ -3044,7 +3046,7 @@ function cleanSurvey(b, publish) {
     if (q.type === 'number' && q.min != null && q.max != null && q.min > q.max) return { error: `第 ${i + 1} 題最小值不能大於最大值` };
   }
   if (publish && !qs.length) return { error: '請至少新增一題' };
-  return { title, description: svClip(b.description, 1000), start: isNaN(start) ? null : start, end: isNaN(end) ? null : end, scope, targets, questions: qs };
+  return { title, description: svClip(b.description, 1000), start: isNaN(start) ? null : start, end: isNaN(end) ? null : end, scope, targets, questions: qs, vendorResults: b.vendorResults === true };
 }
 const surveyStatus = (s, now = Date.now()) => s.deleted_at ? 'deleted' : !s.published ? 'draft'
   : now < new Date(s.start_at).getTime() ? 'upcoming' : now <= new Date(s.end_at).getTime() ? 'open' : 'closed';
@@ -3053,6 +3055,7 @@ const surveyRow = (s, n = 0) => ({
   scope: s.scope, targets: s.targets, questions: s.questions, published: s.published, status: surveyStatus(s),
   createdBy: s.created_by, createdName: s.created_name, createdAt: s.created_at, updatedBy: s.updated_by, updatedAt: s.updated_at,
   deletedBy: s.deleted_by, deletedAt: s.deleted_at, responses: n, frozenTotal: s.frozen?.people?.length ?? null,
+  vendorResults: !!s.vendor_results,
 });
 // 日翊只看得到發布範圍全在自己可用倉別內的調查（可用倉別空白＝全部倉別）；管理員不限
 const surveyInScope = (req, s) => {
@@ -3092,9 +3095,9 @@ app.post('/api/surveys', requireAuth, requireManagerOrAdmin, requireClientVersio
     const name = await reviewDisplayName(req.user.username);
     const now = new Date();
     const { rows } = await pool.query(
-      `INSERT INTO surveys (title, description, start_at, end_at, scope, targets, questions, published, created_by, created_name, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9) RETURNING *`,
-      [c.title, c.description, c.start ?? now, c.end ?? new Date(now.getTime() + 86400000), c.scope, c.targets, JSON.stringify(c.questions), publish, req.user.username, name]);
+      `INSERT INTO surveys (title, description, start_at, end_at, scope, targets, questions, published, created_by, created_name, updated_by, vendor_results)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,$11) RETURNING *`,
+      [c.title, c.description, c.start ?? now, c.end ?? new Date(now.getTime() + 86400000), c.scope, c.targets, JSON.stringify(c.questions), publish, req.user.username, name, c.vendorResults]);
     reviewAudit(req.user.username, publish ? 'survey-publish' : 'survey-draft', { id: rows[0].id, title: c.title });
     res.json(surveyRow(rows[0], 0));
   } catch (e) {
@@ -3129,9 +3132,9 @@ app.put('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireClientVer
     }
     if (next.end && next.start && next.end <= new Date(next.start)) { await client.query('ROLLBACK'); return res.status(400).json({ error: '結束時間要晚於開始時間' }); }
     const { rows: up } = await client.query(
-      `UPDATE surveys SET title=$2, description=$3, start_at=$4, end_at=$5, scope=$6, targets=$7, questions=$8, published=$9, updated_by=$10, updated_at=NOW()
+      `UPDATE surveys SET title=$2, description=$3, start_at=$4, end_at=$5, scope=$6, targets=$7, questions=$8, published=$9, updated_by=$10, vendor_results=$11, updated_at=NOW()
         WHERE id=$1 RETURNING *`,
-      [id, next.title, next.description, next.start ?? s.start_at, next.end ?? s.end_at, next.scope, next.targets, JSON.stringify(next.questions), publish, req.user.username]);
+      [id, next.title, next.description, next.start ?? s.start_at, next.end ?? s.end_at, next.scope, next.targets, JSON.stringify(next.questions), publish, req.user.username, next.vendorResults]);
     await client.query('COMMIT');
     reviewAudit(req.user.username, !s.published && publish ? 'survey-publish' : 'survey-edit', { id, title: next.title, locked: n[0].n > 0 });
     res.json(surveyRow(up[0], n[0].n));
@@ -3340,14 +3343,16 @@ app.get('/api/survey-fill/surveys', requireAuth, async (req, res) => {
     const rows = [];
     for (const x of list) rows.push(await surveyEnsureFrozen(x));
     const out = [];
+    const isVendor = req.user.role === 'vendor';
     for (const s of rows) {
+      if (isVendor && !s.vendor_results && surveyStatus(s) !== 'open') continue;
       const fs = await surveyFillScope(req, s);
       if (!fs) continue;
       const people = (await surveyTargets(s)).filter(p => svCanFill(fs, p));
       if (!people.length) continue;
       const { rows: r } = await pool.query('SELECT person_key FROM survey_responses WHERE survey_id=$1', [s.id]);
       const done = new Set(r.map(x => x.person_key));
-      out.push({ ...svPublic(s), total: people.length, responded: people.filter(p => done.has(p.key)).length });
+      out.push({ ...svPublic(s), total: people.length, responded: people.filter(p => done.has(p.key)).length, canResults: !isVendor || !!s.vendor_results });
     }
     res.json({ surveys: out });
   } catch (e) {
@@ -3397,6 +3402,7 @@ app.get('/api/surveys/:id/results', requireAuth, async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1 AND deleted_at IS NULL AND published', [Number(req.params.id) || 0]);
     let s = rows[0];
     if (!s || (role !== 'vendor' && !surveyInScope(req, s))) return res.status(404).json({ error: '找不到這份調查' });
+    if (role === 'vendor' && !s.vendor_results) return res.status(403).json({ error: '這份調查沒有開放廠商查看結果' });
     s = await surveyEnsureFrozen(s);
     const vend = role === 'vendor' ? (await reviewVendorScope(req)).set : null;
     const mine = p => !vend || vend.has(svNorm(p.vendor));
