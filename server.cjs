@@ -2945,63 +2945,6 @@ async function reviewDisplayName(username) {
   return rows[0]?.display_name || username;
 }
 
-// ── 資料庫容量（管理員，只讀）────────────────────────────
-// 給管理員決定資料保存期限用：各資料表佔用空間、筆數、最早／最新時間，
-// 以及共用資料（app_state）裡各類資料的大小。只做查詢，不修改任何資料。
-const DB_USAGE_TABLES = [
-  // [資料表, 說明, 時間欄位]
-  ['app_state',             '共用資料（班表、人員清冊、點名出勤等）', 'updated_at'],
-  ['app_state_backup',      '共用資料備份（每日、每次部署）',         'created_at'],
-  ['safety_signs',          '宣導告知單簽名',                         'signed_at'],
-  ['review_records',        '理貨評核紀錄',                           'created_at'],
-  ['review_talks',          '理貨評核約談單／FM-193',                 'created_at'],
-  ['review_signs',          '理貨評核簽名',                           'signed_at'],
-  ['review_audit',          '理貨評核操作紀錄',                       'at'],
-  ['review_item_versions',  '評核項目版本',                           'created_at'],
-  ['review_legacy_archive', '舊版理貨評核封存',                       'created_at'],
-  ['login_audit',           '登入紀錄（保留 180 天）',                'at'],
-  ['schedule_audit',        '班表異動紀錄（保留 90 天）',             'at'],
-  ['users',                 '帳號',                                   'created_at'],
-];
-app.get('/api/maintenance/db-usage', requireAuth, requireAdmin, async (_req, res) => {
-  try {
-    const { rows: db } = await pool.query('SELECT pg_database_size(current_database())::bigint AS bytes');
-    const tables = [];
-    for (const [name, label, tcol] of DB_USAGE_TABLES) {
-      try {
-        const { rows: sz } = await pool.query('SELECT pg_total_relation_size(to_regclass($1))::bigint AS bytes', [name]);
-        if (sz[0]?.bytes == null) continue;   // 資料表不存在
-        const { rows: c } = await pool.query(`SELECT COUNT(*)::int AS n, MIN(${tcol}) AS oldest, MAX(${tcol}) AS newest FROM ${name}`)
-          .catch(() => pool.query(`SELECT COUNT(*)::int AS n FROM ${name}`));
-        tables.push({ name, label, bytes: Number(sz[0].bytes), rows: c[0].n, oldest: c[0].oldest ?? null, newest: c[0].newest ?? null });
-      } catch (e) { console.warn('db-usage table', name, e.message); }
-    }
-    // 共用資料裡各類資料的大小（同步時每台裝置都要下載這一包）
-    const { rows: keys } = await pool.query(
-      `SELECT k AS key, octet_length(v::text)::bigint AS bytes FROM app_state, jsonb_each(data) AS e(k, v) WHERE id='main' ORDER BY 2 DESC`);
-    const { rows: ad } = await pool.query(
-      `SELECT MIN(k) AS first, MAX(k) AS last, COUNT(*)::int AS days FROM app_state, jsonb_object_keys(COALESCE(data->'attendData','{}'::jsonb)) AS k WHERE id='main'`);
-    const { rows: ex } = await pool.query(
-      `SELECT MIN(k) AS first, MAX(k) AS last, COUNT(*)::int AS days FROM app_state, jsonb_object_keys(COALESCE(data->'extras','{}'::jsonb)) AS k WHERE id='main'`);
-    const { rows: ss } = await pool.query(
-      `SELECT COALESCE(SUM(octet_length(image)),0)::bigint AS bytes, COUNT(*)::int AS n, MIN(sign_date) AS first, MAX(sign_date) AS last,
-              COUNT(DISTINCT sign_date)::int AS days FROM safety_signs`);
-    const { rows: bk } = await pool.query(
-      `SELECT COUNT(*) FILTER (WHERE note LIKE 'daily-%')::int AS daily, COUNT(*) FILTER (WHERE note LIKE '啟動備份%')::int AS boot,
-              COALESCE(AVG(octet_length(data::text)),0)::bigint AS avg_bytes FROM app_state_backup`);
-    res.json({
-      dbBytes: Number(db[0].bytes), tables,
-      appState: { keys: keys.map(k => ({ key: k.key, bytes: Number(k.bytes) })), attendData: ad[0], extras: ex[0] },
-      safetySigns: { ...ss[0], bytes: Number(ss[0].bytes) },
-      backups: { ...bk[0], avg_bytes: Number(bk[0].avg_bytes) },
-      at: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error('db-usage error:', e.message);
-    res.status(500).json({ error: '讀取資料庫容量失敗' });
-  }
-});
-
 // ── 清除舊版理貨評核資料（管理員）────────────────────────
 // 舊版把評核紀錄、約談單等存在共用資料 app_state；新版改用獨立資料表，不再讀取。
 // 清除前先整份備份 app_state，並把舊欄位永久封存到 review_legacy_archive。
