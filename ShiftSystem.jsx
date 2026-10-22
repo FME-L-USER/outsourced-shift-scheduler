@@ -14089,6 +14089,91 @@ function ReviewItemsTab() {
 
 // 系統設定：清除舊版理貨評核資料（僅管理員）。清除前伺服器會整份備份並永久封存舊資料
 const LEGACY_REVIEW_LABEL = { reviewRecords: '評核紀錄', reviewTalks: '約談單', reviewItems: '評核項目', reviewConsent: '約談聲明', reviewBatch: '計分批次' };
+// 系統設定：資料庫容量（只讀，給管理員決定資料保存期限）
+const fmtBytes = b => b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB` : b >= 1024 ** 2 ? `${(b / 1024 ** 2).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
+const APP_STATE_KEY_LABEL = {
+  attendData: '點名／手機控管出勤紀錄', schedule: '班表', employees: '人員清冊', extras: '臨時人力（每日）',
+  users: '帳號清單', workerPwds: '委外人員密碼', stationBoard: '站區表', stationLayouts: '站區版面', dailyDemand: '每日需求人數',
+  lockerAssign: '櫃號分配', _deletedEmployees: '已刪除人員紀錄', warehouses: '倉別／課別設定', shiftTypesByWh: '班別設定',
+};
+function DbUsagePanel() {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true);
+    try { setD(await reviewApi('/api/maintenance/db-usage')); } catch (e) { setD({ error: e.message }); }
+    finally { setBusy(false); }
+  };
+  const day = v => (v ? String(v).slice(0, 10) : '—');
+  const pct = (b, t) => (t ? `${Math.round((b / t) * 100)}%` : '');
+  const th = 'px-3 py-1.5 text-left whitespace-nowrap';
+  const asTotal = d?.appState ? d.appState.keys.reduce((a, k) => a + k.bytes, 0) : 0;
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={load} disabled={busy} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm disabled:opacity-50">{busy ? '讀取中…' : d ? '🔄 重新讀取' : '讀取目前容量'}</button>
+        <span className="text-xs text-slate-500">只查詢，不會修改或刪除任何資料{d?.at ? `・讀取時間 ${reviewFmtTime(d.at)}` : ''}</span>
+      </div>
+      {d?.error && <div className="text-red-600">{d.error}</div>}
+      {d && !d.error && <>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[['資料庫總容量', fmtBytes(d.dbBytes)],
+            ['共用資料（每次同步下載）', fmtBytes(asTotal)],
+            ['宣導告知單簽名', `${fmtBytes(d.safetySigns.bytes)}・${d.safetySigns.n} 張`],
+            ['備份', `${d.backups.daily} 份每日＋${d.backups.boot} 份部署・每份約 ${fmtBytes(d.backups.avg_bytes)}`]].map(([l, v]) => (
+            <div key={l} className="bg-slate-50 rounded-xl px-3 py-2"><div className="text-xs text-slate-500">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
+          ))}
+        </div>
+
+        <div className="border border-[#DDD9D0] rounded-xl overflow-x-auto">
+          <div className="px-3 py-1.5 bg-[#F5F2EC] text-xs font-semibold text-slate-600">各資料表</div>
+          <table className="w-full text-sm min-w-[36rem]">
+            <thead className="text-xs text-slate-500"><tr>{['資料', '容量', '占比', '筆數', '最早', '最新'].map(h => <th key={h} className={th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {[...d.tables].sort((a, b) => b.bytes - a.bytes).map(t => (
+                <tr key={t.name} className="border-t border-[#EFEBE3]">
+                  <td className="px-3 py-1.5">{t.label}<span className="block font-mono text-[11px] text-slate-400">{t.name}</span></td>
+                  <td className="px-3 py-1.5 font-semibold whitespace-nowrap">{fmtBytes(t.bytes)}</td>
+                  <td className="px-3 py-1.5 text-slate-500">{pct(t.bytes, d.dbBytes)}</td>
+                  <td className="px-3 py-1.5 tabular-nums text-right">{t.rows.toLocaleString()}</td>
+                  <td className="px-3 py-1.5 tabular-nums text-slate-500 whitespace-nowrap">{day(t.oldest)}</td>
+                  <td className="px-3 py-1.5 tabular-nums text-slate-500 whitespace-nowrap">{day(t.newest)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="border border-[#DDD9D0] rounded-xl overflow-x-auto">
+          <div className="px-3 py-1.5 bg-[#F5F2EC] text-xs font-semibold text-slate-600">共用資料的內容（所有裝置每 30 秒同步這一包，越大越慢）</div>
+          <table className="w-full text-sm">
+            <thead className="text-xs text-slate-500"><tr>{['資料', '大小', '占比', '期間'].map(h => <th key={h} className={th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {d.appState.keys.filter(k => k.bytes >= 1024).map(k => (
+                <tr key={k.key} className="border-t border-[#EFEBE3]">
+                  <td className="px-3 py-1.5">{APP_STATE_KEY_LABEL[k.key] ?? k.key}<span className="block font-mono text-[11px] text-slate-400">{k.key}</span></td>
+                  <td className="px-3 py-1.5 font-semibold whitespace-nowrap">{fmtBytes(k.bytes)}</td>
+                  <td className="px-3 py-1.5 text-slate-500">{pct(k.bytes, asTotal)}</td>
+                  <td className="px-3 py-1.5 text-xs text-slate-500 whitespace-nowrap">
+                    {k.key === 'attendData' && d.appState.attendData?.days ? `${d.appState.attendData.first} ～ ${d.appState.attendData.last}（${d.appState.attendData.days} 天）`
+                      : k.key === 'extras' && d.appState.extras?.days ? `${d.appState.extras.first} ～ ${d.appState.extras.last}（${d.appState.extras.days} 天）` : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {d.safetySigns.n > 0 && (
+          <p className="text-xs text-slate-500">
+            宣導告知單簽名：{d.safetySigns.first} ～ {d.safetySigns.last}，共 {d.safetySigns.days} 天、{d.safetySigns.n} 張，
+            平均每張 {fmtBytes(Math.round(d.safetySigns.bytes / d.safetySigns.n))}，每天約 {fmtBytes(Math.round(d.safetySigns.bytes / Math.max(1, d.safetySigns.days)))}。
+          </p>
+        )}
+      </>}
+    </div>
+  );
+}
+
 function ReviewLegacyClear() {
   const toast = useToast();
   const [st, setSt] = useState(null);
@@ -14657,6 +14742,10 @@ function Settings() {
 
       {isAdminUser && (<SettingsSection title="理貨評核：評核項目維護密碼" desc="進入「理貨評核 → ④ 評核項目維護」時要輸入的密碼">
         <ReviewPasswordSetting />
+      </SettingsSection>)}
+
+      {isAdminUser && (<SettingsSection title="資料庫容量" desc="查看各類資料佔用的空間與期間，用來決定資料保存期限（只查詢，不修改資料）">
+        <DbUsagePanel />
       </SettingsSection>)}
 
       {isAdminUser && (<SettingsSection title="理貨評核：清除舊版資料" desc="舊版理貨評核存在共用資料中的紀錄，新版已不使用">
