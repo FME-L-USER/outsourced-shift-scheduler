@@ -1891,15 +1891,22 @@ app.post('/api/maintenance/full-restore', requireAuth, requireAdmin, async (req,
   }
 });
 
-// 登入紀錄彙總：帳號 → 次數與最後登入時間。供帳號與權限頁顯示。
-app.get('/api/audit/login/summary', requireAuth, requireManagerOrAdmin, async (_req, res) => {
+// 登入紀錄彙總：帳號 → 期間內次數與最後登入時間。供帳號與權限頁顯示與計算使用率。
+// from／to 為台灣日期（含頭尾）；未指定則為全部（登入紀錄保留 180 天）
+app.get('/api/audit/login/summary', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const ymd = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
+  const from = ymd(req.query.from) ?? '1900-01-01';
+  const to   = ymd(req.query.to)   ?? '2999-12-31';
   try {
     const { rows } = await pool.query(
-      `SELECT username, COUNT(*)::int AS count, MAX(at) AS last_at
-         FROM login_audit GROUP BY username`);
+      `SELECT username,
+              COUNT(*) FILTER (WHERE (at AT TIME ZONE 'Asia/Taipei')::date BETWEEN $1::date AND $2::date)::int AS count,
+              MAX(at) AS last_at
+         FROM login_audit GROUP BY username`, [from, to]);
     const map = {};
     for (const r of rows) map[r.username] = { count: r.count, last_at: r.last_at };
-    res.json({ ok: true, summary: map });
+    const { rows: o } = await pool.query('SELECT MIN(at) AS oldest FROM login_audit');
+    res.json({ ok: true, summary: map, oldest: o[0]?.oldest ?? null });
   } catch (e) {
     console.error('login summary error:', e.message);
     res.status(500).json({ error: '伺服器錯誤' });

@@ -18289,26 +18289,45 @@ function AccountManagement() {
 
   // 登入次數改由 login_audit 實際筆數計算：委外人員本來就不在帳號表，
   // 舊作法靠 upsert 臨時建列，失敗時無聲無息，畫面永遠顯示 0。
+  // 三個分頁的登入次數一律依登入紀錄、在所選期間內計算；最後登入不限期間
+  const loginPresets = useMemo(() => {
+    const tw = new Date(Date.now() + 8 * 3600 * 1000);
+    const ymd = d => d.toISOString().slice(0, 10);
+    const ago = n => { const d = new Date(tw); d.setUTCDate(d.getUTCDate() - n); return ymd(d); };
+    const y = tw.getUTCFullYear(), m = tw.getUTCMonth();
+    const first = (yy, mm) => ymd(new Date(Date.UTC(yy, mm, 1)));
+    const last = (yy, mm) => ymd(new Date(Date.UTC(yy, mm + 1, 0)));
+    return [['7', '近 7 天', ago(6), ymd(tw)], ['30', '近 30 天', ago(29), ymd(tw)], ['month', '本月', first(y, m), ymd(tw)],
+            ['prev', '上月', first(y, m - 1), last(y, m - 1)], ['all', '全部（180 天內）', '', '']];
+  }, []);
+  const [loginPreset, setLoginPreset] = useState('30');
+  const [loginSort, setLoginSort] = useState('');   // '' 預設 | desc 多到少 | asc 少到多 | none 只看未登入
   const [loginSummary, setLoginSummary] = useState({});
+  const [loginOldest, setLoginOldest] = useState(null);
   useEffect(() => {
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
-    fetch('/api/audit/login/summary', { headers: { Authorization: `Bearer ${token}` } })
+    const [, , f, t] = loginPresets.find(p => p[0] === loginPreset);
+    fetch(`/api/audit/login/summary${f ? `?from=${f}&to=${t}` : ''}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (d?.summary) setLoginSummary(d.summary); })
+      .then(d => { if (d?.summary) { setLoginSummary(d.summary); setLoginOldest(d.oldest ?? null); } })
       .catch(() => {});
-  }, []);
+  }, [loginPreset, loginPresets]);
+  const loginOf = username => loginSummary[String(username ?? '').trim()] ?? { count: 0, last_at: null };
+  const fmtLoginAt = ts => { if (!ts) return null; const d = new Date(ts);
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  // 依登入次數排序／只看未登入
+  const byLogin = (list, keyOf) => {
+    if (loginSort === 'none') return list.filter(x => !loginOf(keyOf(x)).count);
+    if (!loginSort) return list;
+    const dir = loginSort === 'desc' ? -1 : 1;
+    return [...list].sort((a, b) => dir * (loginOf(keyOf(a)).count - loginOf(keyOf(b)).count));
+  };
 
   // 登入次數／最後登入由伺服器在每次登入時累計，本機 users 不會更新，
   // 故一律以 apiUsers（資料庫）為準，查無對應帳號才退回本機值。
-  const dbUserOf = u => apiUsers.find(a => a.id === u.id || a.username === u.username);
-  const loginCountOf = u => dbUserOf(u)?.loginCount ?? u.loginCount ?? 0;
-  const lastLoginOf = u => {
-    const t = dbUserOf(u)?.last_login;
-    if (!t) return null;
-    const d = new Date(t);
-    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-  };
+  const loginCountOf = u => loginOf(u.username).count;
+  const lastLoginOf = u => fmtLoginAt(loginOf(u.username).last_at);
 
   const roleLabel = { admin: '管理員', area: '日翊', vendor: '委外幹部', worker: '委外人員' };
   const roleBadge = { admin: 'bg-red-100 text-red-700', area: 'bg-purple-100 text-purple-700', vendor: 'bg-blue-100 text-blue-700', worker: 'bg-orange-100 text-orange-700' };
@@ -18550,6 +18569,38 @@ function AccountManagement() {
         ))}
       </div>
 
+      {/* 登入使用率：依目前分頁與上方篩選的帳號計算 */}
+      {(() => {
+        const list = activeTab === 'staff' ? staffApiUsers.map(u => u.username)
+          : activeTab === 'vendor' ? vendorUsers.map(u => u.username)
+          : workerEmpList.map(e => e.empId);
+        const total = list.length;
+        const used = list.filter(k => loginOf(k).count > 0).length;
+        const times = list.reduce((a, k) => a + loginOf(k).count, 0);
+        const rate = total ? Math.round((used / total) * 100) : 0;
+        const chip = (on, onClick, label) => <button key={label} onClick={onClick}
+          className={`px-3 py-1 rounded-full border text-xs ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'}`}>{label}</button>;
+        return (
+          <div className="bg-white border border-[#DDD9D0] rounded-xl px-4 py-3 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <b className="text-sm text-slate-700 mr-1">登入期間</b>
+              {loginPresets.map(([k, l]) => chip(loginPreset === k, () => setLoginPreset(k), l))}
+              <span className="ml-auto text-[11px] text-slate-400">登入紀錄保留 180 天{loginOldest ? `（最早 ${fmtLoginAt(loginOldest).slice(0, 10)}）` : ''}</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[['使用率', `${rate}%`, 'text-teal-700'], ['期間有登入', `${used} / ${total} 人`, 'text-slate-800'],
+                ['期間登入次數', `${times} 次`, 'text-slate-800'], ['期間未登入', `${total - used} 人`, total - used ? 'text-rose-600' : 'text-slate-800']].map(([l, v, c]) => (
+                <div key={l} className="bg-slate-50 rounded-lg px-3 py-1.5"><div className="text-[11px] text-slate-500">{l}</div><div className={`font-bold ${c}`}>{v}</div></div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <b className="text-sm text-slate-700 mr-1">排序</b>
+              {[['', '預設'], ['desc', '登入次數多→少'], ['asc', '登入次數少→多'], ['none', '只看期間未登入']].map(([k, l]) => chip(loginSort === k, () => setLoginSort(k), l))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── 委外人員 Tab ── */}
       {activeTab === 'worker' && (
         <div>
@@ -18585,7 +18636,7 @@ function AccountManagement() {
             {workerEmpList.length === 0 && (
               <p className="text-sm text-slate-400 text-center py-6">尚未匯入員工清冊</p>
             )}
-            {workerEmpList.map(emp => {
+            {byLogin(workerEmpList, e => e.empId).map(emp => {
               const isUpgraded = upgradedEmpIds.has(emp.id);
               return (
                 <div key={emp.id} className="grid items-center gap-2 px-4 py-2.5 hover:bg-[#F5F2EC]"
@@ -18595,13 +18646,10 @@ function AccountManagement() {
                   <span className="text-xs text-slate-500">{emp.vendor || '—'}</span>
                   <span className="text-xs text-slate-500">{emp.shiftType || '—'}</span>
                   {(() => {
-                    // 以登入紀錄的實際筆數為準；沒有紀錄時才退回帳號表的累計值
-                    const key = String(emp.empId ?? '').trim();
-                    const la = loginSummary[key];
-                    const db = apiUsers.find(a => a.username === key);
-                    const count = la?.count ?? db?.loginCount ?? 0;
-                    const ts = la?.last_at ?? db?.last_login ?? null;
-                    const t = ts ? new Date(ts) : null;
+                    // 期間內的登入次數；最後登入不限期間
+                    const la = loginOf(emp.empId);
+                    const count = la.count;
+                    const t = la.last_at ? new Date(la.last_at) : null;
                     return (
                       <span>
                         <span className={`font-bold text-sm ${count > 0 ? 'text-teal-700' : 'text-slate-300'}`}>{count}</span>
@@ -18743,7 +18791,7 @@ function AccountManagement() {
             <span className="text-xs text-slate-400">可設定每位員工可使用的倉別</span>
           </div>
           <div className="divide-y divide-slate-100">
-            {staffApiUsers.map(u => (
+            {byLogin(staffApiUsers, u => u.username).map(u => (
               <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
                 <span className="font-mono font-bold text-slate-800 text-sm w-28 shrink-0">{u.username}</span>
                 <EditableName value={u.display_name || ''}
@@ -18756,13 +18804,10 @@ function AccountManagement() {
                     {MGR_LEVEL_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </label>
-                {/* 登入次數／最後登入：資料庫於每次登入時累計 */}
-                <span className="shrink-0 text-xs text-slate-400" title="登入次數">
-                  登入 <span className="text-teal-700 font-bold text-sm">{u.loginCount ?? 0}</span> 次
-                  {u.last_login && (() => { const d = new Date(u.last_login);
-                    return <span className="ml-1 text-[11px] text-slate-400">
-                      （{d.getFullYear()}/{String(d.getMonth()+1).padStart(2,'0')}/{String(d.getDate()).padStart(2,'0')}）
-                    </span>; })()}
+                {/* 期間內登入次數（依登入紀錄）；括號內為最後登入 */}
+                <span className="shrink-0 text-xs text-slate-400" title="所選期間的登入次數">
+                  登入 <span className={`font-bold text-sm ${loginCountOf(u) ? 'text-teal-700' : 'text-slate-300'}`}>{loginCountOf(u)}</span> 次
+                  {lastLoginOf(u) && <span className="ml-1 text-[11px] text-slate-400">（最後 {lastLoginOf(u).slice(0, 10)}）</span>}
                 </span>
                 <span className="text-xs text-slate-400 shrink-0">可用倉別：</span>
                 <div className="flex flex-wrap gap-2 flex-1">
@@ -18939,7 +18984,7 @@ function AccountManagement() {
       </div>
 
       <div className="border border-[#DDD9D0] rounded-b-xl divide-y divide-slate-100 overflow-hidden">
-        {tabUsers.map(u => {
+        {(activeTab === 'vendor' ? byLogin(tabUsers, u => u.username) : tabUsers).map(u => {
           const perms = u.permissions ?? getDefaultPermissions(u.role);
           const isOpen = expandedId === u.id;
           const visibleCount = PAGE_PERMISSIONS.filter(p => perms[p.key]?.view).length;
