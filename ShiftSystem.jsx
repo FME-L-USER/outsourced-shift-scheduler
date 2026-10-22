@@ -17983,8 +17983,14 @@ function AccountManagement() {
     if (editUser) {
       setUsers(prev => prev.map(u => u.id === saved.id ? saved : u));
       toast('帳號已更新：' + saved.username, 'success');
-      // 廠商帳號登入以資料庫為準，姓名／密碼／授權廠商／倉別須一併寫回
-      if (saved.role === ROLES.VENDOR) await syncVendorToDB(saved);
+      // 廠商帳號登入以資料庫為準，姓名／授權廠商／倉別須一併寫回。
+      // 沒改密碼時不可走 vendor-register：它會把本機的密碼雜湊寫進資料庫，
+      // 資料庫認不得這種格式，帳號就變成「帳號＝密碼」也能登入（等於密碼被重設）
+      if (saved.role === ROLES.VENDOR) {
+        const db = apiUsers.find(a => a.username === saved.username);
+        if (db && form.password === editUser.password) await updateVendorDB(db.id, saved);
+        else await syncVendorToDB(saved);
+      }
     } else {
       const created = { ...saved, id: 'u' + Date.now(), approved: true, loginCount: 0,
                         permissions: getDefaultPermissions(saved.role) };
@@ -18041,6 +18047,23 @@ function AccountManagement() {
       if (!r.ok) {
         toast(`帳號 ${u.username} 未能寫入資料庫（HTTP ${r.status}），該帳號將無法登入，請聯繫管理員`, 'error');
       }
+    } catch (e) {
+      toast(`帳號 ${u.username} 寫入資料庫失敗：${e.message}`, 'error');
+    }
+  };
+
+  const updateVendorDB = async (dbId, u) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    try {
+      const r = await fetch(`/api/users/${dbId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ display_name: u.name, vendors: u.vendors ?? [], allowed_warehouses: u.allowedWarehouses ?? [] }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(`帳號 ${u.username} 未能寫入資料庫：${d.error ?? `HTTP ${r.status}`}`, 'error'); return; }
+      setApiUsers(prev => prev.map(x => x.id === d.id ? d : x));
     } catch (e) {
       toast(`帳號 ${u.username} 寫入資料庫失敗：${e.message}`, 'error');
     }

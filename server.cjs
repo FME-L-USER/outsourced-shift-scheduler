@@ -1229,6 +1229,8 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     if (!displayName) return res.status(400).json({ error: '姓名不可空白' });
   }
 
+  // 資料庫錯誤一律回 500，不可讓未處理的例外讓整個服務當掉
+  try {
   const { rows: existing } = await pool.query('SELECT username FROM users WHERE id=$1', [id]);
   if (!existing[0]) return res.status(404).json({ error: '找不到此帳號' });
   if (existing[0].username === 'grace' && role && role !== 'admin') {
@@ -1240,8 +1242,9 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (approved           !== undefined) { vals.push(approved);           sets.push(`approved=$${vals.length}`); }
   if (page_perms         !== undefined) { vals.push(page_perms);         sets.push(`page_perms=$${vals.length}`); }
   if (fn_perms           !== undefined) { vals.push(fn_perms);           sets.push(`fn_perms=$${vals.length}`); }
-  if (allowed_warehouses !== undefined) { vals.push(allowed_warehouses); sets.push(`allowed_warehouses=$${vals.length}`); }
-  if (vendors           !== undefined) { vals.push(vendors);            sets.push(`vendors=$${vals.length}`); }
+  const strList = v => (Array.isArray(v) ? v : []).map(x => String(x ?? '').trim()).filter(Boolean).slice(0, 50);
+  if (allowed_warehouses !== undefined) { vals.push(strList(allowed_warehouses)); sets.push(`allowed_warehouses=$${vals.length}`); }
+  if (vendors           !== undefined) { vals.push(strList(vendors));            sets.push(`vendors=$${vals.length}`); }
   if (mgr_level          !== undefined) { vals.push(mgr_level);          sets.push(`mgr_level=$${vals.length}`); }
   if (displayName        !== undefined) { vals.push(displayName);        sets.push(`display_name=$${vals.length}`); }
   if (!sets.length) return res.status(400).json({ error: '無可更新欄位' });
@@ -1251,6 +1254,10 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     `UPDATE users SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`, vals
   );
   res.json(safeUser(updated[0]));
+  } catch (e) {
+    console.error('PUT /api/users error:', e.message);
+    res.status(500).json({ error: '更新帳號失敗' });
+  }
 });
 
 // ── DELETE /api/users/:id (admin) ─────────────────────────
@@ -2352,6 +2359,32 @@ app.put('/api/state', requireAuth, requireClientVersion, requireDataEpoch, async
   }
 });
 
+// 資料庫帳號沒有授權廠商、但「帳號與權限」清單（app_state users）有設定時，補寫回資料庫。
+// 過去在畫面上設定的授權廠商有時沒寫進資料庫，委外幹部登入後就看不到自己廠商的資料。
+async function healVendorScope(username) {
+  try {
+    const { rows } = await pool.query("SELECT data->'users' AS users, data->'employees' AS emps FROM app_state WHERE id='main'");
+    const su = (rows[0]?.users ?? []).find(u => u?.role === 'vendor' && String(u.username ?? '').trim() === String(username).trim());
+    let vendors = (su?.vendors ?? []).map(v => String(v ?? '').trim()).filter(Boolean);
+    // 由委外人員升級的幹部：清冊上的廠商
+    if (!vendors.length && su?.employeeId) {
+      const emp = (rows[0]?.emps ?? []).find(e => e?.id === su.employeeId);
+      if (emp?.vendor) vendors = [String(emp.vendor).trim()];
+    }
+    if (!vendors.length) return [];
+    await pool.query(
+      `UPDATE users SET vendors=$2,
+              allowed_warehouses = CASE WHEN cardinality(allowed_warehouses)=0 THEN $3 ELSE allowed_warehouses END
+        WHERE username=$1 AND role='vendor' AND cardinality(vendors)=0`,
+      [username, vendors, (su?.allowedWarehouses ?? []).map(String)]);
+    console.log(`委外幹部 ${username} 的授權廠商由帳號清單補回資料庫：${vendors.join('、')}`);
+    return vendors;
+  } catch (e) {
+    console.error('healVendorScope error:', e.message);
+    return [];
+  }
+}
+
 // ── POST /api/auth/vendor-register （admin only）─────────
 // 管理員核准廠商帳號或升級委外幹部時，將帳號寫入 DB
 app.post('/api/auth/vendor-register', requireAuth, requireAdmin, async (req, res) => {
@@ -2462,6 +2495,10 @@ app.post('/api/auth/vendor-login', async (req, res) => {
       ok = (stored === passwordHash);
     }
     if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+    if (!(user.vendors ?? []).length) {
+      const healed = await healVendorScope(user.username);
+      if (healed.length) user = { ...user, vendors: healed };
+    }
     if (firstLogin && password) {
       const newHash = await hashPbkdf2(password);
       await pool.query('UPDATE users SET password_hash=$1, last_login=NOW(), login_count=login_count+1 WHERE id=$2', [newHash, user.id]);
@@ -2948,7 +2985,8 @@ app.get('/api/review/managers', requireAuth, requireManagerOrAdmin, async (_req,
 // 名稱比對忽略空白（避免「承奕 」與「承奕」對不上）
 async function reviewVendorScope(req) {
   const { rows } = await pool.query('SELECT vendors FROM users WHERE username=$1', [req.user.username]);
-  const list = rows[0]?.vendors ?? req.user.vendors ?? [];
+  let list = rows[0]?.vendors ?? req.user.vendors ?? [];
+  if (!list.length) list = await healVendorScope(req.user.username);
   return { list, set: new Set(list.map(normNameSrv).filter(Boolean)) };
 }
 
