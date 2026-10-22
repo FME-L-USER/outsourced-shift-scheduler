@@ -2572,6 +2572,8 @@ const NAV_ITEMS = [
   { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'review',       label: '理貨評核',     icon: '📝', roles: [ROLES.ADMIN, ROLES.AREA] },
   { key: 'survey',       label: '調查',         icon: '🗳️', roles: [ROLES.ADMIN, ROLES.AREA] },
+  // 委外幹部：替自己廠商的人填寫進行中的調查
+  { key: 'surveyFill',   label: '調查',         icon: '🗳️', roles: [ROLES.VENDOR], always: true },
   // 委外幹部：補簽自己廠商的待簽核約談單（後送簽）與查詢總表；不受分頁權限設定影響
   { key: 'reviewSign',   label: '理貨評核',     icon: '📝', roles: [ROLES.VENDOR], always: true },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
@@ -9548,6 +9550,8 @@ function TempSelfCheck({ onLogout }) {
 function WorkerHome({ onNavigate }) {
   const { employees, currentUser } = useApp();
   const hasSelf = !!resolveSelfEmployee(currentUser, employees);
+  const mine = useMySurveys();
+  const pendingN = mine.filter(x => !x.response).length;
   const tiles = [
     { key: 'schedule',  icon: '📅', label: '班表',          sub: '查看與排休',          bg: 'linear-gradient(135deg,#24407F,#1A2F5E)' },
     hasSelf && { key: 'selfCheck', icon: '📱', label: '手機控管／簽到', sub: '宣導告知單簽署後簽到', bg: 'linear-gradient(135deg,#3C5C9E,#2A467F)' },
@@ -9555,6 +9559,16 @@ function WorkerHome({ onNavigate }) {
   return (
     <div className="p-4 sm:p-8 max-w-3xl mx-auto">
       <p className="text-center text-slate-500 text-sm sm:text-base mb-5">{currentUser.name}，您好</p>
+      {mine.length > 0 && (
+        <button onClick={() => onNavigate('surveyMine')}
+          className="w-full mb-3 sm:mb-5 rounded-2xl text-white shadow-md active:scale-[0.99] transition flex items-center gap-3 px-5 py-4"
+          style={{ background: pendingN ? 'linear-gradient(135deg,#F59E0B,#D97706)' : 'linear-gradient(135deg,#64748B,#475569)' }}>
+          <span className="text-4xl leading-none">🗳️</span>
+          <span className="text-left"><span className="block text-xl sm:text-2xl font-bold">調查</span>
+            <span className="text-sm text-white/90">{pendingN ? `待填 ${pendingN} 份` : `${mine.length} 份已回覆，截止前可修改`}</span></span>
+          {pendingN > 0 && <span className="ml-auto px-3 py-1 rounded-full bg-white text-amber-700 text-lg font-bold">{pendingN}</span>}
+        </button>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:gap-5">
         {tiles.map(t => (
           <button key={t.key} onClick={() => onNavigate(t.key)}
@@ -9892,6 +9906,7 @@ function PhoneKiosk({ people, getRecord, setRecord, lockerOf, scopeLabel, todayS
                     </p>
                   )}
                 </div>
+                <KioskSurveyBanner person={emp} onActivity={() => { lastTouchRef.current = Date.now(); }} />
                 <SafetyNotice key={emp.id} rec={rec} onAck={onSet} large
                   onSign={image => postSafetySign('/api/safety-sign',
                     { date: todayStr, personId: emp.id, name: emp.name, image })}
@@ -17688,6 +17703,7 @@ function SurveyPage() {
   const [kw, setKw] = useState('');
   const [editing, setEditing] = useState(null);    // { survey|null, copy?: bool }
   const [extending, setExtending] = useState(null);
+  const [proxy, setProxy] = useState(null);         // 代填：調查 id
   const me = currentUser?.username ?? '';
   const admin = currentUser?.role === ROLES.ADMIN;
   const load = useCallback(async () => {
@@ -17706,6 +17722,7 @@ function SurveyPage() {
   const btn = (label, onClick, cls = 'border border-slate-300 text-slate-600 bg-white') =>
     <button key={label} onClick={onClick} className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${cls}`}>{label}</button>;
 
+  if (proxy) return <div className="p-6 max-w-5xl"><SurveyProxyList surveyId={proxy} onBack={async () => { setProxy(null); await load(); }} /></div>;
   if (editing) return <SurveyEditor init={editing} onClose={() => setEditing(null)} onSaved={async st => { setEditing(null); await load(); if (st) setStatus(st); }} />;
 
   return (
@@ -17735,6 +17752,7 @@ function SurveyPage() {
                   <td className="px-3 py-2"><div className="flex flex-wrap gap-1 w-36">
                     {x.status === 'deleted' ? (m && btn('還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white')) : <>
                       {x.status !== 'draft' && btn('結果', () => toast('結果統計將在第 3 批上線', 'info'), 'bg-blue-600 text-white')}
+                      {x.status === 'open' && btn('代填', () => setProxy(x.id), 'bg-amber-500 text-white')}
                       {m && x.status !== 'closed' && btn('編輯', () => setEditing({ survey: x }))}
                       {m && x.status === 'open' && btn('提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); })}
                       {m && (x.status === 'open' || x.status === 'upcoming' || x.status === 'closed') && btn('延長', () => setExtending(x))}
@@ -17762,6 +17780,303 @@ function SurveyPage() {
       <p className="text-xs text-slate-500">只列出發布範圍在您可用倉別內的調查；建立人與管理員可以編輯、結束、延長、刪除。</p>
       {extending && <SurveyExtendModal survey={extending} onClose={() => setExtending(null)}
         onSave={async endAt => { await act(extending, 'end', { endAt }, '已更新結束時間'); setExtending(null); }} />}
+    </div>
+  );
+}
+
+// ── 調查：填寫 ─────────────────────────────────────
+/** 回覆對象的識別：長期人員用人員 id；臨時人力用姓名＋廠商（每天點名表的 id 不同） */
+const svPersonKey = p => (p._temp || p.kind === 'temp' ? `tmp:${normName(p.name)}|${normName(p.vendor)}` : `emp:${p.id ?? p.empId}`);
+const SV_METHOD = { self: '本人', vendor: '幹部代填', staff: '日翊代填', kiosk: '點選模式' };
+const svAnswerText = (q, v) => (v == null || v === '' ? '' : Array.isArray(v) ? v.join('、') : q.type === 'number' && q.unit ? `${v} ${q.unit}` : String(v));
+
+/** 委外人員（或本身在清冊的幹部）自己的進行中調查；畫面開著每 60 秒更新 */
+function useMySurveys() {
+  const [list, setList] = useState([]);
+  const load = useCallback(() => reviewApi('/api/survey-fill/mine').then(d => setList(d.surveys ?? [])).catch(() => {}), []);
+  useEffect(() => {
+    load();
+    const id = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
+    return () => clearInterval(id);
+  }, [load]);
+  return list;
+}
+
+/** 填寫表單：委外人員本人、代填、點選模式共用。large＝大字大按鈕（手機、iPad） */
+function SurveyFillForm({ survey, initial, who, proxyName, large = true, onSubmit, onCancel, onActivity }) {
+  const toast = useToast();
+  const [a, setA] = useState(() => ({ ...(initial ?? {}) }));
+  const [busy, setBusy] = useState(false);
+  const touch = () => onActivity?.();
+  const set = (id, v) => { touch(); setA(x => ({ ...x, [id]: v })); };
+  const submit = async () => {
+    for (const [i, q] of survey.questions.entries()) {
+      const v = a[q.id];
+      if (q.required && (v == null || v === '' || (Array.isArray(v) && !v.length))) { toast(`第 ${i + 1} 題「${q.title}」為必填`, 'error'); return; }
+    }
+    setBusy(true);
+    try { await onSubmit(a); } finally { setBusy(false); }
+  };
+  const opt = (on, label, onClick, type) => (
+    <button key={label} type="button" onClick={onClick}
+      className={`w-full flex items-center gap-3 text-left border-2 rounded-xl px-4 ${large ? 'py-3 text-lg' : 'py-2 text-sm'} transition-colors
+        ${on ? 'bg-teal-50 border-teal-500 text-teal-900 font-semibold' : 'bg-white border-slate-200 text-slate-700'}`}>
+      <span className={`shrink-0 w-6 h-6 flex items-center justify-center border-2 ${type === 'single' ? 'rounded-full' : 'rounded'} ${on ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-300'}`}>{on ? '✓' : ''}</span>
+      {label}
+    </button>
+  );
+  return (
+    <div className="space-y-4" onPointerDown={touch}>
+      <div>
+        <div className={`${large ? 'text-2xl' : 'text-lg'} font-bold text-slate-800`}>{survey.title}</div>
+        <div className="text-sm text-rose-600">{svFmt(survey.endAt)} 截止・截止前可修改</div>
+        {who && <div className="text-sm text-slate-600 mt-1">填寫對象：<b>{who}</b></div>}
+        {survey.description && <p className={`${large ? 'text-base' : 'text-sm'} text-slate-600 mt-2 whitespace-pre-wrap`}>{survey.description}</p>}
+      </div>
+      {survey.questions.map((q, i) => (
+        <div key={q.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+          <div className={`${large ? 'text-lg' : 'text-sm'} font-bold text-slate-800`}>{i + 1}. {q.title}{q.required && <span className="text-rose-600">＊</span>}
+            {q.type === 'multi' && <span className="ml-1 text-sm font-normal text-slate-500">（可複選）</span>}</div>
+          {q.type === 'single' && q.options.map(o => opt(a[q.id] === o, o, () => set(q.id, a[q.id] === o ? '' : o), 'single'))}
+          {q.type === 'multi' && q.options.map(o => { const cur = a[q.id] ?? []; const on = cur.includes(o);
+            return opt(on, o, () => set(q.id, on ? cur.filter(x => x !== o) : [...cur, o]), 'multi'); })}
+          {q.type === 'number' && (
+            <div className="flex items-center gap-2">
+              <input type="number" inputMode="decimal" value={a[q.id] ?? ''} min={q.min} max={q.max} onChange={e => set(q.id, e.target.value)}
+                className="w-40 border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px]" />
+              {q.unit && <span className="text-lg text-slate-600">{q.unit}</span>}
+              {(q.min != null || q.max != null) && <span className="text-xs text-slate-400">（{q.min ?? ''}～{q.max ?? ''}）</span>}
+            </div>)}
+          {q.type === 'text' && <textarea rows={3} maxLength={200} value={a[q.id] ?? ''} onChange={e => set(q.id, e.target.value)}
+            className="w-full border-2 border-slate-200 rounded-xl px-4 py-3 text-[17px]" placeholder="最多 200 字" />}
+        </div>
+      ))}
+      {proxyName && <div className="text-sm text-slate-500">代填人：{proxyName}</div>}
+      <div className="flex gap-3">
+        {onCancel && <button type="button" onClick={onCancel} className={`px-5 rounded-xl border-2 border-slate-300 text-slate-600 font-semibold ${large ? 'py-3 text-lg' : 'py-2'}`}>取消</button>}
+        <button type="button" disabled={busy} onClick={submit}
+          className={`flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50 ${large ? 'py-3 text-xl' : 'py-2'}`}>
+          {busy ? '送出中…' : initial ? '更新回覆' : '送出回覆'}</button>
+      </div>
+    </div>
+  );
+}
+const svSubmit = (surveyId, personKey, answers, kiosk) =>
+  reviewApi(`/api/survey-fill/surveys/${surveyId}/respond`, { method: 'POST', body: { personKey, answers, kiosk } });
+
+/** 委外人員：自己的調查（只列進行中；結束後不再顯示） */
+function SurveyMinePage({ onDone }) {
+  const toast = useToast();
+  const [list, setList] = useState(null);
+  const [open, setOpen] = useState(null);
+  const load = useCallback(() => reviewApi('/api/survey-fill/mine').then(d => setList(d.surveys ?? [])).catch(e => { toast(e.message, 'error'); setList([]); }), [toast]);
+  useEffect(() => { load(); }, [load]);
+  if (open) {
+    return (
+      <div className="p-4 sm:p-8 max-w-2xl mx-auto">
+        <SurveyFillForm survey={open} initial={open.response?.answers} onCancel={() => setOpen(null)}
+          onSubmit={async answers => {
+            try { await svSubmit(open.id, open.personKey, answers); toast('已送出回覆', 'success'); setOpen(null); await load(); }
+            catch (e) { toast(e.message, 'error'); }
+          }} />
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 sm:p-8 max-w-2xl mx-auto space-y-3">
+      <h2 className="text-2xl font-bold text-slate-800">🗳️ 調查</h2>
+      {!list ? <div className="text-slate-400">讀取中…</div>
+        : list.length === 0 ? (
+          <div className="bg-white rounded-2xl p-8 text-center text-slate-500 space-y-3">
+            <div className="text-lg">目前沒有需要填寫的調查</div>
+            <button onClick={onDone} className="px-5 py-2 rounded-xl text-white font-semibold" style={{ background: '#1A2F5E' }}>回首頁</button>
+          </div>)
+        : list.map(x => (
+          <button key={x.id} onClick={() => setOpen(x)} className="w-full text-left bg-white rounded-2xl border-2 border-slate-200 p-4 flex items-center gap-3 active:bg-slate-50">
+            <span className="text-3xl">{x.response ? '✅' : '📝'}</span>
+            <span className="flex-1 min-w-0"><b className="block text-lg text-slate-800">{x.title}</b>
+              <span className="text-sm text-rose-600">{svFmt(x.endAt)} 截止・{svLeft(x.endAt)}</span>
+              {x.response && <span className="block text-sm text-emerald-700">已回覆 {svFmt(x.response.updatedAt)}{x.response.method !== 'self' ? `（${SV_METHOD[x.response.method]}：${x.response.filledName}）` : ''}，可再修改</span>}
+            </span>
+            <span className={`px-3 py-1.5 rounded-xl text-white font-bold ${x.response ? 'bg-slate-500' : 'bg-amber-500'}`}>{x.response ? '修改' : '填寫'}</span>
+          </button>
+        ))}
+    </div>
+  );
+}
+
+/** 代填名單：幹部＝自己廠商；日翊＝範圍內。可篩未回覆、搜尋，點「代填／修改」 */
+function SurveyProxyList({ surveyId, onBack }) {
+  const { currentUser } = useApp();
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [f, setF] = useState('todo');
+  const [kw, setKw] = useState('');
+  const [fill, setFill] = useState(null);
+  const load = useCallback(() => reviewApi(`/api/survey-fill/surveys/${surveyId}`).then(setD).catch(e => { toast(e.message, 'error'); onBack(); }), [surveyId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+  if (!d) return <div className="p-8 text-center text-slate-400">讀取中…</div>;
+  const q = kw.trim().toLowerCase();
+  const people = d.people.filter(p => (f === 'all' || (f === 'todo' ? !p.response : !!p.response))
+    && (!q || `${p.name} ${p.empNo} ${p.vendor}`.toLowerCase().includes(q)));
+  const done = d.people.filter(p => p.response).length;
+  const q1 = d.questions[0];
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={onBack} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600">← 返回</button>
+        <h2 className="text-xl font-bold text-slate-800">{d.title}</h2>
+        <span className="text-sm text-rose-600">{svFmt(d.endAt)} 截止・{svLeft(d.endAt)}</span>
+      </div>
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-2 flex-wrap text-sm">
+        {[['todo', `未回覆 ${d.people.length - done}`], ['done', `已回覆 ${done}`], ['all', `全部 ${d.people.length}`]].map(([k, l]) => (
+          <button key={k} onClick={() => setF(k)} className={`px-3 py-1 rounded-full border ${f === k ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200'}`}>{l}</button>
+        ))}
+        <span className="text-slate-500 ml-2">回覆率 <b className="text-teal-700">{d.people.length ? Math.round(done / d.people.length * 100) : 0}%</b></span>
+        <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 姓名、員編、廠商" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 w-48" />
+      </div>
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
+        <table className="w-full text-sm min-w-[40rem]">
+          <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+            {['操作', '人員', '廠商・組別', '狀態'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {people.length === 0 && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-400">沒有符合的人員</td></tr>}
+            {people.map(p => (
+              <tr key={p.key} className="border-t border-[#EFEBE3]">
+                <td className="px-3 py-2"><button onClick={() => setFill(p)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold ${p.response ? 'border border-slate-300 text-slate-600' : 'bg-amber-500 text-white'}`}>{p.response ? '修改' : '代填'}</button></td>
+                <td className="px-3 py-2 whitespace-nowrap"><b>{p.name}</b> <span className="text-xs text-slate-400">{p.kind === 'temp' ? '臨時人力' : p.empNo}</span></td>
+                <td className="px-3 py-2 text-xs text-slate-600">{p.vendor}・{p.grp}</td>
+                <td className="px-3 py-2 text-xs">{p.response
+                  ? <><span className="text-emerald-700 font-semibold">{q1 ? svAnswerText(q1, p.response.answers[q1.id]) || '已回覆' : '已回覆'}</span>
+                      <div className="text-[11px] text-slate-400">{SV_METHOD[p.response.method]}{p.response.method !== 'self' ? `：${p.response.filledName}` : ''} {svFmt(p.response.updatedAt)}</div></>
+                  : <span className="text-rose-600">未回覆</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {fill && (
+        <SurveyFillModal onClose={() => setFill(null)}>
+          <SurveyFillForm survey={d} initial={fill.response?.answers} large={false}
+            who={`${fill.name}（${fill.kind === 'temp' ? '臨時人力' : fill.empNo}・${fill.vendor}）`}
+            proxyName={currentUser?.name} onCancel={() => setFill(null)}
+            onSubmit={async answers => {
+              try { await svSubmit(d.id, fill.key, answers); toast(`已儲存 ${fill.name} 的回覆`, 'success'); setFill(null); await load(); }
+              catch (e) { toast(e.message, 'error'); }
+            }} />
+        </SurveyFillModal>
+      )}
+    </div>
+  );
+}
+function SurveyFillModal({ children, onClose }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[9500] bg-black/50 overflow-y-auto p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="max-w-2xl mx-auto my-6 bg-slate-50 rounded-2xl shadow-xl p-5">{children}</div>
+    </div>, document.body);
+}
+
+/** 委外幹部：進行中的調查，替自己廠商的人填寫 */
+function SurveyFillPage() {
+  const toast = useToast();
+  const [list, setList] = useState(null);
+  const [sel, setSel] = useState(null);
+  const load = useCallback(() => reviewApi('/api/survey-fill/surveys').then(d => setList(d.surveys ?? [])).catch(e => { toast(e.message, 'error'); setList([]); }), [toast]);
+  useEffect(() => { load(); }, [load]);
+  if (sel) return <div className="p-6 max-w-5xl"><SurveyProxyList surveyId={sel} onBack={async () => { setSel(null); await load(); }} /></div>;
+  return (
+    <div className="p-6 max-w-4xl space-y-3">
+      <h2 className="text-xl font-bold text-slate-800">調查</h2>
+      <p className="text-sm text-slate-500">進行中的調查，可替自己廠商的人員填寫或修改；人員也可以自己登入填寫。</p>
+      {!list ? <div className="text-slate-400">讀取中…</div>
+        : list.length === 0 ? <div className="bg-white border rounded-2xl p-8 text-center text-slate-400">目前沒有進行中的調查</div>
+        : list.map(x => (
+          <button key={x.id} onClick={() => setSel(x.id)} className="w-full text-left bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-4 hover:border-teal-300">
+            <span className="flex-1 min-w-0"><b className="text-slate-800">{x.title}</b>
+              <span className="block text-xs text-rose-600">{svFmt(x.endAt)} 截止・{svLeft(x.endAt)}</span></span>
+            <span className="text-sm text-slate-600 whitespace-nowrap">已回覆 <b>{x.responded}</b> / {x.total}</span>
+            {x.total - x.responded > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-xs whitespace-nowrap">未回覆 {x.total - x.responded}</span>}
+          </button>
+        ))}
+    </div>
+  );
+}
+
+/** 登入後提醒：委外人員有待填調查、幹部的廠商有人未回覆（每次登入只跳一次） */
+function SurveyLoginPrompt({ onGo }) {
+  const { currentUser } = useApp();
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    const role = currentUser?.role;
+    if (role !== ROLES.WORKER && role !== ROLES.VENDOR) return;
+    const flag = `sms_survey_prompt_${currentUser.username}`;
+    try { if (sessionStorage.getItem(flag)) return; } catch { /* 無法使用時照常提醒 */ }
+    (async () => {
+      try {
+        const mine = (await reviewApi('/api/survey-fill/mine')).surveys ?? [];
+        const pending = mine.filter(x => !x.response);
+        let proxyLeft = 0;
+        if (role === ROLES.VENDOR) proxyLeft = ((await reviewApi('/api/survey-fill/surveys')).surveys ?? []).reduce((a, x) => a + (x.total - x.responded), 0);
+        if (pending.length || proxyLeft) setInfo({ pending, proxyLeft, flag });
+      } catch { /* 讀不到就不提醒 */ }
+    })();
+  }, [currentUser]);
+  if (!info) return null;
+  // 按了「稍後」或「立即填寫」才記為已提醒（登入過程畫面可能重建，不能一讀到就記）
+  const close = () => { try { sessionStorage.setItem(info.flag, '1'); } catch { /* 忽略 */ } setInfo(null); };
+  return (
+    <SurveyFillModal onClose={close}>
+      <div className="space-y-4">
+        <div className="text-xl font-bold text-slate-800">🗳️ {info.pending.length ? `您有 ${info.pending.length} 份調查待填寫` : '調查待回覆'}</div>
+        {info.pending.map(x => (
+          <div key={x.id} className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-2"><b>{x.title}</b><div className="text-sm text-rose-600">{svFmt(x.endAt)} 截止</div></div>))}
+        {info.proxyLeft > 0 && <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">您的廠商還有 <b>{info.proxyLeft}</b> 人次未回覆，可到「調查」代填或提醒人員填寫。</div>}
+        <div className="flex gap-3">
+          <button onClick={close} className="flex-1 py-3 rounded-xl border-2 border-slate-300 text-slate-600 font-semibold text-lg">稍後</button>
+          <button onClick={() => { close(); onGo(info.pending.length ? 'surveyMine' : 'surveyFill'); }}
+            className="flex-1 py-3 rounded-xl bg-amber-500 text-white font-bold text-lg">立即填寫</button>
+        </div>
+      </div>
+    </SurveyFillModal>
+  );
+}
+
+/** 點選模式：選到的人有待填調查時顯示提醒；不強制，不填也能直接簽到 */
+function KioskSurveyBanner({ person, onActivity }) {
+  const toast = useToast();
+  const [list, setList] = useState([]);
+  const [fill, setFill] = useState(null);
+  const load = useCallback(() => reviewApi('/api/survey-fill/kiosk').then(d => setList(d.surveys ?? [])).catch(() => {}), []);
+  useEffect(() => { load(); }, [load, person?.id]);
+  const key = person ? svPersonKey(person) : '';
+  const pending = list.filter(x => x.targetKeys.includes(key) && !x.respondedKeys.includes(key));
+  if (!pending.length && !fill) return null;
+  return (
+    <div className="max-w-xl mx-auto space-y-2">
+      {pending.length > 0 && (
+        <div className="rounded-2xl bg-amber-50 border-2 border-amber-300 px-4 py-3 space-y-2">
+          <div className="flex items-center gap-2"><span className="text-2xl">🗳️</span>
+            <b className="text-lg">有 {pending.length} 份調查待填</b><span className="text-sm text-slate-600">（也可以先簽到，之後再填）</span></div>
+          {pending.map(x => (
+            <div key={x.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2">
+              <span className="flex-1 min-w-0"><b className="block truncate">{x.title}</b><span className="text-xs text-rose-600">{svFmt(x.endAt)} 截止</span></span>
+              <button onClick={() => { onActivity?.(); setFill(x); }} className="px-5 py-2 rounded-xl bg-amber-500 text-white text-lg font-bold">填寫</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {fill && (
+        <SurveyFillModal onClose={() => setFill(null)}>
+          <SurveyFillForm survey={fill} who={`${person.name}${person.empId ? `（${person.empId}）` : '（臨時人力）'}`} onActivity={onActivity}
+            onCancel={() => setFill(null)}
+            onSubmit={async answers => {
+              try { await svSubmit(fill.id, key, answers, true); toast('已送出回覆', 'success'); setFill(null); await load(); }
+              catch (e) { toast(e.message, 'error'); }
+            }} />
+        </SurveyFillModal>
+      )}
     </div>
   );
 }
@@ -20468,6 +20783,8 @@ export default function App() {
     review:     <ReviewPage />,
     reviewSign: <ReviewVendorSign />,
     survey:     <SurveyPage />,
+    surveyFill: <SurveyFillPage />,
+    surveyMine: <SurveyMinePage onDone={() => setCurrentPage(currentUser?.role === ROLES.WORKER ? 'home' : 'surveyFill')} />,
   };
 
   if (!currentUser) {
@@ -20612,6 +20929,7 @@ export default function App() {
             )}
 
             <ConfirmHost />
+            <SurveyLoginPrompt onGo={setCurrentPage} />
             {/* 資料健檢面板（右側滑出，僅管理員）：由篩選列或系統設定叫出 */}
             <HealthDrawer />
             <RestoreDrawer />

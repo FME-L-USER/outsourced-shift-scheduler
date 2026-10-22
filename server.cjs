@@ -3184,6 +3184,239 @@ for (const [path, del] of [['delete', true], ['restore', false]]) {
   });
 }
 
+// ── 調查：填寫（委外人員本人、廠商幹部代填、日翊代填、點選模式）─────────────
+const SV_NO_AREA = '（未設定）';
+const svNorm = v => String(v ?? '').replace(/[\s　​﻿]/g, '');
+const svTwDate = (d = new Date()) => new Date(d.getTime() + 8 * 3600e3).toISOString().slice(0, 10);
+const svActive = (e, ymd) => {
+  if (!String(e?.status ?? '').includes('離職')) return true;
+  if (!e?.leaveDate) return false;
+  const [y, m, d] = String(e.leaveDate).split('-').map(Number);
+  return !!y && ymd < `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+};
+// 人員屬於哪個倉別的哪個課別：長期人員依課別名稱（沒有課別時依廠商），臨時人力依組別（與前端相同）
+function svDeptOf(p, warehouses, whs, isTemp) {
+  for (const w of warehouses ?? []) {
+    if (whs && !whs.includes(w.id)) continue;
+    const d = (w.departments ?? []).find(d => isTemp ? (d.groups ?? []).includes(p.group)
+      : p.dept ? d.name === p.dept : (d.vendors ?? []).includes(p.vendor));
+    if (d) return { wh: w, dept: d };
+  }
+  return null;
+}
+function svInScopeSrv(scope, p, warehouses, isTemp) {
+  if (!scope?.whs?.length) return null;
+  const hit = svDeptOf(p, warehouses, scope.whs, isTemp);
+  if (!hit) return null;
+  if (scope.depts?.length && !scope.depts.includes(hit.dept.name)) return null;
+  const gs = (scope.grps ?? []).filter(g => g.dept === hit.dept.name);
+  if (gs.length && !gs.some(g => g.grp === p.group)) return null;
+  if (!isTemp && scope.areas?.length && !scope.areas.includes(p.workArea || SV_NO_AREA)) return null;
+  return hit;
+}
+const svTempKey = p => `tmp:${svNorm(p.name)}|${svNorm(p.vendor)}`;
+/** 調查對象名單。已結束且凍結過的用凍結名單；否則依目前人員清冊＋調查期間（開始日～今天）的點名表臨時人力 */
+async function surveyTargets(s) {
+  if (s.frozen?.people) return s.frozen.people;
+  const start = svTwDate(new Date(s.start_at)), today = svTwDate();
+  const last = [svTwDate(new Date(s.end_at)), today].sort()[0];
+  const dates = [];
+  for (let d = new Date(`${start}T00:00:00Z`); dates.length < 62; d.setUTCDate(d.getUTCDate() + 1)) {
+    const k = d.toISOString().slice(0, 10);
+    if (k > last) break;
+    dates.push(k);
+  }
+  const { rows } = await pool.query("SELECT data->'employees' AS emps, data->'warehouses' AS whs FROM app_state WHERE id='main'");
+  const emps = rows[0]?.emps ?? [], warehouses = rows[0]?.whs ?? [];
+  const out = [];
+  if (s.targets?.long !== false) {
+    for (const e of emps) {
+      if (!e?.vendor || !svActive(e, today)) continue;
+      const hit = svInScopeSrv(s.scope, e, warehouses, false);
+      if (hit) out.push({ key: `emp:${e.id}`, kind: 'long', empId: e.id, empNo: e.empId ?? '', name: e.name ?? '', vendor: e.vendor,
+        wh: hit.wh.name, dept: hit.dept.name, grp: e.group ?? '', area: e.workArea || SV_NO_AREA });
+    }
+  }
+  if (s.targets?.temp && dates.length) {
+    const { rows: ex } = await pool.query(
+      `SELECT k, v FROM app_state, jsonb_each(COALESCE(data->'extras','{}'::jsonb)) AS e(k, v) WHERE id='main' AND k = ANY($1::text[]) ORDER BY k`, [dates]);
+    const temps = new Map();
+    for (const { v } of ex) for (const t of Array.isArray(v) ? v : []) {
+      if (!t?.name) continue;
+      const hit = svInScopeSrv(s.scope, t, warehouses, true);
+      if (hit) temps.set(svTempKey(t), { key: svTempKey(t), kind: 'temp', empId: '', empNo: '', name: t.name, vendor: t.vendor ?? '',
+        wh: hit.wh.name, dept: hit.dept.name, grp: t.group ?? '', area: '' });   // 同一人多天出現時以最新一天為準
+    }
+    out.push(...temps.values());
+  }
+  return out;
+}
+// 這個帳號可以填誰：本人（委外人員／幹部本身在清冊）、幹部＝自己廠商、日翊／管理員＝範圍內全部
+async function surveyFillScope(req, s) {
+  const role = req.user.role;
+  const self = req.user.employeeId ? `emp:${req.user.employeeId}` : null;
+  if (role === 'admin' || role === 'area') return surveyInScope(req, s) ? { all: true, self } : null;
+  if (role === 'vendor') return { vendors: (await reviewVendorScope(req)).set, self };
+  if (role === 'worker' && self) return { onlySelf: true, self };
+  return null;
+}
+const svCanFill = (fs, p) => fs && (fs.all || (fs.self && p.key === fs.self) || (!fs.onlySelf && fs.vendors?.has(svNorm(p.vendor))));
+// 回覆內容檢查：未知題目略過；必填、選項、數字範圍、文字長度
+function svCleanAnswers(questions, answers) {
+  const a = answers && typeof answers === 'object' ? answers : {};
+  const out = {};
+  for (const [i, q] of (questions ?? []).entries()) {
+    const v = a[q.id];
+    const label = `第 ${i + 1} 題`;
+    if (q.type === 'single') {
+      if (v != null && v !== '') { if (!q.options.includes(v)) return { error: `${label}的選項不正確` }; out[q.id] = v; }
+    } else if (q.type === 'multi') {
+      const list = [...new Set(Array.isArray(v) ? v : [])];
+      if (list.some(x => !q.options.includes(x))) return { error: `${label}的選項不正確` };
+      if (list.length) out[q.id] = q.options.filter(o => list.includes(o));
+    } else if (q.type === 'number') {
+      if (v !== '' && v != null) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return { error: `${label}請填數字` };
+        if (q.min != null && n < q.min) return { error: `${label}不能小於 ${q.min}` };
+        if (q.max != null && n > q.max) return { error: `${label}不能大於 ${q.max}` };
+        out[q.id] = n;
+      }
+    } else {
+      const t = svClip(v, 200);
+      if (t) out[q.id] = t;
+    }
+    if (q.required && out[q.id] === undefined) return { error: `${label}「${q.title}」為必填` };
+  }
+  return { answers: out };
+}
+const svPublic = s => ({ id: s.id, title: s.title, description: s.description, startAt: s.start_at, endAt: s.end_at, questions: s.questions, status: surveyStatus(s) });
+const svResp = r => r && ({ answers: r.answers, method: r.method, filledBy: r.filled_by, filledName: r.filled_name, updatedAt: r.updated_at, createdAt: r.created_at });
+
+// 本人待填／已填（進行中的調查；結束後不再顯示給委外人員）
+app.get('/api/survey-fill/mine', requireAuth, async (req, res) => {
+  const self = req.user.employeeId ? `emp:${req.user.employeeId}` : null;
+  if (!self) return res.json({ surveys: [] });
+  try {
+    const { rows } = await pool.query(`SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() AND end_at >= NOW() ORDER BY end_at`);
+    const out = [];
+    for (const s of rows) {
+      const people = await surveyTargets(s);
+      if (!people.some(p => p.key === self)) continue;
+      const { rows: r } = await pool.query('SELECT * FROM survey_responses WHERE survey_id=$1 AND person_key=$2', [s.id, self]);
+      out.push({ ...svPublic(s), personKey: self, response: svResp(r[0]) });
+    }
+    res.json({ surveys: out });
+  } catch (e) {
+    console.error('survey mine error:', e.message);
+    res.status(500).json({ error: '讀取調查失敗' });
+  }
+});
+// 代填清單：進行中的調查與自己可填人數、已回覆人數（幹部＝自己廠商；日翊＝範圍內）
+app.get('/api/survey-fill/surveys', requireAuth, async (req, res) => {
+  if (!['admin', 'area', 'vendor'].includes(req.user.role)) return res.status(403).json({ error: '無存取權限' });
+  try {
+    const { rows } = await pool.query(`SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() AND end_at >= NOW() ORDER BY end_at`);
+    const out = [];
+    for (const s of rows) {
+      const fs = await surveyFillScope(req, s);
+      if (!fs) continue;
+      const people = (await surveyTargets(s)).filter(p => svCanFill(fs, p));
+      if (!people.length) continue;
+      const { rows: r } = await pool.query('SELECT person_key FROM survey_responses WHERE survey_id=$1', [s.id]);
+      const done = new Set(r.map(x => x.person_key));
+      out.push({ ...svPublic(s), total: people.length, responded: people.filter(p => done.has(p.key)).length });
+    }
+    res.json({ surveys: out });
+  } catch (e) {
+    console.error('survey fill list error:', e.message);
+    res.status(500).json({ error: '讀取調查失敗' });
+  }
+});
+// 代填名單：可填的人與回覆狀態
+app.get('/api/survey-fill/surveys/:id', requireAuth, async (req, res) => {
+  if (!['admin', 'area', 'vendor'].includes(req.user.role)) return res.status(403).json({ error: '無存取權限' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1 AND deleted_at IS NULL AND published', [Number(req.params.id) || 0]);
+    const s = rows[0];
+    const fs = s && await surveyFillScope(req, s);
+    if (!fs) return res.status(404).json({ error: '找不到這份調查' });
+    const people = (await surveyTargets(s)).filter(p => svCanFill(fs, p));
+    const { rows: r } = await pool.query('SELECT * FROM survey_responses WHERE survey_id=$1', [s.id]);
+    const byKey = new Map(r.map(x => [x.person_key, x]));
+    res.json({ ...svPublic(s), people: people.map(p => ({ ...p, response: svResp(byKey.get(p.key)) })) });
+  } catch (e) {
+    console.error('survey fill people error:', e.message);
+    res.status(500).json({ error: '讀取名單失敗' });
+  }
+});
+// 點選模式：進行中、範圍內的調查，與對象／已回覆的 person_key（判斷選到的人有沒有待填）
+app.get('/api/survey-fill/kiosk', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM surveys WHERE published AND deleted_at IS NULL AND start_at <= NOW() AND end_at >= NOW() ORDER BY end_at`);
+    const out = [];
+    for (const s of rows) {
+      if (!surveyInScope(req, s)) continue;
+      const people = await surveyTargets(s);
+      const { rows: r } = await pool.query('SELECT person_key FROM survey_responses WHERE survey_id=$1', [s.id]);
+      out.push({ ...svPublic(s), targetKeys: people.map(p => p.key), respondedKeys: r.map(x => x.person_key) });
+    }
+    res.json({ surveys: out });
+  } catch (e) {
+    console.error('survey kiosk error:', e.message);
+    res.status(500).json({ error: '讀取調查失敗' });
+  }
+});
+// 送出／修改回覆。截止前可修改，每次修改另存修改紀錄
+app.post('/api/survey-fill/surveys/:id/respond', requireAuth, requireClientVersion, async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const personKey = String(req.body?.personKey ?? '').slice(0, 200);
+  try {
+    const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1', [id]);
+    const s = rows[0];
+    if (!s || s.deleted_at || !s.published) return res.status(404).json({ error: '找不到這份調查' });
+    if (surveyStatus(s) !== 'open') return res.status(409).json({ error: surveyStatus(s) === 'closed' ? '調查已結束，不能再填寫' : '調查還沒開始' });
+    const fs = await surveyFillScope(req, s);
+    const p = (await surveyTargets(s)).find(x => x.key === personKey);
+    if (!p) return res.status(404).json({ error: '這位人員不在調查對象內' });
+    if (!svCanFill(fs, p)) return res.status(403).json({ error: '您不能替這位人員填寫' });
+    const c = svCleanAnswers(s.questions, req.body?.answers);
+    if (c.error) return res.status(400).json({ error: c.error });
+    const role = req.user.role;
+    const method = fs.self && p.key === fs.self ? 'self' : role === 'vendor' ? 'vendor' : req.body?.kiosk ? 'kiosk' : 'staff';
+    const name = await reviewDisplayName(req.user.username);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: cur } = await client.query('SELECT * FROM survey_responses WHERE survey_id=$1 AND person_key=$2 FOR UPDATE', [id, personKey]);
+      let row;
+      if (cur[0]) {
+        const changed = JSON.stringify(cur[0].answers) !== JSON.stringify(c.answers);
+        ({ rows: [row] } = await client.query(
+          `UPDATE survey_responses SET answers=$3, method=$4, filled_by=$5, filled_name=$6, name=$7, vendor=$8, wh=$9, dept=$10, grp=$11, updated_at=NOW()
+            WHERE survey_id=$1 AND person_key=$2 RETURNING *`,
+          [id, personKey, c.answers, method, req.user.username, name, p.name, p.vendor, p.wh, p.dept, p.grp]));
+        if (changed) await client.query(
+          `INSERT INTO survey_response_log (survey_id, person_key, before, after, method, filled_by, filled_name) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [id, personKey, cur[0].answers, c.answers, method, req.user.username, name]);
+      } else {
+        ({ rows: [row] } = await client.query(
+          `INSERT INTO survey_responses (survey_id, person_key, kind, emp_id, emp_no, name, vendor, wh, dept, grp, answers, method, filled_by, filled_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+          [id, personKey, p.kind, p.empId, p.empNo, p.name, p.vendor, p.wh, p.dept, p.grp, c.answers, method, req.user.username, name]));
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true, response: svResp(row) });
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { client.release(); }
+  } catch (e) {
+    console.error('survey respond error:', e.message);
+    res.status(500).json({ error: '送出回覆失敗' });
+  }
+});
+
 // ── 清除舊版理貨評核資料（管理員）────────────────────────
 // 舊版把評核紀錄、約談單等存在共用資料 app_state；新版改用獨立資料表，不再讀取。
 // 清除前先整份備份 app_state，並把舊欄位永久封存到 review_legacy_archive。
