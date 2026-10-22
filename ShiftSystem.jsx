@@ -18257,7 +18257,7 @@ function SurveyResults({ surveyId, onBack }) {
 
       <div className="grid md:grid-cols-2 gap-3">
         {stats.map((st, i) => (
-          <div key={st.q.id} className="bg-white border border-[#DDD9D0] rounded-2xl p-4 space-y-2">
+          <div key={st.q.id} className={`bg-white border border-[#DDD9D0] rounded-2xl p-4 space-y-2 ${st.q.type === 'single' ? 'md:col-span-2' : ''}`}>
             <b className="text-sm text-slate-800">{i + 1}. {st.q.title}<span className="ml-1 font-normal text-xs text-slate-500">（{SURVEY_TYPE_LABEL[st.q.type]}・填答 {st.answered} 人）</span></b>
             {st.counts && st.counts.map(([o, n], k) => bar(o, n, done.length, COLORS[k % COLORS.length]))}
             {st.q.type === 'single' && (() => {
@@ -18270,7 +18270,7 @@ function SurveyResults({ surveyId, onBack }) {
                     <thead className="bg-[#F5F2EC] text-slate-500"><tr>
                       {crossBy === 'vg' ? <><th className="px-2 py-1 text-left whitespace-nowrap">廠商</th><th className="px-2 py-1 text-left whitespace-nowrap">組別</th></>
                         : <th className="px-2 py-1 text-left whitespace-nowrap">{crossBy === 'grp' ? '組別' : '廠商'}</th>}
-                      {st.q.options.map(o => <th key={o} className="px-2 py-1 whitespace-nowrap">{o}</th>)}<th className="px-2 py-1 text-rose-600 whitespace-nowrap">未回覆</th></tr></thead>
+                      {st.q.options.map(o => <th key={o} className="px-2 py-1 min-w-[4.5rem] leading-snug">{o}</th>)}<th className="px-2 py-1 text-rose-600 whitespace-nowrap">未回覆</th></tr></thead>
                     <tbody className="text-center">{cross.map((r, ri) => {
                       // 廠商＋組別：同一廠商只在第一列顯示名稱，換廠商時加粗分隔線
                       const first = ri === 0 || cross[ri - 1].v !== r.v;
