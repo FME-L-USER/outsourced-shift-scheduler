@@ -253,6 +253,65 @@ async function initDB() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // 調查（例如颱風天是否出勤）：日翊建立、發布範圍與題目存在 surveys；
+  // 每人一筆回覆存在 survey_responses（以 person_key 區分長期人員與當日臨時人力），
+  // 截止前的每次修改另存 survey_response_log；結束時把對象名單凍結在 surveys.frozen
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS surveys (
+      id           SERIAL      PRIMARY KEY,
+      title        TEXT        NOT NULL,
+      description  TEXT        NOT NULL DEFAULT '',
+      start_at     TIMESTAMPTZ NOT NULL,
+      end_at       TIMESTAMPTZ NOT NULL,
+      scope        JSONB       NOT NULL DEFAULT '{}',
+      targets      JSONB       NOT NULL DEFAULT '{}',
+      questions    JSONB       NOT NULL DEFAULT '[]',
+      published    BOOLEAN     NOT NULL DEFAULT false,
+      frozen       JSONB,
+      created_by   TEXT        NOT NULL,
+      created_name TEXT        NOT NULL DEFAULT '',
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by   TEXT,
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deleted_by   TEXT,
+      deleted_at   TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS survey_responses (
+      survey_id   INT         NOT NULL,
+      person_key  TEXT        NOT NULL,
+      kind        TEXT        NOT NULL DEFAULT 'long',
+      emp_id      TEXT,
+      emp_no      TEXT,
+      name        TEXT,
+      vendor      TEXT,
+      wh          TEXT,
+      dept        TEXT,
+      grp         TEXT,
+      answers     JSONB       NOT NULL DEFAULT '{}',
+      method      TEXT        NOT NULL DEFAULT 'self',
+      filled_by   TEXT,
+      filled_name TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (survey_id, person_key)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS survey_response_log (
+      id          BIGSERIAL   PRIMARY KEY,
+      survey_id   INT         NOT NULL,
+      person_key  TEXT        NOT NULL,
+      before      JSONB,
+      after       JSONB,
+      method      TEXT,
+      filled_by   TEXT,
+      filled_name TEXT,
+      at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS survey_response_log_idx ON survey_response_log (survey_id, person_key, at)`);
   // 理貨評核操作紀錄：解鎖（含失敗）、修改項目、修改聲明、變更密碼
   await pool.query(`
     CREATE TABLE IF NOT EXISTS review_audit (
@@ -2943,6 +3002,186 @@ async function rosterEmp(emp) {
 async function reviewDisplayName(username) {
   const { rows } = await pool.query('SELECT display_name FROM users WHERE username=$1', [username]);
   return rows[0]?.display_name || username;
+}
+
+// ── 調查（日翊／管理員建立與管理）──────────────────────────
+const SURVEY_TYPES = ['single', 'multi', 'number', 'text'];
+const svClip = (v, n) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n);
+const svList = (v, n, len) => [...new Set((Array.isArray(v) ? v : []).map(x => svClip(x, len)).filter(Boolean))].slice(0, n);
+// 前端送來的調查內容一律在這裡整理與檢查；發布時要求完整
+function cleanSurvey(b, publish) {
+  const title = svClip(b.title, 100);
+  if (!title) return { error: '請填寫標題' };
+  const start = new Date(b.startAt), end = new Date(b.endAt);
+  if (publish && (isNaN(start) || isNaN(end))) return { error: '請設定開始與結束時間' };
+  if (!isNaN(start) && !isNaN(end) && end <= start) return { error: '結束時間要晚於開始時間' };
+  const sc = b.scope || {};
+  const scope = {
+    whs: svList(sc.whs, 20, 50),
+    depts: svList(sc.depts, 50, 60),
+    grps: (Array.isArray(sc.grps) ? sc.grps : []).map(g => ({ dept: svClip(g?.dept, 60), grp: svClip(g?.grp, 60) })).filter(g => g.dept && g.grp).slice(0, 200),
+    areas: svList(sc.areas, 50, 60),
+  };
+  if (publish && !scope.whs.length) return { error: '請選擇發布的倉別' };
+  const targets = { long: b.targets?.long !== false, temp: !!b.targets?.temp };
+  if (!targets.long && !targets.temp) return { error: '請至少勾選一種對象' };
+  const qs = (Array.isArray(b.questions) ? b.questions : []).slice(0, 30).map((q, i) => {
+    const type = SURVEY_TYPES.includes(q?.type) ? q.type : 'single';
+    const out = { id: svClip(q?.id, 20) || `q${i + 1}`, type, title: svClip(q?.title, 200), required: !!q?.required };
+    if (type === 'single' || type === 'multi') out.options = svList(q?.options, 20, 60);
+    if (type === 'number') {
+      out.unit = svClip(q?.unit, 10);
+      for (const k of ['min', 'max']) if (q?.[k] !== '' && q?.[k] != null && Number.isFinite(Number(q[k]))) out[k] = Number(q[k]);
+    }
+    return out;
+  });
+  const ids = new Set();
+  for (const [i, q] of qs.entries()) {
+    if (ids.has(q.id)) q.id = `q${i + 1}_${Date.now() % 100000}`;
+    ids.add(q.id);
+    if (publish && !q.title) return { error: `第 ${i + 1} 題請填寫題目` };
+    if (publish && q.options && q.options.length < 2) return { error: `第 ${i + 1} 題至少要有 2 個選項` };
+    if (q.type === 'number' && q.min != null && q.max != null && q.min > q.max) return { error: `第 ${i + 1} 題最小值不能大於最大值` };
+  }
+  if (publish && !qs.length) return { error: '請至少新增一題' };
+  return { title, description: svClip(b.description, 1000), start: isNaN(start) ? null : start, end: isNaN(end) ? null : end, scope, targets, questions: qs };
+}
+const surveyStatus = (s, now = Date.now()) => s.deleted_at ? 'deleted' : !s.published ? 'draft'
+  : now < new Date(s.start_at).getTime() ? 'upcoming' : now <= new Date(s.end_at).getTime() ? 'open' : 'closed';
+const surveyRow = (s, n = 0) => ({
+  id: s.id, title: s.title, description: s.description, startAt: s.start_at, endAt: s.end_at,
+  scope: s.scope, targets: s.targets, questions: s.questions, published: s.published, status: surveyStatus(s),
+  createdBy: s.created_by, createdName: s.created_name, createdAt: s.created_at, updatedBy: s.updated_by, updatedAt: s.updated_at,
+  deletedBy: s.deleted_by, deletedAt: s.deleted_at, responses: n, frozenTotal: s.frozen?.people?.length ?? null,
+});
+// 日翊只看得到發布範圍全在自己可用倉別內的調查（可用倉別空白＝全部倉別）；管理員不限
+const surveyInScope = (req, s) => {
+  if (req.user.role === 'admin') return true;
+  const allowed = req.user.allowedWarehouses || [];
+  return !allowed.length || (s.scope?.whs || []).every(w => allowed.includes(w));
+};
+const surveyCanManage = (req, s) => req.user.role === 'admin' || s.created_by === req.user.username;
+
+app.get('/api/surveys', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.*, (SELECT COUNT(*)::int FROM survey_responses r WHERE r.survey_id = s.id) AS n FROM surveys s ORDER BY s.start_at DESC, s.id DESC`);
+    res.json({ surveys: rows.filter(s => surveyInScope(req, s)).map(s => surveyRow(s, s.n)), now: new Date().toISOString() });
+  } catch (e) {
+    console.error('surveys list error:', e.message);
+    res.status(500).json({ error: '讀取調查失敗' });
+  }
+});
+app.get('/api/surveys/:id', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT s.*, (SELECT COUNT(*)::int FROM survey_responses r WHERE r.survey_id = s.id) AS n FROM surveys s WHERE id=$1`, [Number(req.params.id) || 0]);
+  if (!rows[0] || !surveyInScope(req, rows[0])) return res.status(404).json({ error: '找不到這份調查' });
+  res.json(surveyRow(rows[0], rows[0].n));
+});
+app.post('/api/surveys', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const publish = !!req.body?.publish;
+  const c = cleanSurvey(req.body ?? {}, publish);
+  if (c.error) return res.status(400).json({ error: c.error });
+  if (!surveyInScope(req, { scope: c.scope })) return res.status(403).json({ error: '發布範圍超出您可用的倉別' });
+  try {
+    const name = await reviewDisplayName(req.user.username);
+    const now = new Date();
+    const { rows } = await pool.query(
+      `INSERT INTO surveys (title, description, start_at, end_at, scope, targets, questions, published, created_by, created_name, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9) RETURNING *`,
+      [c.title, c.description, c.start ?? now, c.end ?? new Date(now.getTime() + 86400000), c.scope, c.targets, JSON.stringify(c.questions), publish, req.user.username, name]);
+    reviewAudit(req.user.username, publish ? 'survey-publish' : 'survey-draft', { id: rows[0].id, title: c.title });
+    res.json(surveyRow(rows[0], 0));
+  } catch (e) {
+    console.error('survey create error:', e.message);
+    res.status(500).json({ error: '建立調查失敗' });
+  }
+});
+// 編輯：建立人或管理員。已有人回覆時，題目、選項、範圍、對象、開始時間都不能改（只能改標題、說明、結束時間）
+app.put('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM surveys WHERE id=$1 FOR UPDATE', [id]);
+    const s = rows[0];
+    if (!s || !surveyInScope(req, s) || s.deleted_at) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這份調查' }); }
+    if (!surveyCanManage(req, s)) { await client.query('ROLLBACK'); return res.status(403).json({ error: `只有建立人（${s.created_name || s.created_by}）或管理員可以修改` }); }
+    const st = surveyStatus(s);
+    if (st === 'closed') { await client.query('ROLLBACK'); return res.status(409).json({ error: '調查已結束，不能再修改' }); }
+    const publish = s.published || !!req.body?.publish;
+    const c = cleanSurvey(req.body ?? {}, publish);
+    if (c.error) { await client.query('ROLLBACK'); return res.status(400).json({ error: c.error }); }
+    if (!surveyInScope(req, { scope: c.scope })) { await client.query('ROLLBACK'); return res.status(403).json({ error: '發布範圍超出您可用的倉別' }); }
+    const { rows: n } = await client.query('SELECT COUNT(*)::int AS n FROM survey_responses WHERE survey_id=$1', [id]);
+    let next = c;
+    if (n[0].n > 0) {
+      // 已有人回覆：題目、選項、範圍、對象、開始時間維持原樣
+      next = { ...c, questions: s.questions, scope: s.scope, targets: s.targets, start: s.start_at };
+    } else if (st === 'open' && c.start && c.start.getTime() !== new Date(s.start_at).getTime() && c.start > new Date()) {
+      // 進行中的調查不能把開始時間往後延到未來（會讓已看到的人突然看不到）
+      next = { ...c, start: s.start_at };
+    }
+    if (next.end && next.start && next.end <= new Date(next.start)) { await client.query('ROLLBACK'); return res.status(400).json({ error: '結束時間要晚於開始時間' }); }
+    const { rows: up } = await client.query(
+      `UPDATE surveys SET title=$2, description=$3, start_at=$4, end_at=$5, scope=$6, targets=$7, questions=$8, published=$9, updated_by=$10, updated_at=NOW()
+        WHERE id=$1 RETURNING *`,
+      [id, next.title, next.description, next.start ?? s.start_at, next.end ?? s.end_at, next.scope, next.targets, JSON.stringify(next.questions), publish, req.user.username]);
+    await client.query('COMMIT');
+    reviewAudit(req.user.username, !s.published && publish ? 'survey-publish' : 'survey-edit', { id, title: next.title, locked: n[0].n > 0 });
+    res.json(surveyRow(up[0], n[0].n));
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('survey update error:', e.message);
+    res.status(500).json({ error: '儲存調查失敗' });
+  } finally { client.release(); }
+});
+// 提前結束（進行中）／延長（設定新的結束時間）：建立人或管理員
+app.post('/api/surveys/:id/end', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  try {
+    const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1', [id]);
+    const s = rows[0];
+    if (!s || !surveyInScope(req, s) || s.deleted_at) return res.status(404).json({ error: '找不到這份調查' });
+    if (!surveyCanManage(req, s)) return res.status(403).json({ error: `只有建立人（${s.created_name || s.created_by}）或管理員可以操作` });
+    if (!s.published) return res.status(409).json({ error: '草稿請直接編輯結束時間' });
+    let end;
+    if (req.body?.now) {
+      if (surveyStatus(s) !== 'open') return res.status(409).json({ error: '只有進行中的調查可以提前結束' });
+      end = new Date();
+    } else {
+      end = new Date(req.body?.endAt);
+      if (isNaN(end)) return res.status(400).json({ error: '結束時間不正確' });
+      if (end <= new Date()) return res.status(400).json({ error: '延長的結束時間要晚於現在' });
+      if (end <= new Date(s.start_at)) return res.status(400).json({ error: '結束時間要晚於開始時間' });
+    }
+    const { rows: up } = await pool.query('UPDATE surveys SET end_at=$2, updated_by=$3, updated_at=NOW() WHERE id=$1 RETURNING *', [id, end, req.user.username]);
+    reviewAudit(req.user.username, req.body?.now ? 'survey-close' : 'survey-extend', { id, endAt: end.toISOString() });
+    res.json(surveyRow(up[0]));
+  } catch (e) {
+    console.error('survey end error:', e.message);
+    res.status(500).json({ error: '更新結束時間失敗' });
+  }
+});
+// 刪除（可救回）／還原：建立人或管理員
+for (const [path, del] of [['delete', true], ['restore', false]]) {
+  app.post(`/api/surveys/:id/${path}`, requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+    const id = Number(req.params.id) || 0;
+    try {
+      const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1', [id]);
+      const s = rows[0];
+      if (!s || !surveyInScope(req, s)) return res.status(404).json({ error: '找不到這份調查' });
+      if (!surveyCanManage(req, s)) return res.status(403).json({ error: `只有建立人（${s.created_name || s.created_by}）或管理員可以${del ? '刪除' : '還原'}` });
+      const { rows: up } = await pool.query(
+        del ? 'UPDATE surveys SET deleted_at=NOW(), deleted_by=$2 WHERE id=$1 RETURNING *' : 'UPDATE surveys SET deleted_at=NULL, deleted_by=NULL WHERE id=$1 RETURNING *',
+        del ? [id, req.user.username] : [id]);
+      reviewAudit(req.user.username, del ? 'survey-delete' : 'survey-restore', { id, title: s.title });
+      res.json(surveyRow(up[0]));
+    } catch (e) {
+      console.error(`survey ${path} error:`, e.message);
+      res.status(500).json({ error: del ? '刪除失敗' : '還原失敗' });
+    }
+  });
 }
 
 // ── 清除舊版理貨評核資料（管理員）────────────────────────

@@ -2570,6 +2570,7 @@ const NAV_ITEMS = [
   { key: 'phoneControl', label: '手機控管',     icon: '📱', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'station',      label: '站區表',       icon: '🗺️', roles: [ROLES.ADMIN, ROLES.AREA, ROLES.VENDOR] },
   { key: 'review',       label: '理貨評核',     icon: '📝', roles: [ROLES.ADMIN, ROLES.AREA] },
+  { key: 'survey',       label: '調查',         icon: '🗳️', roles: [ROLES.ADMIN, ROLES.AREA] },
   // 委外幹部：補簽自己廠商的待簽核約談單（後送簽）與查詢總表；不受分頁權限設定影響
   { key: 'reviewSign',   label: '理貨評核',     icon: '📝', roles: [ROLES.VENDOR], always: true },
   { key: 'selfCheck',    label: '簽到/手機',    icon: '📱', roles: [ROLES.WORKER, ROLES.VENDOR], needsSelfEmp: true },
@@ -17626,6 +17627,356 @@ function ShiftCodeTable() {
 // PERMISSION MANAGEMENT
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// 調查（例如颱風天是否出勤）：日翊建立、發布範圍與題目；委外人員填寫（第 2 批）；結果統計（第 3 批）
+// ─────────────────────────────────────────────
+const SURVEY_STATUS = {
+  open:     ['進行中', 'bg-emerald-50 text-emerald-700 border-emerald-200'],
+  upcoming: ['未開始', 'bg-sky-50 text-sky-700 border-sky-200'],
+  closed:   ['已結束', 'bg-slate-100 text-slate-500 border-slate-200'],
+  draft:    ['草稿',   'bg-amber-50 text-amber-700 border-amber-200'],
+  deleted:  ['已刪除', 'bg-rose-50 text-rose-600 border-rose-200'],
+};
+const SURVEY_TYPE_LABEL = { single: '單選', multi: '複選', number: '數字', text: '文字' };
+const SV_NO_AREA = '（未設定）';
+// 台灣時間 ↔ datetime-local 欄位
+const svToInput = iso => { if (!iso) return ''; const d = new Date(new Date(iso).getTime() + 8 * 3600e3); return d.toISOString().slice(0, 16); };
+const svFromInput = v => (v ? new Date(`${v}:00+08:00`).toISOString() : '');
+const svFmt = iso => { if (!iso) return '—'; const d = new Date(new Date(iso).getTime() + 8 * 3600e3);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+const svLeft = iso => { const ms = new Date(iso).getTime() - Date.now(); if (ms <= 0) return ''; const h = Math.floor(ms / 3600e3);
+  return h >= 24 ? `剩 ${Math.floor(h / 24)} 天 ${h % 24} 小時` : h > 0 ? `剩 ${h} 小時` : `剩 ${Math.max(1, Math.round(ms / 60e3))} 分鐘`; };
+const svEmptyScope = () => ({ whs: [], depts: [], grps: [], areas: [] });
+const svNewQuestion = (type = 'single') => ({ id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, type, title: '',
+  required: type === 'single', options: type === 'single' || type === 'multi' ? ['', ''] : undefined, unit: '' });
+
+/** 人員屬於哪個倉別的哪個課別：長期人員依課別名稱（沒有課別時依廠商），臨時人力依組別 */
+function svDeptOf(p, warehouses, scopeWhs, isTemp) {
+  for (const w of warehouses) {
+    if (scopeWhs && !scopeWhs.includes(w.id)) continue;
+    const d = (w.departments ?? []).find(d => isTemp ? (d.groups ?? []).includes(p.group)
+      : p.dept ? d.name === p.dept : (d.vendors ?? []).includes(p.vendor));
+    if (d) return { wh: w, dept: d };
+  }
+  return null;
+}
+/** 是否在調查的發布範圍內。作業區只篩長期人員，臨時人力不受作業區限制 */
+function svInScope(scope, p, warehouses, isTemp) {
+  if (!scope?.whs?.length) return false;
+  const hit = svDeptOf(p, warehouses, scope.whs, isTemp);
+  if (!hit) return false;
+  if (scope.depts?.length && !scope.depts.includes(hit.dept.name)) return false;
+  const gs = (scope.grps ?? []).filter(g => g.dept === hit.dept.name);
+  if (gs.length && !gs.some(g => g.grp === p.group)) return false;
+  if (!isTemp && scope.areas?.length && !scope.areas.includes(p.workArea || SV_NO_AREA)) return false;
+  return true;
+}
+const svScopeText = (scope, warehouses) => {
+  if (!scope?.whs?.length) return '尚未選倉別';
+  const whs = scope.whs.map(id => warehouses.find(w => w.id === id)?.name ?? id).join('、');
+  return [whs, scope.depts?.length ? scope.depts.join('、') : '全部課別',
+    scope.grps?.length ? scope.grps.map(g => g.grp).join('、') : scope.depts?.length ? '全部組別' : '',
+    scope.areas?.length ? `作業區：${scope.areas.join('、')}` : ''].filter(Boolean).join('／');
+};
+
+function SurveyPage() {
+  const { warehouses, currentUser } = useApp();
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  const [status, setStatus] = useState('open');
+  const [kw, setKw] = useState('');
+  const [editing, setEditing] = useState(null);    // { survey|null, copy?: bool }
+  const [extending, setExtending] = useState(null);
+  const me = currentUser?.username ?? '';
+  const admin = currentUser?.role === ROLES.ADMIN;
+  const load = useCallback(async () => {
+    try { setData(await reviewApi('/api/surveys')); } catch (e) { toast(e.message, 'error'); setData(d => d ?? { surveys: [] }); }
+  }, [toast]);
+  useEffect(() => { load(); }, [load]);
+  const list = data?.surveys ?? [];
+  const countOf = st => list.filter(x => x.status === st).length;
+  const q = kw.trim().toLowerCase();
+  const shown = list.filter(x => x.status === status && (!q || x.title.toLowerCase().includes(q)));
+  const canManage = x => admin || x.createdBy === me;
+  const act = async (x, path, body, msg) => {
+    try { await reviewApi(`/api/surveys/${x.id}/${path}`, { method: 'POST', body }); toast(msg, 'success'); await load(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const btn = (label, onClick, cls = 'border border-slate-300 text-slate-600 bg-white') =>
+    <button key={label} onClick={onClick} className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${cls}`}>{label}</button>;
+
+  if (editing) return <SurveyEditor init={editing} onClose={() => setEditing(null)} onSaved={async st => { setEditing(null); await load(); if (st) setStatus(st); }} />;
+
+  return (
+    <div className="p-6 space-y-4 max-w-6xl">
+      <h2 className="text-xl font-bold text-slate-800">調查</h2>
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-2 flex-wrap">
+        {['open', 'upcoming', 'closed', 'draft', 'deleted'].map(st => (
+          <button key={st} onClick={() => setStatus(st)}
+            className={`px-3 py-1 rounded-full border text-sm ${status === st ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'} ${st === 'deleted' ? 'ml-2' : ''}`}>
+            {SURVEY_STATUS[st][0]} <b>{countOf(st)}</b></button>
+        ))}
+        <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 搜尋標題" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48" />
+        <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">＋ 建立調查</button>
+      </div>
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
+        <table className="w-full text-sm min-w-[52rem]">
+          <thead className="bg-[#F5F2EC] text-xs text-slate-500"><tr>
+            {['操作', '調查', '期間', '發布範圍', '對象', '回覆', '狀態'].map(h => <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {!data && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">讀取中…</td></tr>}
+            {data && shown.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">沒有{SURVEY_STATUS[status][0]}的調查</td></tr>}
+            {shown.map(x => {
+              const m = canManage(x);
+              return (
+                <tr key={x.id} className="border-t border-[#EFEBE3] align-top">
+                  <td className="px-3 py-2"><div className="flex flex-wrap gap-1 w-36">
+                    {x.status === 'deleted' ? (m && btn('還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white')) : <>
+                      {x.status !== 'draft' && btn('結果', () => toast('結果統計將在第 3 批上線', 'info'), 'bg-blue-600 text-white')}
+                      {m && x.status !== 'closed' && btn('編輯', () => setEditing({ survey: x }))}
+                      {m && x.status === 'open' && btn('提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); })}
+                      {m && (x.status === 'open' || x.status === 'upcoming' || x.status === 'closed') && btn('延長', () => setExtending(x))}
+                      {btn('複製', () => setEditing({ survey: x, copy: true }))}
+                      {m && btn('刪除', async () => { if (await askConfirm(`刪除「${x.title}」？\n刪除後會放在「已刪除」，可以還原。`)) act(x, 'delete', {}, '已刪除（可在「已刪除」還原）'); }, 'border border-rose-200 text-rose-600 bg-white')}
+                    </>}
+                  </div></td>
+                  <td className="px-3 py-2"><b className="text-slate-800">{x.title}</b>
+                    <div className="text-xs text-slate-500">{x.questions.length} 題・建立：{x.createdName || x.createdBy}</div></td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">{svFmt(x.startAt)}<br />～ {svFmt(x.endAt)}</td>
+                  <td className="px-3 py-2 text-xs text-slate-600 max-w-[16rem]">{svScopeText(x.scope, warehouses)}</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">{[x.targets?.long && '長期', x.targets?.temp && '臨時'].filter(Boolean).join('＋')}</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap"><b className="text-slate-800">{x.responses}</b> 人回覆</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border ${SURVEY_STATUS[x.status][1]}`}>{SURVEY_STATUS[x.status][0]}</span>
+                    {x.status === 'open' && <div className="text-[11px] text-rose-600 mt-0.5">{svLeft(x.endAt)}</div>}
+                    {x.status === 'deleted' && <div className="text-[11px] text-slate-400 mt-0.5">{x.deletedBy} {svFmt(x.deletedAt)}</div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-500">只列出發布範圍在您可用倉別內的調查；建立人與管理員可以編輯、結束、延長、刪除。</p>
+      {extending && <SurveyExtendModal survey={extending} onClose={() => setExtending(null)}
+        onSave={async endAt => { await act(extending, 'end', { endAt }, '已更新結束時間'); setExtending(null); }} />}
+    </div>
+  );
+}
+
+function SurveyExtendModal({ survey, onClose, onSave }) {
+  const [v, setV] = useState(() => svToInput(new Date(Math.max(Date.now(), new Date(survey.endAt).getTime()) + 86400e3).toISOString()));
+  return (
+    <Modal onClose={onClose} keyboard>
+      <div className="bg-white rounded-xl shadow-xl border border-[#DDD9D0] p-5 w-[360px] space-y-3">
+        <h3 className="font-bold text-slate-800">延長「{survey.title}」</h3>
+        <p className="text-xs text-slate-500">目前結束：{svFmt(survey.endAt)}。已結束的調查延長後會重新開放填寫。</p>
+        <input type="datetime-local" value={v} onChange={e => setV(e.target.value)} className="w-full border border-[#DDD9D0] rounded-lg px-3 py-2 text-[16px]" />
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">取消</button>
+          <button onClick={() => onSave(svFromInput(v))} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg">儲存</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SurveyEditor({ init, onClose, onSaved }) {
+  const { warehouses, employees, extras } = useApp();
+  const toast = useToast();
+  const src = init.survey;
+  const isEdit = !!src && !init.copy;
+  const locked = isEdit && src.responses > 0;          // 已有人回覆：題目、範圍、對象、開始時間不能改
+  const started = isEdit && src.status === 'open';
+  const [f, setF] = useState(() => {
+    // 預設：現在開始、明天這個時間的整點結束
+    const now = new Date(); now.setSeconds(0, 0);
+    const end = new Date(now.getTime() + 24 * 3600e3); end.setMinutes(0, 0, 0); end.setTime(end.getTime() + 3600e3);
+    const base = src ? JSON.parse(JSON.stringify(src)) : { title: '', description: '', scope: svEmptyScope(), targets: { long: true, temp: false }, questions: [svNewQuestion('single')] };
+    if (!isEdit) { base.startAt = now.toISOString(); base.endAt = end.toISOString(); }
+    if (init.copy) { base.title = `${src.title}（複本）`; base.questions = base.questions.map(q => ({ ...q, id: svNewQuestion().id })); }
+    base.scope = { ...svEmptyScope(), ...(base.scope ?? {}) };
+    return base;
+  });
+  const [busy, setBusy] = useState(false);
+  const set = patch => setF(x => ({ ...x, ...patch }));
+  const sc = f.scope;
+  const setScope = patch => set({ scope: { ...sc, ...patch } });
+  const toggle = (list, v) => (list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
+  const selWhs = warehouses.filter(w => sc.whs.includes(w.id));
+  // 取消倉別／課別時，一併拿掉其下的課別、組別、作業區
+  const pickWh = id => {
+    const whs = toggle(sc.whs, id);
+    const deptOk = new Set(warehouses.filter(w => whs.includes(w.id)).flatMap(w => (w.departments ?? []).map(d => d.name)));
+    const depts = sc.depts.filter(d => deptOk.has(d));
+    setScope({ whs, depts, grps: sc.grps.filter(g => depts.includes(g.dept)) });
+  };
+  const pickDept = name => { const depts = toggle(sc.depts, name); setScope({ depts, grps: sc.grps.filter(g => depts.includes(g.dept)) }); };
+  const pickGrp = (dept, grp) => {
+    const has = sc.grps.some(g => g.dept === dept && g.grp === grp);
+    setScope({ grps: has ? sc.grps.filter(g => !(g.dept === dept && g.grp === grp)) : [...sc.grps, { dept, grp }] });
+  };
+  // 今天在職的長期人員、今天的臨時人力
+  const now = new Date();
+  const dk = dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const longAll = useMemo(() => employees.filter(e => !isLeaver(e) && e.vendor && activeOn(e, dk)), [employees, dk]);
+  // 作業區只列出所選倉別實際有人使用的
+  const areaOptions = useMemo(() => {
+    const set = new Set();
+    for (const e of longAll) if (svDeptOf(e, warehouses, sc.whs, false)) set.add(e.workArea || SV_NO_AREA);
+    return [...set].sort((a, b) => (a === SV_NO_AREA) - (b === SV_NO_AREA) || a.localeCompare(b, 'zh-Hant'));
+  }, [longAll, warehouses, sc.whs]);
+  useEffect(() => { if (sc.areas.some(a => !areaOptions.includes(a))) setScope({ areas: sc.areas.filter(a => areaOptions.includes(a)) }); }, [areaOptions]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const longIn = f.targets.long ? longAll.filter(e => svInScope(sc, e, warehouses, false)) : [];
+  const tempIn = f.targets.temp ? (extras[todayStr] ?? []).filter(e => svInScope(sc, e, warehouses, true)) : [];
+  const byVendor = Object.entries(longIn.reduce((m, e) => ({ ...m, [e.vendor]: (m[e.vendor] ?? 0) + 1 }), {})).sort((a, b) => b[1] - a[1]);
+
+  const setQ = (i, patch) => set({ questions: f.questions.map((q, j) => (j === i ? { ...q, ...patch } : q)) });
+  const moveQ = (i, d) => { const qs = [...f.questions]; const j = i + d; if (j < 0 || j >= qs.length) return; [qs[i], qs[j]] = [qs[j], qs[i]]; set({ questions: qs }); };
+  const save = async publish => {
+    setBusy(true);
+    try {
+      const body = { ...f, publish };
+      const r = isEdit ? await reviewApi(`/api/surveys/${src.id}`, { method: 'PUT', body }) : await reviewApi('/api/surveys', { method: 'POST', body });
+      toast(publish ? (isEdit && src.published ? '已儲存' : '已發布') : '已存草稿', 'success');
+      onSaved(r.status);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const I = 'border border-[#DDD9D0] rounded-lg px-3 py-2 text-sm';
+  const chip = (on, label, onClick, disabled) => (
+    <button key={label} type="button" onClick={onClick} disabled={disabled}
+      className={`px-3 py-1 rounded-full border text-sm ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'} disabled:opacity-60 disabled:cursor-not-allowed`}>{label}</button>
+  );
+  const pill = t => <h3 className="font-semibold text-slate-800 w-fit bg-[#E4E4E4] rounded-full px-4 py-1">{t}</h3>;
+
+  return (
+    <div className="p-6 space-y-4 max-w-5xl">
+      <div className="flex items-center gap-3">
+        <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm text-slate-600">← 返回</button>
+        <h2 className="text-xl font-bold text-slate-800">{isEdit ? '編輯調查' : init.copy ? '複製調查' : '建立調查'}</h2>
+        {isEdit && <span className={`text-xs px-2 py-0.5 rounded-full border ${SURVEY_STATUS[src.status][1]}`}>{SURVEY_STATUS[src.status][0]}</span>}
+      </div>
+      {locked && <div className="text-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-amber-800">已有 {src.responses} 人回覆：題目、選項、發布範圍、對象與開始時間不能再修改；標題、說明、結束時間仍可調整。</div>}
+      <div className="bg-white border border-[#DDD9D0] rounded-2xl divide-y divide-[#EFEBE3]">
+        <section className="p-5 space-y-3">
+          {pill('基本資料')}
+          <div className="grid sm:grid-cols-[6rem_1fr] gap-x-3 gap-y-2 items-center text-sm">
+            <span className="text-slate-600">標題</span>
+            <input value={f.title} maxLength={100} onChange={e => set({ title: e.target.value })} placeholder="例如：10/24 颱風天出勤調查" className={I} />
+            <span className="text-slate-600 self-start pt-2">說明</span>
+            <textarea rows={2} value={f.description} maxLength={1000} onChange={e => set({ description: e.target.value })} placeholder="給填寫的人看的說明" className={I} />
+            <span className="text-slate-600">期間</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="datetime-local" value={svToInput(f.startAt)} disabled={locked} onChange={e => set({ startAt: svFromInput(e.target.value) })} className={`${I} disabled:bg-slate-50`} />
+              <span className="text-slate-400">～</span>
+              <input type="datetime-local" value={svToInput(f.endAt)} onChange={e => set({ endAt: svFromInput(e.target.value) })} className={I} />
+              {started && !locked && <span className="text-xs text-slate-400">進行中，開始時間不能延後</span>}
+            </div>
+          </div>
+        </section>
+
+        <section className="p-5 space-y-3 text-sm">
+          {pill('發布範圍（皆可複選）')}
+          <div className="flex items-start gap-2"><span className="w-14 shrink-0 text-slate-600 pt-1">倉別</span>
+            <div className="flex flex-wrap gap-2">{warehouses.map(w => chip(sc.whs.includes(w.id), w.name, () => pickWh(w.id), locked))}</div></div>
+          <div className="flex items-start gap-2"><span className="w-14 shrink-0 text-slate-600 pt-1">課別</span>
+            <div className="flex-1 space-y-1.5">
+              {!selWhs.length ? <div className="text-xs text-slate-400 pt-1.5">請先選倉別</div> : <>
+                {selWhs.map(w => (
+                  <div key={w.id} className="flex items-center gap-2 flex-wrap">
+                    {selWhs.length > 1 && <span className="text-xs text-slate-500 w-14">{w.name}</span>}
+                    {(w.departments ?? []).map(d => chip(sc.depts.includes(d.name), d.name, () => pickDept(d.name), locked))}
+                  </div>))}
+                <div className="text-xs text-slate-400">不選＝所選倉別的全部課別</div>
+              </>}
+            </div></div>
+          <div className="flex items-start gap-2"><span className="w-14 shrink-0 text-slate-600 pt-1">組別</span>
+            <div className="flex-1 space-y-1.5">
+              {!sc.depts.length ? <div className="text-xs text-slate-400 pt-1.5">{selWhs.length ? '選了課別才會列出組別；不選課別＝所選倉別全部人員' : '請先選倉別'}</div> : <>
+                {selWhs.flatMap(w => (w.departments ?? []).filter(d => sc.depts.includes(d.name)).map(d => {
+                  const gs = d.groups ?? [];
+                  const all = gs.length > 0 && gs.every(g => sc.grps.some(x => x.dept === d.name && x.grp === g));
+                  return (
+                    <div key={w.id + d.name} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-slate-500 w-24 shrink-0 truncate" title={d.name}>{d.name}</span>
+                      {gs.map(g => chip(sc.grps.some(x => x.dept === d.name && x.grp === g), g, () => pickGrp(d.name, g), locked))}
+                      {!locked && gs.length > 0 && <button type="button" className="text-xs text-blue-600" onClick={() => setScope({ grps: all
+                        ? sc.grps.filter(x => x.dept !== d.name) : [...sc.grps.filter(x => x.dept !== d.name), ...gs.map(g => ({ dept: d.name, grp: g }))] })}>{all ? '全不選' : '全選'}</button>}
+                    </div>);
+                }))}
+                <div className="text-xs text-slate-400">不選＝所選課別的全部組別</div>
+              </>}
+            </div></div>
+          <div className="flex items-start gap-2"><span className="w-14 shrink-0 text-slate-600 pt-1">作業區</span>
+            <div className="flex-1 space-y-1">
+              <div className="flex flex-wrap gap-2">{areaOptions.length ? areaOptions.map(a => chip(sc.areas.includes(a), a, () => setScope({ areas: toggle(sc.areas, a) }), locked))
+                : <span className="text-xs text-slate-400 pt-1.5">{sc.whs.length ? '所選倉別沒有人員' : '請先選倉別'}</span>}</div>
+              <div className="text-xs text-slate-400">只列出所選倉別有人使用的作業區；不選＝不限。作業區只篩長期人員，臨時人力依倉別／課別／組別</div>
+            </div></div>
+          <div className="flex items-center gap-4 flex-wrap"><span className="w-14 shrink-0 text-slate-600">對象</span>
+            <label className="flex items-center gap-1.5"><input type="checkbox" disabled={locked} checked={f.targets.long} onChange={e => set({ targets: { ...f.targets, long: e.target.checked } })} /> 長期委外人員（人員清冊）</label>
+            <label className="flex items-center gap-1.5"><input type="checkbox" disabled={locked} checked={f.targets.temp} onChange={e => set({ targets: { ...f.targets, temp: e.target.checked } })} /> 臨時人力（點名表當日名單）</label>
+          </div>
+          <div className="rounded-lg bg-teal-50 border border-teal-200 px-3 py-2 text-teal-800">
+            範圍：{svScopeText(sc, warehouses)}
+            <br />目前符合條件：長期 <b>{longIn.length}</b> 人{byVendor.length > 0 && `（${byVendor.map(([v, n]) => `${v} ${n}`).join('・')}）`}
+            {f.targets.temp && <>＋ 今天的臨時人力 <b>{tempIn.length}</b> 人（調查期間依每天點名表）</>}
+          </div>
+        </section>
+
+        <section className="p-5 space-y-3 text-sm">
+          <div className="flex items-center gap-2">{pill('調查內容')}<span className="text-xs text-slate-500">題型：單選、複選、數字、文字；可設必填、調整順序</span></div>
+          {f.questions.map((q, i) => (
+            <div key={q.id} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50/50">
+              <div className="flex items-center gap-2 flex-wrap">
+                <b className="text-slate-500 w-6">{i + 1}.</b>
+                <input value={q.title} maxLength={200} disabled={locked} onChange={e => setQ(i, { title: e.target.value })} placeholder="題目" className={`${I} flex-1 min-w-[14rem] bg-white disabled:bg-slate-50`} />
+                <select value={q.type} disabled={locked} onChange={e => { const t = e.target.value; setQ(i, { type: t, options: t === 'single' || t === 'multi' ? (q.options?.length ? q.options : ['', '']) : undefined }); }}
+                  className="border border-[#DDD9D0] rounded-lg px-2 py-2 bg-white">{Object.entries(SURVEY_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+                <label className="text-xs flex items-center gap-1"><input type="checkbox" disabled={locked} checked={!!q.required} onChange={e => setQ(i, { required: e.target.checked })} /> 必填</label>
+                {!locked && <span className="flex items-center gap-1 text-slate-500">
+                  <button type="button" title="上移" onClick={() => moveQ(i, -1)} className="px-1.5 hover:text-blue-600">↑</button>
+                  <button type="button" title="下移" onClick={() => moveQ(i, 1)} className="px-1.5 hover:text-blue-600">↓</button>
+                  <button type="button" title="刪除這題" onClick={() => set({ questions: f.questions.filter((_, j) => j !== i) })} className="px-1.5 hover:text-rose-600">🗑</button></span>}
+              </div>
+              {(q.type === 'single' || q.type === 'multi') && (
+                <div className="pl-8 flex items-center gap-2 flex-wrap">
+                  {(q.options ?? []).map((o, k) => (
+                    <span key={k} className="flex items-center gap-1 border border-slate-200 rounded-lg bg-white pl-2">
+                      <span className="text-slate-400">{q.type === 'single' ? '○' : '☐'}</span>
+                      <input value={o} maxLength={60} disabled={locked} onChange={e => setQ(i, { options: q.options.map((x, j) => (j === k ? e.target.value : x)) })} placeholder={`選項 ${k + 1}`} className="py-1 w-32 outline-none bg-transparent" />
+                      {!locked && <button type="button" onClick={() => setQ(i, { options: q.options.filter((_, j) => j !== k) })} className="px-1.5 text-slate-400 hover:text-rose-600">✕</button>}
+                    </span>))}
+                  {!locked && (q.options ?? []).length < 20 && <button type="button" onClick={() => setQ(i, { options: [...(q.options ?? []), ''] })} className="text-xs text-blue-600">＋ 選項</button>}
+                </div>)}
+              {q.type === 'number' && (
+                <div className="pl-8 flex items-center gap-2 flex-wrap text-xs text-slate-600">
+                  單位 <input value={q.unit ?? ''} maxLength={10} disabled={locked} onChange={e => setQ(i, { unit: e.target.value })} placeholder="例如：分鐘" className="border border-[#DDD9D0] rounded px-2 py-1 w-24 bg-white" />
+                  最小 <input type="number" value={q.min ?? ''} disabled={locked} onChange={e => setQ(i, { min: e.target.value })} className="border border-[#DDD9D0] rounded px-2 py-1 w-20 bg-white" />
+                  最大 <input type="number" value={q.max ?? ''} disabled={locked} onChange={e => setQ(i, { max: e.target.value })} className="border border-[#DDD9D0] rounded px-2 py-1 w-20 bg-white" />
+                  <span className="text-slate-400">（可空白）</span>
+                </div>)}
+              {q.type === 'text' && <div className="pl-8 text-xs text-slate-400">回覆者自由填寫，最多 200 字</div>}
+            </div>
+          ))}
+          {!locked && f.questions.length < 30 && <button type="button" onClick={() => set({ questions: [...f.questions, svNewQuestion('single')] })}
+            className="px-3 py-1.5 rounded-lg border border-dashed border-slate-400 text-slate-600 text-sm">＋ 新增題目</button>}
+        </section>
+
+        <div className="p-4 flex items-center gap-2 bg-slate-50 rounded-b-2xl flex-wrap">
+          <span className="text-xs text-slate-500">已有人回覆後，題目與選項不能再改；說明與結束時間仍可調整</span>
+          {!(isEdit && src.published) && <button disabled={busy} onClick={() => save(false)} className="ml-auto px-4 py-2 rounded-lg border text-sm bg-white disabled:opacity-50">存草稿</button>}
+          <button disabled={busy} onClick={() => save(true)} className={`${isEdit && src.published ? 'ml-auto' : ''} px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50`}>
+            {busy ? '處理中…' : isEdit && src.published ? '儲存' : '發布'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 帳號姓名：點 ✏️ 就地修改，Enter 或「儲存」送出，Esc 或「取消」放棄 */
 function EditableName({ value, onSave, saving }) {
   const [edit, setEdit] = useState(false);
@@ -20115,6 +20466,7 @@ export default function App() {
     home:       <WorkerHome onNavigate={setCurrentPage} />,
     review:     <ReviewPage />,
     reviewSign: <ReviewVendorSign />,
+    survey:     <SurveyPage />,
   };
 
   if (!currentUser) {
