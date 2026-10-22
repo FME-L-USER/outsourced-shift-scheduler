@@ -17730,14 +17730,17 @@ function SurveyPage() {
   return (
     <div className="p-6 space-y-4 max-w-6xl">
       <h2 className="text-xl font-bold text-slate-800">調查</h2>
-      <div className="bg-white border border-[#DDD9D0] rounded-2xl px-4 py-3 flex items-center gap-2 flex-wrap">
+      <div className="flex items-end gap-1 border-b border-[#DDD9D0] flex-wrap">
         {['open', 'upcoming', 'closed', 'draft', 'deleted'].map(st => (
           <button key={st} onClick={() => setStatus(st)}
-            className={`px-5 py-2 rounded-full border text-[16px] font-semibold ${status === st ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'} ${st === 'deleted' ? 'ml-2' : ''}`}>
-            {SURVEY_STATUS[st][0]} <b>{countOf(st)}</b></button>
+            className={`px-5 py-2.5 rounded-t-lg text-[16px] whitespace-nowrap ${status === st ? '-mb-px border-b-2 border-blue-600 text-blue-700 font-bold bg-white' : 'text-slate-500 font-semibold hover:text-blue-600'} ${st === 'deleted' ? 'ml-3' : ''}`}>
+            {SURVEY_STATUS[st][0]}
+            <span className={`ml-1.5 px-2 py-0.5 rounded-full text-xs ${status === st ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{countOf(st)}</span></button>
         ))}
-        <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 搜尋標題" className="ml-auto border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48" />
-        <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">＋ 建立調查</button>
+        <div className="ml-auto flex items-center gap-2 pb-2">
+          <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 搜尋標題" className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48 bg-white" />
+          <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold whitespace-nowrap">＋ 建立調查</button>
+        </div>
       </div>
       <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
         <table className="w-full text-sm min-w-[44rem]">
