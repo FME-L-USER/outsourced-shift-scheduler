@@ -17755,7 +17755,7 @@ function SurveyPage() {
               // 常用的放按鈕，其餘收進「⋯」
               const main = x.status === 'deleted' ? (m ? [['還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white']] : [])
                 : x.status === 'draft' ? (m ? [['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']] : [])
-                : [x.status !== 'upcoming' && ['結果', () => setResults(x.id), 'bg-blue-600 text-white'],
+                : [x.status !== 'upcoming' && ['查看', () => setResults(x.id), 'bg-blue-600 text-white'],
                    x.status === 'open' && ['代填', () => setProxy(x.id), 'bg-amber-500 text-white'],
                    x.status === 'upcoming' && m && ['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']].filter(Boolean);
               const more = x.status === 'deleted' ? [] : [
@@ -18005,7 +18005,7 @@ function SurveyFillPage() {
       <span className="text-sm text-slate-600 whitespace-nowrap">已回覆 <b>{x.responded}</b> / {x.total}</span>
       {x.status === 'open' && x.total - x.responded > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-xs whitespace-nowrap">未回覆 {x.total - x.responded}</span>}
       {x.status === 'open' && <button onClick={() => setSel(x.id)} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-semibold">代填</button>}
-      {x.canResults && <button onClick={() => setRes(x.id)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">結果</button>}
+      {x.canResults && <button onClick={() => setRes(x.id)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold">查看</button>}
     </div>
   );
   return (
