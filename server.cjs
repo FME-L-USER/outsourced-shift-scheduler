@@ -1301,9 +1301,9 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const sets = [], vals = [];
   if (role               !== undefined) { vals.push(role);               sets.push(`role=$${vals.length}`); }
   if (approved           !== undefined) { vals.push(approved);           sets.push(`approved=$${vals.length}`); }
-  if (page_perms         !== undefined) { vals.push(page_perms);         sets.push(`page_perms=$${vals.length}`); }
-  if (fn_perms           !== undefined) { vals.push(fn_perms);           sets.push(`fn_perms=$${vals.length}`); }
   const strList = v => (Array.isArray(v) ? v : []).map(x => String(x ?? '').trim()).filter(Boolean).slice(0, 50);
+  if (page_perms         !== undefined) { vals.push(strList(page_perms));  sets.push(`page_perms=$${vals.length}`); }
+  if (fn_perms           !== undefined) { vals.push(strList(fn_perms));    sets.push(`fn_perms=$${vals.length}`); }
   if (allowed_warehouses !== undefined) { vals.push(strList(allowed_warehouses)); sets.push(`allowed_warehouses=$${vals.length}`); }
   if (vendors           !== undefined) { vals.push(strList(vendors));            sets.push(`vendors=$${vals.length}`); }
   if (mgr_level          !== undefined) { vals.push(mgr_level);          sets.push(`mgr_level=$${vals.length}`); }
@@ -3064,8 +3064,31 @@ const surveyInScope = (req, s) => {
   return !allowed.length || (s.scope?.whs || []).every(w => allowed.includes(w));
 };
 const surveyCanManage = (req, s) => req.user.role === 'admin' || s.created_by === req.user.username;
+// 日翊的調查權限：分頁權限有「調查」（未設定＝預設全開）才能進入；
+// 功能權限預設開放，fn_perms 記錄被關閉的項目（deny:surveyManage／deny:surveyResults／deny:surveyFill）。
+// 每次從資料庫讀取，管理員調整後不必等對方重新登入。
+async function surveyStaffPerms(req) {
+  if (req.user.role === 'admin') return { page: true, manage: true, results: true, fill: true };
+  if (req.user.role !== 'area') return null;
+  const { rows } = await pool.query('SELECT page_perms, fn_perms FROM users WHERE username=$1', [req.user.username]);
+  const pp = rows[0]?.page_perms ?? [], deny = new Set(rows[0]?.fn_perms ?? []);
+  const page = !pp.length || pp.includes('survey');
+  return { page, manage: page && !deny.has('deny:surveyManage'), results: page && !deny.has('deny:surveyResults'), fill: page && !deny.has('deny:surveyFill') };
+}
+const SV_PERM_MSG = { page: '您沒有「調查」分頁的權限', manage: '您沒有建立／編輯調查的權限', results: '您沒有查看調查結果的權限', fill: '您沒有代填調查的權限' };
+const requireSurveyPerm = kind => async (req, res, next) => {
+  try {
+    const pm = await surveyStaffPerms(req);
+    if (!pm?.[kind]) return res.status(403).json({ error: SV_PERM_MSG[kind] });
+    req.svPerms = pm;
+    next();
+  } catch (e) {
+    console.error('survey perms error:', e.message);
+    res.status(500).json({ error: '讀取權限失敗' });
+  }
+};
 
-app.get('/api/surveys', requireAuth, requireManagerOrAdmin, async (req, res) => {
+app.get('/api/surveys', requireAuth, requireManagerOrAdmin, requireSurveyPerm('page'), async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT s.*, (SELECT COUNT(*)::int FROM survey_responses r WHERE r.survey_id = s.id) AS n FROM surveys s ORDER BY s.start_at DESC, s.id DESC`);
@@ -3074,19 +3097,20 @@ app.get('/api/surveys', requireAuth, requireManagerOrAdmin, async (req, res) => 
       const f = !x.frozen && surveyStatus(x) === 'closed' ? await surveyEnsureFrozen(x) : x;
       out.push(surveyRow(f, x.n));
     }
-    res.json({ surveys: out, now: new Date().toISOString() });
+    const { manage, results, fill } = req.svPerms;
+    res.json({ surveys: out, now: new Date().toISOString(), perms: { manage, results, fill } });
   } catch (e) {
     console.error('surveys list error:', e.message);
     res.status(500).json({ error: '讀取調查失敗' });
   }
 });
-app.get('/api/surveys/:id', requireAuth, requireManagerOrAdmin, async (req, res) => {
+app.get('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireSurveyPerm('page'), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT s.*, (SELECT COUNT(*)::int FROM survey_responses r WHERE r.survey_id = s.id) AS n FROM surveys s WHERE id=$1`, [Number(req.params.id) || 0]);
   if (!rows[0] || !surveyInScope(req, rows[0])) return res.status(404).json({ error: '找不到這份調查' });
   res.json(surveyRow(rows[0], rows[0].n));
 });
-app.post('/api/surveys', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+app.post('/api/surveys', requireAuth, requireManagerOrAdmin, requireClientVersion, requireSurveyPerm('manage'), async (req, res) => {
   const publish = !!req.body?.publish;
   const c = cleanSurvey(req.body ?? {}, publish);
   if (c.error) return res.status(400).json({ error: c.error });
@@ -3106,7 +3130,7 @@ app.post('/api/surveys', requireAuth, requireManagerOrAdmin, requireClientVersio
   }
 });
 // 編輯：建立人或管理員。已有人回覆時，題目、選項、範圍、對象、開始時間都不能改（只能改標題、說明、結束時間）
-app.put('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+app.put('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireClientVersion, requireSurveyPerm('manage'), async (req, res) => {
   const id = Number(req.params.id) || 0;
   const client = await pool.connect();
   try {
@@ -3145,7 +3169,7 @@ app.put('/api/surveys/:id', requireAuth, requireManagerOrAdmin, requireClientVer
   } finally { client.release(); }
 });
 // 提前結束（進行中）／延長（設定新的結束時間）：建立人或管理員
-app.post('/api/surveys/:id/end', requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+app.post('/api/surveys/:id/end', requireAuth, requireManagerOrAdmin, requireClientVersion, requireSurveyPerm('manage'), async (req, res) => {
   const id = Number(req.params.id) || 0;
   try {
     const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1', [id]);
@@ -3176,7 +3200,7 @@ app.post('/api/surveys/:id/end', requireAuth, requireManagerOrAdmin, requireClie
 });
 // 刪除（可救回）／還原：建立人或管理員
 for (const [path, del] of [['delete', true], ['restore', false]]) {
-  app.post(`/api/surveys/:id/${path}`, requireAuth, requireManagerOrAdmin, requireClientVersion, async (req, res) => {
+  app.post(`/api/surveys/:id/${path}`, requireAuth, requireManagerOrAdmin, requireClientVersion, requireSurveyPerm('manage'), async (req, res) => {
     const id = Number(req.params.id) || 0;
     try {
       const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1', [id]);
@@ -3344,6 +3368,7 @@ app.get('/api/survey-fill/surveys', requireAuth, async (req, res) => {
     for (const x of list) rows.push(await surveyEnsureFrozen(x));
     const out = [];
     const isVendor = req.user.role === 'vendor';
+    if (!isVendor && !(await surveyStaffPerms(req))?.fill) return res.json({ surveys: [] });
     for (const s of rows) {
       if (isVendor && !s.vendor_results && surveyStatus(s) !== 'open') continue;
       const fs = await surveyFillScope(req, s);
@@ -3366,6 +3391,7 @@ app.get('/api/survey-fill/surveys/:id', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM surveys WHERE id=$1 AND deleted_at IS NULL AND published', [Number(req.params.id) || 0]);
     const s = rows[0];
+    if (req.user.role !== 'vendor' && !(await surveyStaffPerms(req))?.fill) return res.status(403).json({ error: SV_PERM_MSG.fill });
     const fs = s && await surveyFillScope(req, s);
     if (!fs) return res.status(404).json({ error: '找不到這份調查' });
     const people = (await surveyTargets(s)).filter(p => svCanFill(fs, p));
@@ -3403,6 +3429,7 @@ app.get('/api/surveys/:id/results', requireAuth, async (req, res) => {
     let s = rows[0];
     if (!s || (role !== 'vendor' && !surveyInScope(req, s))) return res.status(404).json({ error: '找不到這份調查' });
     if (role === 'vendor' && !s.vendor_results) return res.status(403).json({ error: '這份調查沒有開放廠商查看結果' });
+    if (role !== 'vendor' && !(await surveyStaffPerms(req))?.results) return res.status(403).json({ error: SV_PERM_MSG.results });
     s = await surveyEnsureFrozen(s);
     const vend = role === 'vendor' ? (await reviewVendorScope(req)).set : null;
     const mine = p => !vend || vend.has(svNorm(p.vendor));
@@ -3417,7 +3444,7 @@ app.get('/api/surveys/:id/results', requireAuth, async (req, res) => {
     }
     const byKey = new Map(rs.map(r => [r.person_key, r]));
     const { rows: logs } = await pool.query('SELECT * FROM survey_response_log WHERE survey_id=$1 ORDER BY at', [s.id]);
-    const fs = surveyStatus(s) === 'open' ? await surveyFillScope(req, s) : null;
+    const fs = surveyStatus(s) === 'open' && (role === 'vendor' || (await surveyStaffPerms(req))?.fill) ? await surveyFillScope(req, s) : null;
     res.json({
       survey: surveyRow(s, rs.length), frozenAt: s.frozen?.at ?? null,
       people: people.map(p => ({ ...p, response: svResp(byKey.get(p.key)), canFill: !!fs && svCanFill(fs, p) })),
@@ -3439,6 +3466,8 @@ app.post('/api/survey-fill/surveys/:id/respond', requireAuth, requireClientVersi
     if (!s || s.deleted_at || !s.published) return res.status(404).json({ error: '找不到這份調查' });
     if (surveyStatus(s) !== 'open') return res.status(409).json({ error: surveyStatus(s) === 'closed' ? '調查已結束，不能再填寫' : '調查還沒開始' });
     const fs = await surveyFillScope(req, s);
+    if (['admin', 'area'].includes(req.user.role) && !req.body?.kiosk && !(fs?.self && personKey === fs.self)
+        && !(await surveyStaffPerms(req))?.fill) return res.status(403).json({ error: SV_PERM_MSG.fill });
     const p = (await surveyTargets(s)).find(x => x.key === personKey);
     if (!p) return res.status(404).json({ error: '這位人員不在調查對象內' });
     if (!svCanFill(fs, p)) return res.status(403).json({ error: '您不能替這位人員填寫' });

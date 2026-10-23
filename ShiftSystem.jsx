@@ -2658,6 +2658,9 @@ function buildPermsFromPagePerms(role, pagePerms, allowedWarehouses) {
   return perms;
 }
 
+// 調查的功能權限（日翊）；存在 fn_perms，記錄的是被關閉的項目
+const SURVEY_FN_OPTIONS = [['surveyManage', '建立／編輯調查'], ['surveyResults', '查看結果'], ['surveyFill', '代填']];
+
 // 可供日翊員工帳號設定的分頁（即 area 角色在選單中看得到的項目）
 const STAFF_PAGE_OPTIONS = () => NAV_ITEMS.filter(n => n.roles.includes(ROLES.AREA));
 
@@ -17715,7 +17718,9 @@ function SurveyPage() {
   const countOf = st => list.filter(x => x.status === st).length;
   const q = kw.trim().toLowerCase();
   const shown = list.filter(x => x.status === status && (!q || x.title.toLowerCase().includes(q)));
-  const canManage = x => admin || x.createdBy === me;
+  // 權限以伺服器為準（帳號與權限 → 分頁權限 → 調查功能）
+  const pm = data?.perms ?? { manage: false, results: false, fill: false };
+  const canManage = x => pm.manage && (admin || x.createdBy === me);
   const act = async (x, path, body, msg) => {
     try { await reviewApi(`/api/surveys/${x.id}/${path}`, { method: 'POST', body }); toast(msg, 'success'); await load(); }
     catch (e) { toast(e.message, 'error'); }
@@ -17739,7 +17744,7 @@ function SurveyPage() {
         ))}
         <div className="ml-auto flex items-center gap-2 pb-2">
           <input value={kw} onChange={e => setKw(e.target.value)} placeholder="🔍 搜尋標題" className="border border-[#DDD9D0] rounded-lg px-3 py-1.5 text-sm w-48 bg-white" />
-          <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold whitespace-nowrap">＋ 建立調查</button>
+          {pm.manage && <button onClick={() => setEditing({ survey: null })} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold whitespace-nowrap">＋ 建立調查</button>}
         </div>
       </div>
       <div className="bg-white border border-[#DDD9D0] rounded-2xl overflow-x-auto">
@@ -17755,14 +17760,14 @@ function SurveyPage() {
               // 常用的放按鈕，其餘收進「⋯」
               const main = x.status === 'deleted' ? (m ? [['還原', () => act(x, 'restore', {}, '已還原'), 'bg-blue-600 text-white']] : [])
                 : x.status === 'draft' ? (m ? [['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']] : [])
-                : [x.status !== 'upcoming' && ['查看', () => setResults(x.id), 'bg-blue-600 text-white'],
-                   x.status === 'open' && ['代填', () => setProxy(x.id), 'bg-amber-500 text-white'],
+                : [pm.results && x.status !== 'upcoming' && ['查看', () => setResults(x.id), 'bg-blue-600 text-white'],
+                   pm.fill && x.status === 'open' && ['代填', () => setProxy(x.id), 'bg-amber-500 text-white'],
                    x.status === 'upcoming' && m && ['編輯', () => setEditing({ survey: x }), 'bg-blue-600 text-white']].filter(Boolean);
               const more = x.status === 'deleted' ? [] : [
                 m && x.status === 'open' && ['編輯', () => setEditing({ survey: x })],
                 m && x.status === 'open' && ['提前結束', async () => { if (await askConfirm(`提前結束「${x.title}」？\n結束後就不能再填寫或修改回覆。`)) act(x, 'end', { now: true }, '已結束'); }],
                 m && x.status !== 'draft' && ['延長', () => setExtending(x)],
-                ['複製', () => setEditing({ survey: x, copy: true })],
+                pm.manage && ['複製', () => setEditing({ survey: x, copy: true })],
                 m && ['刪除', async () => { if (await askConfirm(`刪除「${x.title}」？\n刪除後會放在「已刪除」，可以還原。`)) act(x, 'delete', {}, '已刪除（可在「已刪除」還原）'); }, true],
               ].filter(Boolean);
               const sameDay = svToInput(x.startAt).slice(0, 10) === svToInput(x.endAt).slice(0, 10);
@@ -18780,6 +18785,8 @@ function AccountManagement() {
 
   // 日翊員工帳號：設定可看哪些分頁（存入 DB 的 page_perms）
   const [savingPermFor, setSavingPermFor] = useState(null);
+  const [batchPage, setBatchPage] = useState('survey');
+  const [batchBusy, setBatchBusy] = useState(false);
   const [permOpenFor, setPermOpenFor] = useState(null);
   const updateApiUserPages = async (userId, newPages) => {
     const token = localStorage.getItem(JWT_KEY);
@@ -18803,6 +18810,66 @@ function AccountManagement() {
     } finally {
       setSavingPermFor(null);
     }
+  };
+
+  // 調查功能權限：fn_perms 記錄被關閉的項目（預設全部開放）
+  const updateApiUserFn = async (u, key, on) => {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    const deny = `deny:${key}`;
+    const cur = u.fn_perms ?? [];
+    const next = on ? cur.filter(k => k !== deny) : [...new Set([...cur, deny])];
+    setSavingPermFor(u.id);
+    try {
+      const r = await fetch(`/api/users/${u.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ fn_perms: next }),
+      });
+      if (!r.ok) throw new Error();
+      const updated = await r.json();
+      setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
+      toast('功能權限已更新：' + updated.username, 'success');
+    } catch {
+      toast('更新失敗', 'error');
+    } finally {
+      setSavingPermFor(null);
+    }
+  };
+
+  // 批次：目前列出的日翊帳號一起開啟／關閉某個分頁
+  const batchSetPage = async (key, on) => {
+    const label = STAFF_PAGE_OPTIONS().find(n => n.key === key)?.label ?? key;
+    const targets = staffApiUsers.filter(u => u.role !== ROLES.ADMIN);
+    const changes = targets.map(u => {
+      const cur = (u.page_perms?.length ?? 0) > 0 ? u.page_perms : defaultStaffPageKeys(u.allowedWarehouses);
+      const next = on ? [...new Set([...cur, key])] : cur.filter(k => k !== key);
+      return { u, cur, next };
+    }).filter(c => c.next.length !== c.cur.length);
+    // 全部不勾＝還原預設（全開），關到一頁不剩的帳號略過
+    const skip = changes.filter(c => !c.next.length);
+    const todo = changes.filter(c => c.next.length);
+    if (!todo.length) { toast(skip.length ? `「${label}」是這些帳號僅剩的分頁，不能全部關閉` : `目前列出的帳號都已${on ? '開啟' : '關閉'}「${label}」`, 'info'); return; }
+    if (!await askConfirm(`將目前列出的 ${todo.length} 個日翊帳號${on ? '開啟' : '關閉'}「${label}」分頁？${skip.length ? `\n（另有 ${skip.length} 個帳號只剩這一頁，不會關閉）` : ''}\n對方重新整理或重新登入後生效。`)) return;
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) return;
+    setBatchBusy(true);
+    let ok = 0;
+    for (const { u, next } of todo) {
+      try {
+        const r = await fetch(`/api/users/${u.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ page_perms: next }),
+        });
+        if (!r.ok) continue;
+        const updated = await r.json();
+        setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
+        ok++;
+      } catch { /* 個別失敗於最後一併提示 */ }
+    }
+    setBatchBusy(false);
+    toast(ok === todo.length ? `已${on ? '開啟' : '關閉'} ${ok} 個帳號的「${label}」` : `完成 ${ok} 個，${todo.length - ok} 個失敗`, ok === todo.length ? 'success' : 'error');
   };
 
   // 日翊員工帳號刪除（兩段式確認；grace 與自己的帳號不可刪）
@@ -19711,6 +19778,19 @@ function AccountManagement() {
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">AD 員工帳號（{staffApiUsers.length} 筆）</span>
             <span className="text-xs text-slate-400">可設定每位員工可使用的倉別</span>
           </div>
+          {/* 批次分頁權限：新分頁上線後，已自訂權限的帳號不會自動勾到，可在這裡一次開啟 */}
+          <div className="px-4 py-2.5 border-b border-[#DDD9D0] bg-indigo-50/40 flex items-center gap-2 flex-wrap text-sm">
+            <b className="text-slate-700">批次分頁權限</b>
+            <select value={batchPage} onChange={e => setBatchPage(e.target.value)} disabled={batchBusy}
+              className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm bg-white">
+              {STAFF_PAGE_OPTIONS().map(n => <option key={n.key} value={n.key}>{n.icon} {n.label}</option>)}
+            </select>
+            <button onClick={() => batchSetPage(batchPage, true)} disabled={batchBusy}
+              className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-xs font-semibold disabled:opacity-50">全部開啟</button>
+            <button onClick={() => batchSetPage(batchPage, false)} disabled={batchBusy}
+              className="px-3 py-1 rounded-lg border border-slate-300 text-slate-600 bg-white text-xs disabled:opacity-50">全部關閉</button>
+            <span className="text-xs text-slate-400">{batchBusy ? '更新中…' : `套用到目前列出的日翊帳號（${staffApiUsers.filter(u => u.role !== ROLES.ADMIN).length} 個，管理員不受影響）`}</span>
+          </div>
           <div className="divide-y divide-slate-100">
             {staffApiUsers.map(u => (
               <div key={u.id} className="px-4 py-3 flex items-center gap-3 flex-wrap hover:bg-[#F5F2EC]">
@@ -19860,6 +19940,24 @@ function AccountManagement() {
                             })}
                             {savingPermFor === u.id && <span className="text-xs text-slate-400">儲存中…</span>}
                           </div>
+                          {(() => {
+                            const cur = (u.page_perms?.length ?? 0) > 0 ? u.page_perms : defaultStaffPageKeys(u.allowedWarehouses);
+                            if (!cur.includes('survey')) return null;
+                            const deny = new Set(u.fn_perms ?? []);
+                            return (
+                              <div className="mt-3 pt-2 border-t border-[#DDD9D0] flex items-center gap-3 flex-wrap text-sm">
+                                <span className="text-xs font-semibold text-slate-600">🗳️ 調查功能</span>
+                                {SURVEY_FN_OPTIONS.map(([k, l]) => (
+                                  <label key={k} className="flex items-center gap-1.5 cursor-pointer select-none">
+                                    <input type="checkbox" checked={!deny.has(`deny:${k}`)} disabled={savingPermFor === u.id}
+                                      onChange={e => updateApiUserFn(u, k, e.target.checked)} className="rounded accent-indigo-600" />
+                                    <span>{l}</span>
+                                  </label>
+                                ))}
+                                <span className="text-xs text-slate-400">（預設全開；建立人或管理員才能改自己建立的調查）</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </>
