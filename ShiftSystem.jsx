@@ -18785,8 +18785,6 @@ function AccountManagement() {
 
   // 日翊員工帳號：設定可看哪些分頁（存入 DB 的 page_perms）
   const [savingPermFor, setSavingPermFor] = useState(null);
-  const [batchPage, setBatchPage] = useState('survey');
-  const [batchBusy, setBatchBusy] = useState(false);
   const [permOpenFor, setPermOpenFor] = useState(null);
   const updateApiUserPages = async (userId, newPages) => {
     const token = localStorage.getItem(JWT_KEY);
@@ -18835,41 +18833,6 @@ function AccountManagement() {
     } finally {
       setSavingPermFor(null);
     }
-  };
-
-  // 批次：目前列出的日翊帳號一起開啟／關閉某個分頁
-  const batchSetPage = async (key, on) => {
-    const label = STAFF_PAGE_OPTIONS().find(n => n.key === key)?.label ?? key;
-    const targets = staffApiUsers.filter(u => u.role !== ROLES.ADMIN);
-    const changes = targets.map(u => {
-      const cur = (u.page_perms?.length ?? 0) > 0 ? u.page_perms : defaultStaffPageKeys(u.allowedWarehouses);
-      const next = on ? [...new Set([...cur, key])] : cur.filter(k => k !== key);
-      return { u, cur, next };
-    }).filter(c => c.next.length !== c.cur.length);
-    // 全部不勾＝還原預設（全開），關到一頁不剩的帳號略過
-    const skip = changes.filter(c => !c.next.length);
-    const todo = changes.filter(c => c.next.length);
-    if (!todo.length) { toast(skip.length ? `「${label}」是這些帳號僅剩的分頁，不能全部關閉` : `目前列出的帳號都已${on ? '開啟' : '關閉'}「${label}」`, 'info'); return; }
-    if (!await askConfirm(`將目前列出的 ${todo.length} 個日翊帳號${on ? '開啟' : '關閉'}「${label}」分頁？${skip.length ? `\n（另有 ${skip.length} 個帳號只剩這一頁，不會關閉）` : ''}\n對方重新整理或重新登入後生效。`)) return;
-    const token = localStorage.getItem(JWT_KEY);
-    if (!token) return;
-    setBatchBusy(true);
-    let ok = 0;
-    for (const { u, next } of todo) {
-      try {
-        const r = await fetch(`/api/users/${u.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ page_perms: next }),
-        });
-        if (!r.ok) continue;
-        const updated = await r.json();
-        setApiUsers(prev => prev.map(x => x.id === updated.id ? updated : x));
-        ok++;
-      } catch { /* 個別失敗於最後一併提示 */ }
-    }
-    setBatchBusy(false);
-    toast(ok === todo.length ? `已${on ? '開啟' : '關閉'} ${ok} 個帳號的「${label}」` : `完成 ${ok} 個，${todo.length - ok} 個失敗`, ok === todo.length ? 'success' : 'error');
   };
 
   // 日翊員工帳號刪除（兩段式確認；grace 與自己的帳號不可刪）
@@ -19777,19 +19740,6 @@ function AccountManagement() {
           <div className="bg-[#F5F2EC] px-4 py-2.5 border-b border-[#DDD9D0] flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">AD 員工帳號（{staffApiUsers.length} 筆）</span>
             <span className="text-xs text-slate-400">可設定每位員工可使用的倉別</span>
-          </div>
-          {/* 批次分頁權限：新分頁上線後，已自訂權限的帳號不會自動勾到，可在這裡一次開啟 */}
-          <div className="px-4 py-2.5 border-b border-[#DDD9D0] bg-indigo-50/40 flex items-center gap-2 flex-wrap text-sm">
-            <b className="text-slate-700">批次分頁權限</b>
-            <select value={batchPage} onChange={e => setBatchPage(e.target.value)} disabled={batchBusy}
-              className="border border-[#DDD9D0] rounded-lg px-2 py-1 text-sm bg-white">
-              {STAFF_PAGE_OPTIONS().map(n => <option key={n.key} value={n.key}>{n.icon} {n.label}</option>)}
-            </select>
-            <button onClick={() => batchSetPage(batchPage, true)} disabled={batchBusy}
-              className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-xs font-semibold disabled:opacity-50">全部開啟</button>
-            <button onClick={() => batchSetPage(batchPage, false)} disabled={batchBusy}
-              className="px-3 py-1 rounded-lg border border-slate-300 text-slate-600 bg-white text-xs disabled:opacity-50">全部關閉</button>
-            <span className="text-xs text-slate-400">{batchBusy ? '更新中…' : `套用到目前列出的日翊帳號（${staffApiUsers.filter(u => u.role !== ROLES.ADMIN).length} 個，管理員不受影響）`}</span>
           </div>
           <div className="divide-y divide-slate-100">
             {staffApiUsers.map(u => (
